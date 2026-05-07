@@ -22,6 +22,9 @@ variation steps.
 - Correctness reference should be PyTorch `scaled_dot_product_attention`.
 - Benchmark forward pass with BF16, head dimension 128, sequence lengths
   4096/8192/16384/32768, total tokens 32768, causal and non-causal.
+- Baseline installation should pin FlashAttention compile targets for A6000 via
+  `FLASH_ATTN_CUDA_ARCHS=80` (the upstream build script’s Ampere-family target)
+  and cap build parallelism with `MAX_JOBS`.
 
 ## Search Space
 

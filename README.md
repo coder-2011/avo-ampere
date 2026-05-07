@@ -18,6 +18,20 @@ lineage gating, transcript compaction, and an Anthropic variation-agent contract
 - Benchmark family: BF16 forward attention, head dimension 128, total tokens
   32768, sequence lengths 4096/8192/16384/32768, causal and non-causal.
 
+## Baseline and Lineage
+
+- `init-lineage <path>` initializes a standalone git repo used for candidate history.
+- `seed-baseline <path> --backend flash-attn ...` runs FlashAttention-2 in an
+  isolated worker, writes `scores/baseline.json`, and initializes `scores/latest.json`.
+- `commit-score <lineage-path> <score-json>` applies the gate against latest accepted
+  score and commits only if correctness and geomean are non-regressing.
+
+Recommended FA2 install target for A6000 in this scaffold:
+
+```bash
+FLASH_ATTN_CUDA_ARCHS=80 MAX_JOBS=2 uv run --extra baseline python -m pip install flash-attn --no-build-isolation
+```
+
 ## Quick Checks
 
 ```bash
@@ -25,6 +39,7 @@ uv run --extra dev pytest
 uv run python -m avo compile --source kernels/smoke.cu --out-dir /tmp/avo-build
 uv run --extra cuda python -m avo env
 uv run --extra cuda python -m avo score --backend torch-sdpa --seq-lens 4096 --causal both --repeats 3 --warmup 1
+uv run --extra cuda --extra baseline python -m avo seed-baseline ./lineage --backend flash-attn --seq-lens 4096,8192,16384,32768 --repeats 3 --warmup 1
 ```
 
 `score` runs the CUDA work in a child Python process and parses a structured

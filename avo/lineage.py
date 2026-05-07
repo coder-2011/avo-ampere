@@ -40,6 +40,35 @@ def init_lineage_repo(path: Path) -> None:
         _git(path, "commit", "-m", "chore: initialize AVO lineage")
 
 
+def seed_baseline(
+    path: Path,
+    payload: dict[str, Any],
+    message: str = "chore: seed baseline",
+    force: bool = False,
+) -> dict[str, Any]:
+    init_lineage_repo(path)
+    if not payload.get("all_correct"):
+        raise ValueError("baseline candidate failed correctness gate")
+    path.joinpath("scores").mkdir(exist_ok=True)
+    baseline_path = path / "scores" / "baseline.json"
+    latest_path = path / "scores" / "latest.json"
+    if baseline_path.exists() and not force:
+        raise FileExistsError(
+            f"baseline already exists at {baseline_path}. Use force=True to overwrite."
+        )
+
+    seeded = dict(payload)
+    seeded.setdefault("source", "flash-attn")
+    seeded.setdefault("role", "baseline")
+    seeded.setdefault("backend", "flash-attn")
+
+    baseline_path.write_text(json.dumps(seeded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    latest_path.write_text(json.dumps(seeded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _git(path, "add", "scores/baseline.json", "scores/latest.json")
+    _git(path, "commit", "-m", message)
+    return seeded
+
+
 def decide_gate(candidate: dict[str, Any], best_geomean: float) -> GateDecision:
     candidate_geomean = float(candidate.get("geomean_tflops") or 0.0)
     if not candidate.get("all_correct"):

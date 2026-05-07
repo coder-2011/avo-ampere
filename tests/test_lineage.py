@@ -1,6 +1,13 @@
+import json
 import subprocess
 
-from avo.lineage import best_geomean, commit_score, decide_gate, init_lineage_repo
+from avo.lineage import (
+    best_geomean,
+    commit_score,
+    decide_gate,
+    init_lineage_repo,
+    seed_baseline,
+)
 
 
 def test_gate_rejects_incorrect_candidate() -> None:
@@ -28,3 +35,19 @@ def test_commit_score_records_payload(tmp_path) -> None:
         text=True,
     )
     assert '"geomean_tflops": 12.5' in latest
+
+
+def test_seed_baseline_records_json(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    payload = {
+        "backend": "flash-attn",
+        "all_correct": True,
+        "geomean_tflops": 25.0,
+        "cases": [],
+    }
+    seeded = seed_baseline(repo, payload, force=True)
+    assert seeded["role"] == "baseline"
+    baseline = json.loads((repo / "scores" / "baseline.json").read_text(encoding="utf-8"))
+    latest = json.loads((repo / "scores" / "latest.json").read_text(encoding="utf-8"))
+    assert baseline == latest

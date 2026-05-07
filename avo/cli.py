@@ -10,7 +10,7 @@ from .benchmark import score_backend, sleep_score
 from .compile import compile_cuda_source
 from .config import AMPERE_A6000, cases_from_cli
 from .isolation import module_worker_args, print_result, run_json_worker
-from .lineage import commit_score, init_lineage_repo
+from .lineage import commit_score, init_lineage_repo, seed_baseline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -36,6 +36,14 @@ def main(argv: list[str] | None = None) -> int:
 
     init_parser = subparsers.add_parser("init-lineage")
     init_parser.add_argument("path", type=Path)
+
+    baseline_parser = subparsers.add_parser("seed-baseline")
+    baseline_parser.add_argument("path", type=Path)
+    add_score_args(baseline_parser)
+    baseline_parser.add_argument("--message", default="chore: seed baseline")
+    baseline_parser.add_argument("--timeout-s", type=int, default=900)
+    baseline_parser.add_argument("--force", action="store_true")
+    baseline_parser.set_defaults(backend="flash-attn")
 
     commit_parser = subparsers.add_parser("commit-score")
     commit_parser.add_argument("lineage", type=Path)
@@ -64,6 +72,8 @@ def main(argv: list[str] | None = None) -> int:
     if args.command == "init-lineage":
         init_lineage_repo(args.path)
         return 0
+    if args.command == "seed-baseline":
+        return _seed_baseline(args)
     if args.command == "commit-score":
         payload = json.loads(args.score_json.read_text(encoding="utf-8"))
         decision = commit_score(args.lineage, payload, args.message)
@@ -146,6 +156,34 @@ def _score(args: argparse.Namespace) -> int:
     return 0 if result.ok else 2
 
 
+def _seed_baseline(args: argparse.Namespace) -> int:
+    worker_args = module_worker_args(
+        "worker-score",
+        "--backend",
+        args.backend,
+        "--seq-lens",
+        args.seq_lens,
+        "--causal",
+        args.causal,
+        "--warmup",
+        str(args.warmup),
+        "--repeats",
+        str(args.repeats),
+    )
+    baseline_env = _baseline_build_env(os.environ.copy())
+    result = run_json_worker(
+        worker_args,
+        timeout_s=args.timeout_s,
+        cwd=Path.cwd(),
+        env=baseline_env,
+    )
+    if not result.ok or result.payload is None:
+        raise RuntimeError(f"baseline score failed: {result.stderr_tail}")
+    seed = seed_baseline(args.path, result.payload, message=args.message, force=args.force)
+    print(json.dumps(seed, indent=2, sort_keys=True))
+    return 0
+
+
 def _worker_score(args: argparse.Namespace) -> int:
     cases = cases_from_cli(args.seq_lens, args.causal)
     payload = score_backend(args.backend, cases, warmup=args.warmup, repeats=args.repeats)
@@ -172,3 +210,11 @@ def _lineage_summary(path: Path) -> str:
     if not latest.exists():
         return "No accepted candidates yet."
     return latest.read_text(encoding="utf-8")
+
+
+def _baseline_build_env(env: dict[str, str]) -> dict[str, str]:
+    # Build FlashAttention-2 for Ampere family members only on this system.
+    # The upstream setup script does not expose a 86-specific token; `80` maps to
+    # the Ampere family path used by the project for sm80+ targets.
+    env["FLASH_ATTN_CUDA_ARCHS"] = "80"
+    return env
