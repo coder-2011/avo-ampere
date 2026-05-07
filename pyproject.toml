@@ -1,0 +1,25 @@
+[project]
+name = "avo-ampere"
+version = "0.1.0"
+description = "Minimal AVO scaffold for Ampere attention-kernel evolution"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+]
+
+[project.optional-dependencies]
+agent = ["anthropic>=0.72.0"]
+cuda = ["numpy>=1.26", "torch>=2.2"]
+baseline = ["numpy>=1.26", "torch>=2.2", "flash-attn>=2.7.0"]
+dev = ["pytest>=8.0", "ruff>=0.8.0"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
