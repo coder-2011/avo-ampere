@@ -86,6 +86,10 @@ NO_EDIT_PHRASES = (
     "without editing",
     "without any edit",
 )
+SELF_REJECTING_PATCH_PHRASES = (
+    "not ready to apply",
+    "will cause a compile error",
+)
 
 DECISION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -182,10 +186,12 @@ class VariationDecision:
         expected_effect = _require_string(normalized_payload, "expected_effect")
         risk = _require_string(normalized_payload, "risk")
         _validate_candidate_edit_matches_patch(candidate_edit, candidate_patch)
+        planning_text = "\n".join((hypothesis, candidate_edit, expected_effect, risk))
+        _validate_candidate_patch_not_self_rejected(candidate_patch, planning_text)
         next_command = _validate_next_command(
             _require_string(normalized_payload, "next_command"),
             candidate_patch=candidate_patch,
-            planning_text="\n".join((hypothesis, candidate_edit, expected_effect, risk)),
+            planning_text=planning_text,
         )
         return cls(
             hypothesis=hypothesis,
@@ -521,6 +527,21 @@ def _validate_candidate_edit_matches_patch(candidate_edit: str, candidate_patch:
         "candidate_patch must be non-empty when candidate_edit describes a code change; "
         f"candidate_edit was {_validation_excerpt(candidate_edit)!r}"
     )
+
+
+def _validate_candidate_patch_not_self_rejected(
+    candidate_patch: str,
+    planning_text: str,
+) -> None:
+    if not candidate_patch.strip():
+        return
+    normalized = " ".join(planning_text.lower().replace("-", " ").split())
+    for phrase in SELF_REJECTING_PATCH_PHRASES:
+        if phrase in normalized:
+            raise ValueError(
+                "candidate_patch is described as known invalid by the decision itself; "
+                f"found phrase {phrase!r}. Return a corrected patch or choose no-edit mode."
+            )
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:

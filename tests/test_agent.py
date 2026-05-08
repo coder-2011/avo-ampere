@@ -454,6 +454,28 @@ def test_parse_variation_decision_rejects_markdown_fenced_patch() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_self_rejected_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch tiled online softmax and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_tiled_attention/attention_kernel.cu "
+        "b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = "This patch leaves a stale reference and will cause a compile error."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_tiled_attention/attention_kernel.cu "
+        "--out-dir build/tiled"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_decision_tool_uses_strict_schema() -> None:
     tool = decision_tool()
     assert tool["name"] == DECISION_TOOL_NAME
