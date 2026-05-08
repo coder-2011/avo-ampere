@@ -163,7 +163,7 @@ Agent prompts include a concise local repo context so decisions prefer existing 
 
 ## What is still missing
 
-- A real CUDA attention candidate that replaces SDPA rather than wrapping it.
+- A tiled/performance-oriented CUDA attention candidate that can move beyond the naive seed.
 - Scaling the naive attention candidate beyond tiny correctness smokes.
 - A complete mutation loop that edits candidate code safely.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.

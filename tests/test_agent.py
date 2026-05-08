@@ -97,10 +97,26 @@ def test_build_repo_context_lists_local_candidates() -> None:
     context = build_repo_context(Path.cwd())
 
     assert "candidates/cuda_identity_seed.py" in context
+    assert "candidates/cuda_naive_attention_seed.py" in context
     assert "candidates/torch_sdpa_seed.py" in context
     assert "candidates/cuda_identity/identity_kernel.cu" in context
+    assert "--candidate candidates/cuda_naive_attention_seed.py" in context
+    assert "--seq-lens 16" in context
     assert "avo score --backend candidate" in context
     assert "csrc/flash_attn" not in context
+
+
+def test_build_repo_context_falls_back_to_identity_candidate(tmp_path: Path) -> None:
+    candidates = tmp_path / "candidates"
+    cuda_source = candidates / "cuda_identity"
+    cuda_source.mkdir(parents=True)
+    (candidates / "cuda_identity_seed.py").write_text("", encoding="utf-8")
+    (cuda_source / "identity_kernel.cu").write_text("", encoding="utf-8")
+
+    context = build_repo_context(tmp_path)
+
+    assert "--candidate candidates/cuda_identity_seed.py" in context
+    assert "--candidate candidates/cuda_naive_attention_seed.py" not in context
 
 
 def test_build_variation_prompt_includes_repo_context() -> None:

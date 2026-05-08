@@ -217,11 +217,9 @@ def build_repo_context(root: Path) -> str:
     if cuda_sources:
         lines.append("CUDA candidate sources:")
         lines.extend(f"- {source}" for source in cuda_sources)
-    lines.append(
-        "Preferred first local candidate score command: "
-        "avo score --backend candidate --candidate candidates/cuda_identity_seed.py "
-        "--seq-lens 4096 --causal false --repeats 1 --warmup 1 --timeout-s 300"
-    )
+    preferred_command = _preferred_candidate_score_command(candidates)
+    if preferred_command:
+        lines.append(f"Preferred first local candidate score command: {preferred_command}")
     return "\n".join(lines)
 
 
@@ -308,6 +306,27 @@ def _relative_files(root: Path, dirname: str, *, suffix: str) -> list[str]:
         for path in base.rglob(f"*{suffix}")
         if "__pycache__" not in path.parts
     )
+
+
+def _preferred_candidate_score_command(candidates: list[str]) -> str:
+    if "candidates/cuda_naive_attention_seed.py" in candidates:
+        return (
+            "avo score --backend candidate "
+            "--candidate candidates/cuda_naive_attention_seed.py "
+            "--seq-lens 16 --total-tokens 16 --num-heads 1 --head-dim 16 "
+            "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
+        )
+    if "candidates/cuda_identity_seed.py" in candidates:
+        return (
+            "avo score --backend candidate --candidate candidates/cuda_identity_seed.py "
+            "--seq-lens 4096 --causal false --repeats 1 --warmup 1 --timeout-s 300"
+        )
+    if "candidates/torch_sdpa_seed.py" in candidates:
+        return (
+            "avo score --backend candidate --candidate candidates/torch_sdpa_seed.py "
+            "--seq-lens 4096 --causal both --repeats 1 --warmup 1 --timeout-s 300"
+        )
+    return ""
 
 
 def _strict_tools_unsupported(exc: Exception) -> bool:

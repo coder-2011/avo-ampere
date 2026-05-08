@@ -15,6 +15,13 @@ variation steps.
 - Compute capability 8.6 has 100 KB shared memory per SM and 99 KB max shared
   memory per thread block, with explicit opt-in needed above 48 KB dynamic shared
   memory.
+- NVIDIA's Ampere tuning guide says compute capability 8.6 has 48 resident warps
+  per SM, a 64K 32-bit register file per SM, and a maximum of 16 resident thread
+  blocks per SM. Treat register pressure and block count as first-class scoring
+  risks, especially for head dimension 128.
+- Ampere async global-to-shared copies can overlap memory movement with compute,
+  avoid extra copy registers, and can bypass L1. This is the correct Ampere
+  replacement direction for Blackwell-only TMA ideas.
 
 ## Baseline
 
@@ -25,6 +32,14 @@ variation steps.
 - Baseline installation should pin FlashAttention compile targets for A6000 via
   `FLASH_ATTN_CUDA_ARCHS=80` (the upstream build script’s Ampere-family target)
   and cap build parallelism with `MAX_JOBS`.
+- FlashAttention-2 v2.8.3 has a device-specific block-size heuristic for sm8x
+  that treats sm86/sm89 separately from sm80. For head dimension 128, it chooses
+  smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
+  non-causal/no-dropout. This is useful search-space evidence, not a commandment.
+- Local candidates should currently start from
+  `candidates/cuda_naive_attention_seed.py` for tiny correctness smoke scoring.
+  The older `cuda_identity_seed.py` is only an extension/build smoke because it
+  delegates attention math to PyTorch SDPA before running a copy kernel.
 
 ## Search Space
 
@@ -34,6 +49,17 @@ variation steps.
 - Warp-level online softmax reductions.
 - Instruction scheduling around `mma.sync` latency.
 - Split-Q versus split-K work partitioning.
+- First CUDA-kernel step after the naive seed should be a tiny tiled online
+  softmax kernel, not full FA2 parity. Keep correctness shapes small until row
+  max, denominator, output accumulation, and causal masking are demonstrably
+  correct for BF16 and FP32.
+
+## Sources
+
+- NVIDIA Ampere tuning guide:
+  https://docs.nvidia.com/cuda/ampere-tuning-guide/
+- FlashAttention-2 interface and sm8x block-size heuristic:
+  https://github.com/Dao-AILab/flash-attention/blob/v2.8.3/flash_attn/flash_attn_interface.py
 
 ## Gate
 
