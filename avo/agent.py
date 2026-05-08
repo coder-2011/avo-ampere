@@ -95,6 +95,7 @@ SELF_REJECTING_PATCH_PHRASES = (
     "unused in this patch",
     "must be updated before scoring",
     "unused doubled buffers",
+    "diff is incomplete",
     "would break correctness",
     "will cause a compile error",
     "will fail compile",
@@ -108,6 +109,7 @@ SELF_REJECTING_PATCH_PHRASES = (
     "do not score this patch",
     "do not use this diff",
     "reject this direction",
+    "should be rejected",
 )
 
 DECISION_SCHEMA: dict[str, Any] = {
@@ -806,6 +808,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch repeats the stride-24 MMA probability-buffer skew; "
             "the recorded score preserved correctness but regressed geomean throughput"
         )
+    if _candidate_patch_uses_2d_probability_index_without_2d_declaration(added_text):
+        raise ValueError(
+            "candidate_patch uses probabilities[row][key] but does not declare "
+            "probabilities as a 2D shared-memory tile"
+        )
     if _candidate_patch_adds_unused_async_copy_helpers(added_text):
         raise ValueError(
             "candidate_patch adds async-copy helper wrappers without using them; "
@@ -1020,6 +1027,16 @@ def _candidate_patch_repeats_mma_probability_stride_skew(added_text: str) -> boo
             or "load_matrix_sync(probability_frag,&probabilities[0][0],kProbabilityStride)"
             in compact
         )
+    )
+
+
+def _candidate_patch_uses_2d_probability_index_without_2d_declaration(
+    added_text: str,
+) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return (
+        "probabilities[row][key]" in compact
+        and "__shared____nv_bfloat16probabilities[kTile][" not in compact
     )
 
 

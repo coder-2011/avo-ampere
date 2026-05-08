@@ -833,3 +833,9 @@ source files.
   `probabilities[row * kTile + key]` indexing. This is still the same simple
   probability-buffer skew direction that previously regressed throughput, so the
   planner now rejects both flat and 2D stride-24 repeats.
+  A later score-tile skew patch changed `scores` to a padded 2D tile but also
+  accidentally changed the probability store to `probabilities[row][key]` while
+  leaving `probabilities` flat. NVCC failed with no matching `operator[]`. The
+  risk text said the diff was incomplete and should be rejected. The planner now
+  treats those self-invalid phrases as hard stops and rejects 2D probability
+  indexing unless the diff also declares `probabilities` as a 2D shared tile.

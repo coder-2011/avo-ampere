@@ -1249,6 +1249,29 @@ def test_parse_variation_decision_rejects_probability_stride_skew_2d_repeat() ->
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_2d_probability_index_without_declaration() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Skew the MMA score tile and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,5 @@\n"
+        "-old\n"
+        "+constexpr int kScoreStride = kTile + 8;\n"
+        "+__shared__ float scores[kTile][kScoreStride];\n"
+        "+probabilities[row][key] = __float2bfloat16(weight);\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_score_skew"
+    )
+
+    with pytest.raises(ValueError, match=r"probabilities\[row\]\[key\]"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
