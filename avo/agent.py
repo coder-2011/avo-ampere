@@ -97,6 +97,7 @@ SELF_REJECTING_PATCH_PHRASES = (
     "would break correctness",
     "will cause a compile error",
     "will break correctness",
+    "will fail correctness",
     "reject this direction",
 )
 
@@ -390,6 +391,8 @@ def build_repo_context(root: Path) -> str:
         "but regressed throughput; do not repeat that buffer-precision change.",
         "Patched MMA shape extensions beyond the current head_dim64 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
+        "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
+        "and leaves four 16-wide chunks covers only 64 dimensions; do not repeat it.",
     ]
     if candidates:
         lines.append("Candidate modules:")
@@ -613,6 +616,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch repeats the tiled reduction-bound guard fix; the recorded "
             "seq128/head_dim128 score still failed correctness"
         )
+    if _candidate_patch_repeats_partial_mma_head_dim128_extension(candidate_patch):
+        raise ValueError(
+            "candidate_patch repeats the partial MMA head_dim128 extension; changing "
+            "kHeadDim/SMOKE_HEAD_DIM to 128 while leaving four 16-wide chunks covers "
+            "only 64 dimensions"
+        )
     added_text = "\n".join(_candidate_patch_added_lines(candidate_patch))
     if "__pipeline_wait_prior<" in added_text:
         raise ValueError(
@@ -736,6 +745,24 @@ def _candidate_patch_repeats_tiled_reduction_guard_fix(candidate_patch: str) -> 
         and "+reduce[tid]=shifted;" in compact
         and "+reduce[tid]=0.0f;" in compact
     )
+
+
+def _candidate_patch_repeats_partial_mma_head_dim128_extension(candidate_patch: str) -> bool:
+    compact = re.sub(r"\s+", "", candidate_patch)
+    extends_constant = (
+        "-constexprintkHeadDim=64;" in compact
+        and "+constexprintkHeadDim=128;" in compact
+        and "-SMOKE_HEAD_DIM=64" in compact
+        and "+SMOKE_HEAD_DIM=128" in compact
+    )
+    if not extends_constant:
+        return False
+    adds_wider_loop = (
+        "+for(intchunk=0;chunk<8;++chunk)" in compact
+        or "+for(intchunk=0;chunk<kHeadDim/16;++chunk)" in compact
+        or "+constexprintkHeadChunks=kHeadDim/16;" in compact
+    )
+    return not adds_wider_loop
 
 
 def _candidate_patch_leaves_orphan_mma_k_fragment(added_text: str) -> bool:

@@ -789,6 +789,57 @@ def test_parse_variation_decision_rejects_literal_mma_score_k32_fragment() -> No
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_partial_mma_head_dim128_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Extend the MMA seed to head_dim128 and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,3 @@\n"
+        "-constexpr int kHeadDim = 64;\n"
+        "+constexpr int kHeadDim = 128;\n"
+        "+#pragma unroll\n"
+        "diff --git a/candidates/cuda_mma_attention_seed.py "
+        "b/candidates/cuda_mma_attention_seed.py\n"
+        "--- a/candidates/cuda_mma_attention_seed.py\n"
+        "+++ b/candidates/cuda_mma_attention_seed.py\n"
+        "@@ -1 +1 @@\n"
+        "-SMOKE_HEAD_DIM = 64\n"
+        "+SMOKE_HEAD_DIM = 128\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="partial MMA head_dim128 extension"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_self_reported_correctness_failure() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA shape and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = "This will fail correctness if scored before adding the second pass."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="will fail correctness"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_scalar_t_wmma_matrix_fragment() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch warp-row WMMA skeleton and compile it."
@@ -1029,6 +1080,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
     assert "Patch hunks must use exact current file context" in context
     assert "Patched MMA shape extensions beyond the current head_dim64 smoke" in context
+    assert "partial MMA head_dim128 extension" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
     assert "candidate_patch as a raw unified diff" in context
