@@ -1,3 +1,4 @@
+import re
 from pathlib import Path
 
 import pytest
@@ -52,3 +53,26 @@ def test_candidate_backend_reports_load_failure_as_failed_score(tmp_path: Path) 
     assert summary["all_correct"] is False
     assert summary["cases"][0]["correct"] is False
     assert "must define callable attention" in summary["cases"][0]["error"]
+
+
+def test_mma_wrapper_sequences_are_supported_by_kernel_guard() -> None:
+    wrapper = Path("candidates/cuda_mma_attention_seed.py").read_text(encoding="utf-8")
+    kernel = Path("candidates/cuda_mma_attention/attention_kernel.cu").read_text(
+        encoding="utf-8",
+    )
+
+    sequences_match = re.search(r"SMOKE_SEQUENCES\s*=\s*\{(?P<body>[^}]*)\}", wrapper)
+    max_seq_match = re.search(r"constexpr\s+int\s+kMaxSeqLen\s*=\s*(?P<value>\d+);", kernel)
+    assert sequences_match is not None
+    assert max_seq_match is not None
+    sequences = {
+        int(item.strip())
+        for item in sequences_match.group("body").split(",")
+        if item.strip()
+    }
+    max_seq_len = int(max_seq_match.group("value"))
+
+    assert sequences
+    assert all(seq_len % 16 == 0 and seq_len <= max_seq_len for seq_len in sequences)
+    assert "seq_len <= kMaxSeqLen" in kernel
+    assert "seq_len % kTile == 0" in kernel

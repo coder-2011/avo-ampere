@@ -57,8 +57,8 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for 16/32/64/128/256-token, head-dim 128
-  BF16 tensor-core QK/PV smokes
+  `candidates/cuda_mma_attention_seed.py` for the accepted seq1024 head-dim 128
+  BF16 tensor-core QK/PV lane
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
   `cuda_naive_attention_seed.py` is the simpler one-thread-per-row attention
@@ -1087,3 +1087,11 @@ source files.
   `a9f55492223c977ea4525347145fe991f5e06174`: seq_len 1024, total_tokens 8192,
   num_heads 8, head_dim 128, BF16, both causal modes, geomean
   `5.073625790914057` TFLOPS.
+  A source-consistency fix then found that the seq1024 source patch left the
+  Python wrapper advertising `256` while the CUDA `TORCH_CHECK` only accepted
+  `16/32/64/128/kMaxSeqLen`. The kernel guard now accepts any multiple of
+  `kTile` up to `kMaxSeqLen`, matching the wrapper's explicit sequence set and
+  future intermediate shape-graduation batches. A direct seq256 regression score
+  after the fix passed correctness for both causal modes: geomean
+  `0.525593999281922` TFLOPS, noncausal `0.8659655248879056` TFLOPS, causal
+  `0.3190069860078135` TFLOPS.
