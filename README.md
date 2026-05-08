@@ -12,7 +12,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Candidate support: Python candidate modules plus CUDA-extension attention candidates, including a BF16 WMMA QK/PV seed accepted through the seq8192 lane.
 - Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, and a candidate-only patch application substrate.
 - Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, and environment metadata in JSON.
-- Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage and feed recent summaries back into later agent prompts.
+- Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage, classify failure classes, and persist recurring classes as active hard preflight tracks in `preflight_tracks.json`.
 - Research state: the autonomous loop has accepted multiple benchmark lanes, including a seq8192 BF16 WMMA lane. The open result is still scaling toward 16384/32768 and beating FlashAttention-2 on the target suite.
 
 ## What was built
@@ -269,7 +269,7 @@ uv run python -m avo evolve-loop \
   --loop-json attempts/latest-loop.json
 ```
 
-`evolve-loop` requires `--attempts-dir` so cross-step memory is always available. It stops when a step is accepted, when rejected-patch cleanup fails, or when `--max-steps` is exhausted. Command failures and gate rejections are recorded, summarized into the next prompt, and allowed to continue until one of those stop conditions is reached. Attempt summaries also append a supervisor signal when the recent history shows repeated unaccepted command/edit fingerprints or five unaccepted attempts in a row; the signal asks the agent to reset strategy but does not bypass the bounded command or lineage gate.
+`evolve-loop` requires `--attempts-dir` so cross-step memory is always available. It stops when a step is accepted, when rejected-patch cleanup fails, or when `--max-steps` is exhausted. Command failures and gate rejections are recorded, summarized into the next prompt, and allowed to continue until one of those stop conditions is reached. Attempt summaries also append a supervisor signal when the recent history shows repeated unaccepted command/edit fingerprints, recurring failure classes in the unaccepted tail, or five unaccepted attempts in a row; recurring promotable classes are written to `preflight_tracks.json` and loaded before materialized transform/patch preflight.
 
 ## What is still missing
 

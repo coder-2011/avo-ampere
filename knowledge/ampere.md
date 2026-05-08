@@ -1126,3 +1126,10 @@ source files.
   source now carries `kMaxSeqLen=8192` and wrapper `SMOKE_SEQUENCES` includes
   8192. This is correctness and lane-establishment progress, not yet evidence
   of beating FA2.
+- Attempt-memory promotion should operate on recurring failure classes across the
+  current unaccepted tail, not only exact back-to-back repeats. The loop now
+  counts classified failures since the last accepted result, persists every
+  promotable class that reaches the repeat threshold in `preflight_tracks.json`,
+  and reloads those classes before materialized CUDA transform/patch preflight.
+  This moves recurring CUDA mistakes toward hard structural tracks without
+  adding another exact historical phrase ban.

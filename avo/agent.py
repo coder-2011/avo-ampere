@@ -360,7 +360,7 @@ class VariationDecision:
         _validate_candidate_edit_matches_patch(candidate_edit, edit_payload)
         planning_text = "\n".join((hypothesis, candidate_edit, expected_effect, risk))
         _validate_candidate_patch_not_self_rejected(edit_payload, planning_text)
-        _validate_candidate_patch_domain_sanity(candidate_patch)
+        _validate_candidate_patch_preflight(candidate_patch)
         next_command = _validate_next_command(
             _require_string(normalized_payload, "next_command"),
             candidate_patch=candidate_patch,
@@ -1103,7 +1103,7 @@ def _validate_candidate_patch_not_self_rejected(
             )
 
 
-def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
+def _validate_candidate_patch_preflight(candidate_patch: str) -> None:
     validate_candidate_patch_structural_preflight(
         candidate_patch,
         allow_cuda_source_edits=False,

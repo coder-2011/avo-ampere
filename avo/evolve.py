@@ -25,6 +25,7 @@ SKIPPED_SOURCE_PARTS = frozenset({"__pycache__"})
 SUPERVISOR_REPEAT_THRESHOLD = 3
 SUPERVISOR_EXHAUSTION_THRESHOLD = 5
 PROMOTED_PREFLIGHT_TRACKS_FILENAME = "preflight_tracks.json"
+IGNORED_FAILURE_CLASSES = frozenset({"accepted", "unknown", "command_failed"})
 PROMOTABLE_FAILURE_CLASS_TRACKS = {
     "planning_edit_channel": "edit_channel_consistency",
     "planning_missing_edit_payload": "edit_channel_consistency",
@@ -540,24 +541,31 @@ def update_promoted_preflight_tracks(
     if directory is None or threshold <= 0:
         return state
     payloads = [payload for _, payload in _load_step_payloads(directory)]
-    repeated_class = _repeated_unaccepted_failure_class(payloads, threshold=threshold)
-    if repeated_class not in PROMOTABLE_FAILURE_CLASS_TRACKS:
+    recurring_classes = _recurring_unaccepted_failure_classes(payloads, threshold=threshold)
+    promotable_classes = {
+        failure_class: count
+        for failure_class, count in recurring_classes.items()
+        if failure_class in PROMOTABLE_FAILURE_CLASS_TRACKS
+    }
+    if not promotable_classes:
         return state
     tracks = _state_tracks(state)
-    existing = tracks.get(repeated_class)
-    entry = {
-        "active": True,
-        "failure_class": repeated_class,
-        "track": PROMOTABLE_FAILURE_CLASS_TRACKS[repeated_class],
-        "threshold": threshold,
-        "recent_count": threshold,
-        "updated_at": _utc_now(),
-    }
-    if isinstance(existing, dict):
-        entry["promoted_at"] = existing.get("promoted_at") or entry["updated_at"]
-    else:
-        entry["promoted_at"] = entry["updated_at"]
-    tracks[repeated_class] = entry
+    updated_at = _utc_now()
+    for failure_class, count in sorted(promotable_classes.items()):
+        existing = tracks.get(failure_class)
+        entry = {
+            "active": True,
+            "failure_class": failure_class,
+            "track": PROMOTABLE_FAILURE_CLASS_TRACKS[failure_class],
+            "threshold": threshold,
+            "recent_count": count,
+            "updated_at": updated_at,
+        }
+        if isinstance(existing, dict):
+            entry["promoted_at"] = existing.get("promoted_at") or entry["updated_at"]
+        else:
+            entry["promoted_at"] = entry["updated_at"]
+        tracks[failure_class] = entry
     state = {"version": 1, "tracks": tracks}
     _write_promoted_preflight_state(directory, state)
     return state
@@ -711,6 +719,10 @@ def _looks_like_score_payload(payload: dict[str, Any]) -> bool:
 
 def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
     repeated = _repeated_unaccepted_fingerprint(payloads, threshold=SUPERVISOR_REPEAT_THRESHOLD)
+    recurring_classes = _recurring_unaccepted_failure_classes(
+        payloads,
+        threshold=SUPERVISOR_REPEAT_THRESHOLD,
+    )
     if repeated is not None:
         message = (
             "Supervisor signal: the last "
@@ -738,6 +750,16 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
             f"{SUPERVISOR_REPEAT_THRESHOLD} attempts share failure class "
             f"{repeated_class!r}. Promote this class to a hard preflight track, "
             "then choose a different structured transform family before repeating it."
+        )
+    if recurring_classes:
+        recurring = ", ".join(
+            f"{failure_class}(count={count})"
+            for failure_class, count in sorted(recurring_classes.items())
+        )
+        return (
+            "Supervisor signal: recent unaccepted attempts include recurring failure "
+            f"classes: {recurring}. Promote recurring classes to hard preflight tracks "
+            "and choose a different structured transform family before repeating them."
         )
     if _unaccepted_tail_count(payloads) >= SUPERVISOR_EXHAUSTION_THRESHOLD:
         return (
@@ -849,12 +871,41 @@ def _repeated_unaccepted_failure_class(
     if any(_step_payload_accepted(payload) for payload in window):
         return None
     classes = {_step_failure_class(payload) for payload in window}
-    ignored = {"accepted", "unknown", "command_failed"}
     if len(classes) == 1:
         failure_class = next(iter(classes))
-        if failure_class not in ignored:
+        if failure_class not in IGNORED_FAILURE_CLASSES:
             return failure_class
     return None
+
+
+def _recurring_unaccepted_failure_classes(
+    payloads: list[dict[str, Any]],
+    *,
+    threshold: int,
+) -> dict[str, int]:
+    if threshold <= 0:
+        return {}
+    counts: dict[str, int] = {}
+    for payload in _unaccepted_tail(payloads):
+        failure_class = _step_failure_class(payload)
+        if failure_class in IGNORED_FAILURE_CLASSES:
+            continue
+        counts[failure_class] = counts.get(failure_class, 0) + 1
+    return {
+        failure_class: count
+        for failure_class, count in counts.items()
+        if count >= threshold
+    }
+
+
+def _unaccepted_tail(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tail: list[dict[str, Any]] = []
+    for payload in reversed(payloads):
+        if _step_payload_accepted(payload):
+            break
+        tail.append(payload)
+    tail.reverse()
+    return tail
 
 
 def _repeated_unaccepted_fingerprint(

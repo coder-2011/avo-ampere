@@ -1279,6 +1279,80 @@ def test_update_promoted_preflight_tracks_persists_recurring_class(tmp_path: Pat
     assert "track=symbol_lifecycle" in summary
 
 
+def test_summarize_attempt_history_counts_mixed_recurring_failure_classes(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    errors = [
+        "error: identifier old_scale is undefined\n",
+        "error: expected a declaration\n",
+        "error: identifier row_sum is undefined\n",
+        "error: expected a ';'\n",
+        "error: identifier probability_frag is undefined\n",
+        "error: expected a type specifier\n",
+    ]
+    for index, stderr in enumerate(errors):
+        attempt = VariationAttempt(
+            decision=decision(
+                f"avo compile --source candidates/kernel_{index}.cu --out-dir build/kernel_{index}"
+            ),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "compile"],
+                returncode=2,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail=stderr,
+            ),
+            started_at=f"2026-05-08T00:00:{index:02d}+00:00",
+            completed_at=f"2026-05-08T00:00:{index + 1:02d}+00:00",
+        )
+        write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=6)
+
+    assert "recurring failure classes" in summary
+    assert "cuda_syntax_error(count=3)" in summary
+    assert "stale_or_undefined_symbol(count=3)" in summary
+
+
+def test_update_promoted_preflight_tracks_persists_mixed_recurring_classes(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    errors = [
+        "error: identifier old_scale is undefined\n",
+        "error: expected a declaration\n",
+        "error: identifier row_sum is undefined\n",
+        "error: expected a ';'\n",
+        "error: identifier probability_frag is undefined\n",
+        "error: expected a type specifier\n",
+    ]
+    for index, stderr in enumerate(errors):
+        attempt = VariationAttempt(
+            decision=decision(
+                f"avo compile --source candidates/kernel_{index}.cu --out-dir build/kernel_{index}"
+            ),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "compile"],
+                returncode=2,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail=stderr,
+            ),
+            started_at=f"2026-05-08T00:00:{index:02d}+00:00",
+            completed_at=f"2026-05-08T00:00:{index + 1:02d}+00:00",
+        )
+        write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    state = update_promoted_preflight_tracks(attempts)
+
+    assert state["tracks"]["cuda_syntax_error"]["recent_count"] == 3
+    assert state["tracks"]["stale_or_undefined_symbol"]["recent_count"] == 3
+    assert load_promoted_preflight_classes(attempts) == frozenset(
+        {"cuda_syntax_error", "stale_or_undefined_symbol"}
+    )
+
+
 def test_summarize_attempt_history_normalizes_compile_out_dir(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     source = "candidates/cuda_tiled_attention/attention_kernel.cu"
