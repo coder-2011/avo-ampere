@@ -58,7 +58,9 @@ variation steps.
   real apply. Anthropic decisions also include `candidate_patch`: a non-empty
   patch is applied through the same validator before the bounded `next_command`
   runs. This does not stage, commit, score, or expand the `next_command`
-  allowlist beyond `avo env`, `avo compile`, and `avo score`.
+  allowlist beyond `avo env`, `avo compile`, and `avo score`. If `evolve-once`
+  applies a patch and the step is not accepted, it attempts a checked reverse
+  apply so rejected edits do not leak into later attempts.
 
 ## Search Space
 

@@ -236,7 +236,7 @@ uv run python -m avo apply-patch candidate.patch
 
 `apply-patch` reads a raw unified diff, extracts `diff --git` paths, rejects paths outside `candidates/`, rejects path traversal, symlink-mode patches, binary patches, renames, deletes, and mode changes, then runs `git apply --check --whitespace=error` before applying. It does not stage, commit, score, or bypass the lineage gate.
 
-Anthropic decisions now include a required `candidate_patch` string. Empty means no edit. A non-empty raw unified diff is applied through the same validator before `run-decision` or `evolve-once` runs the bounded `next_command`; the command allowlist remains limited to `avo env`, `avo compile`, and `avo score`.
+Anthropic decisions now include a required `candidate_patch` string. Empty means no edit. A non-empty raw unified diff is applied through the same validator before `run-decision` or `evolve-once` runs the bounded `next_command`; the command allowlist remains limited to `avo env`, `avo compile`, and `avo score`. When `evolve-once` applies a patch but the step is not accepted by the score gate, it checks and applies the reverse patch so rejected edits do not pollute the next attempt.
 
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the existing lineage gate.
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.

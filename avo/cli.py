@@ -18,6 +18,7 @@ from .config import AMPERE_A6000, cases_from_cli
 from .evolve import (
     DEFAULT_ATTEMPT_HISTORY_LIMIT,
     apply_candidate_patch,
+    cleanup_rejected_candidate_patch,
     finalize_attempt,
     run_decision_command,
     summarize_attempt_history,
@@ -374,11 +375,14 @@ def _evolve_once(args: argparse.Namespace) -> int:
         env=os.environ.copy(),
     )
     step = finalize_attempt(args.lineage, attempt)
+    step = cleanup_rejected_candidate_patch(step, cwd=args.cwd)
     if args.step_json:
         write_step(args.step_json, step)
     if args.attempts_dir:
         write_step_record(args.attempts_dir, step)
     print(json.dumps(step.as_dict(), indent=2, sort_keys=True))
+    if step.patch_cleanup_result is not None and not step.patch_cleanup_result.ok:
+        return 2
     if not attempt.command_result.ok:
         return 2
     if step.gate_decision is not None and not step.gate_decision.accepted:

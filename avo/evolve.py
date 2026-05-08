@@ -101,6 +101,7 @@ class VariationAttempt:
 class EvolutionStep:
     attempt: VariationAttempt
     gate_decision: GateDecision | None
+    patch_cleanup_result: PatchResult | None = None
 
     @property
     def accepted(self) -> bool:
@@ -111,6 +112,11 @@ class EvolutionStep:
             "attempt": self.attempt.as_dict(),
             "gate_decision": (
                 self.gate_decision.as_dict() if self.gate_decision is not None else None
+            ),
+            "patch_cleanup_result": (
+                self.patch_cleanup_result.as_dict()
+                if self.patch_cleanup_result is not None
+                else None
             ),
         }
 
@@ -246,6 +252,67 @@ def apply_candidate_patch(
     )
 
 
+def revert_candidate_patch(
+    patch_text: str,
+    *,
+    cwd: Path,
+    dry_run: bool = False,
+) -> PatchResult:
+    try:
+        patch_paths = paths_from_unified_diff(patch_text)
+        _validate_patch_worktree(cwd, patch_paths)
+    except ValueError as exc:
+        return PatchResult(
+            ok=False,
+            patch_paths=[],
+            returncode=None,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=str(exc),
+        )
+
+    check = _run_git_apply(
+        cwd,
+        patch_text,
+        "--reverse",
+        "--check",
+        "--whitespace=error",
+    )
+    if check.returncode != 0:
+        return PatchResult(
+            ok=False,
+            patch_paths=patch_paths,
+            returncode=check.returncode,
+            stdout_tail=_tail(check.stdout),
+            stderr_tail=_tail(check.stderr),
+            rejected_reason="git apply --reverse --check failed",
+        )
+
+    if dry_run:
+        return PatchResult(
+            ok=True,
+            patch_paths=patch_paths,
+            returncode=check.returncode,
+            stdout_tail=_tail(check.stdout),
+            stderr_tail=_tail(check.stderr),
+        )
+
+    reverted = _run_git_apply(
+        cwd,
+        patch_text,
+        "--reverse",
+        "--whitespace=error",
+    )
+    return PatchResult(
+        ok=reverted.returncode == 0,
+        patch_paths=patch_paths,
+        returncode=reverted.returncode,
+        stdout_tail=_tail(reverted.stdout),
+        stderr_tail=_tail(reverted.stderr),
+        rejected_reason=None if reverted.returncode == 0 else "git apply --reverse failed",
+    )
+
+
 def run_decision_command(
     decision: VariationDecision,
     *,
@@ -320,6 +387,20 @@ def finalize_attempt(
     if attempt.score_payload is not None:
         gate_decision = commit_score(lineage, attempt.score_payload, message=message)
     return EvolutionStep(attempt=attempt, gate_decision=gate_decision)
+
+
+def cleanup_rejected_candidate_patch(step: EvolutionStep, *, cwd: Path) -> EvolutionStep:
+    if step.accepted:
+        return step
+    patch_result = step.attempt.patch_result
+    if patch_result is None or not patch_result.ok:
+        return step
+    cleanup_result = revert_candidate_patch(step.attempt.decision.candidate_patch, cwd=cwd)
+    return EvolutionStep(
+        attempt=step.attempt,
+        gate_decision=step.gate_decision,
+        patch_cleanup_result=cleanup_result,
+    )
 
 
 def write_attempt(path: Path, attempt: VariationAttempt) -> None:
@@ -531,17 +612,23 @@ def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
     patch_result = (
         attempt.get("patch_result") if isinstance(attempt.get("patch_result"), dict) else None
     )
+    patch_cleanup_result = (
+        payload.get("patch_cleanup_result")
+        if isinstance(payload.get("patch_cleanup_result"), dict)
+        else None
+    )
     score_payload = attempt.get("score_payload")
     gate_decision = payload.get("gate_decision")
 
     status = _command_status(command_result)
     patch = _patch_status(patch_result)
+    cleanup = _patch_cleanup_status(patch_cleanup_result)
     gate = _gate_status(gate_decision)
     score = _score_status(score_payload)
     command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
     hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
     return (
-        f"{name}: {status}; {patch}; {gate}; {score}; "
+        f"{name}: {status}; {patch}; {cleanup}; {gate}; {score}; "
         f"command={command}; hypothesis={hypothesis}"
     )
 
@@ -566,6 +653,16 @@ def _patch_status(patch_result: Any) -> str:
     if ok:
         return f"patch ok paths={paths}"
     return f"patch rejected reason={reason}"
+
+
+def _patch_cleanup_status(cleanup_result: Any) -> str:
+    if not isinstance(cleanup_result, dict):
+        return "no patch cleanup"
+    ok = cleanup_result.get("ok")
+    reason = _shorten(str(cleanup_result.get("rejected_reason") or ""), 120)
+    if ok:
+        return "patch cleanup ok"
+    return f"patch cleanup failed reason={reason}"
 
 
 def _gate_status(gate_decision: Any) -> str:

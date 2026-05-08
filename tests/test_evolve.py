@@ -14,9 +14,11 @@ from avo.evolve import (
     VariationAttempt,
     _extract_score_payload,
     apply_candidate_patch,
+    cleanup_rejected_candidate_patch,
     command_from_decision,
     finalize_attempt,
     paths_from_unified_diff,
+    revert_candidate_patch,
     run_decision_command,
     summarize_attempt_history,
     write_attempt,
@@ -82,6 +84,18 @@ def test_apply_candidate_patch_updates_candidate_file(tmp_path: Path) -> None:
 
     assert result.ok
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
+def test_revert_candidate_patch_restores_candidate_file(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    apply_result = apply_candidate_patch(candidate_value_patch(), cwd=tmp_path)
+
+    revert_result = revert_candidate_patch(candidate_value_patch(), cwd=tmp_path)
+
+    assert apply_result.ok
+    assert revert_result.ok
+    assert revert_result.patch_paths == ["candidates/seed.py"]
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
 def test_apply_candidate_patch_rejects_non_candidate_path() -> None:
@@ -286,6 +300,55 @@ def test_run_decision_command_stops_when_candidate_patch_is_rejected(tmp_path: P
     assert "candidate patch rejected" in attempt.command_result.stderr_tail
 
 
+def test_cleanup_rejected_candidate_patch_reverts_nonaccepted_patch(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+    attempt = run_decision_command(
+        decision("avo worker-sleep --seconds 0", candidate_patch=candidate_value_patch()),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+    step = EvolutionStep(attempt=attempt, gate_decision=None)
+
+    cleaned = cleanup_rejected_candidate_patch(step, cwd=tmp_path)
+
+    assert cleaned.patch_cleanup_result is not None
+    assert cleaned.patch_cleanup_result.ok
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_cleanup_rejected_candidate_patch_keeps_accepted_patch(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+    score = {"backend": "mock", "all_correct": True, "geomean_tflops": 3.0, "cases": [{}]}
+    attempt = run_decision_command(
+        decision("avo worker-sleep --seconds 0", candidate_patch=candidate_value_patch()),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+    accepted_attempt = VariationAttempt(
+        decision=attempt.decision,
+        command_result=attempt.command_result,
+        started_at=attempt.started_at,
+        completed_at=attempt.completed_at,
+        score_payload=score,
+        patch_result=attempt.patch_result,
+    )
+    step = finalize_attempt(tmp_path / "lineage", accepted_attempt)
+
+    cleaned = cleanup_rejected_candidate_patch(step, cwd=tmp_path)
+
+    assert cleaned.accepted
+    assert cleaned.patch_cleanup_result is None
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
 def test_write_attempt_records_json(tmp_path: Path) -> None:
     attempt = run_decision_command(
         decision("avo worker-sleep --seconds 0"),
@@ -380,6 +443,7 @@ def test_write_step_records_gate_decision(tmp_path: Path) -> None:
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["gate_decision"]["accepted"] is True
+    assert payload["patch_cleanup_result"] is None
 
 
 def test_write_step_record_uses_timestamped_file(tmp_path: Path) -> None:
@@ -434,9 +498,23 @@ def test_summarize_attempt_history_reports_recent_steps(tmp_path: Path) -> None:
         started_at="2026-05-08T00:00:02+00:00",
         completed_at="2026-05-08T00:00:03+00:00",
     )
+    patch_cleanup = PatchResult(
+        ok=True,
+        patch_paths=["candidates/seed.py"],
+        returncode=0,
+        stdout_tail="",
+        stderr_tail="",
+    )
 
     write_step_record(attempts, finalize_attempt(tmp_path / "lineage", accepted_attempt))
-    write_step_record(attempts, EvolutionStep(attempt=rejected_attempt, gate_decision=None))
+    write_step_record(
+        attempts,
+        EvolutionStep(
+            attempt=rejected_attempt,
+            gate_decision=None,
+            patch_cleanup_result=patch_cleanup,
+        ),
+    )
     (attempts / "bad.json").write_text("{not-json", encoding="utf-8")
 
     summary = summarize_attempt_history(attempts, limit=5)
@@ -446,6 +524,7 @@ def test_summarize_attempt_history_reports_recent_steps(tmp_path: Path) -> None:
     assert "gate accepted=True" in summary
     assert "geomean_tflops=3.0" in summary
     assert "command returncode=2" in summary
+    assert "patch cleanup ok" in summary
     assert "bad.json" not in summary
 
 
