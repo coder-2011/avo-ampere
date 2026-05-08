@@ -17,6 +17,8 @@ DEFAULT_ALLOWED_SUBCOMMANDS = frozenset({"env", "compile", "score"})
 SHELL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 DEFAULT_ATTEMPT_HISTORY_LIMIT = 5
 DEFAULT_PATCH_ROOTS = ("candidates/",)
+CANDIDATE_SOURCE_SUFFIXES = frozenset({".cpp", ".cu", ".cuh", ".h", ".hpp", ".py"})
+SKIPPED_SOURCE_PARTS = frozenset({"__pycache__"})
 REJECTED_PATCH_MARKERS = frozenset(
     {
         "Binary files ",
@@ -386,8 +388,12 @@ def finalize_attempt(
 ) -> EvolutionStep:
     gate_decision = None
     if attempt.score_payload is not None:
-        source_files = _candidate_source_snapshot(source_root, attempt.patch_result)
-        candidate_patch = attempt.decision.candidate_patch if source_files else None
+        source_files = _candidate_source_snapshot(source_root, attempt)
+        candidate_patch = (
+            attempt.decision.candidate_patch
+            if attempt.patch_result is not None and attempt.patch_result.ok
+            else None
+        )
         gate_decision = commit_score(
             lineage,
             attempt.score_payload,
@@ -498,14 +504,125 @@ def _maybe_apply_candidate_patch(decision: VariationDecision, *, cwd: Path) -> P
 
 def _candidate_source_snapshot(
     source_root: Path | None,
-    patch_result: PatchResult | None,
+    attempt: VariationAttempt,
 ) -> dict[str, str] | None:
-    if source_root is None or patch_result is None or not patch_result.ok:
+    if source_root is None:
+        return None
+    snapshot_paths: set[str] = set()
+    if attempt.patch_result is not None and attempt.patch_result.ok:
+        snapshot_paths.update(attempt.patch_result.patch_paths)
+    snapshot_paths.update(_scored_candidate_source_paths(source_root, attempt.score_payload))
+    if not snapshot_paths:
         return None
     return {
         path: (source_root / path).read_text(encoding="utf-8")
-        for path in patch_result.patch_paths
+        for path in sorted(snapshot_paths)
+        if _is_snapshot_source_file(source_root, path)
     }
+
+
+def _scored_candidate_source_paths(
+    source_root: Path,
+    score_payload: dict[str, Any] | None,
+) -> set[str]:
+    if score_payload is None:
+        return set()
+    candidate_path = _candidate_path_from_score(source_root, score_payload.get("candidate_path"))
+    if candidate_path is None:
+        return set()
+
+    paths = {candidate_path}
+    candidate = PurePosixPath(candidate_path)
+    for companion in _candidate_companion_directories(candidate):
+        paths.update(_candidate_source_paths_under(source_root, companion))
+    return paths
+
+
+def _candidate_path_from_score(source_root: Path, raw_path: object) -> str | None:
+    if not isinstance(raw_path, str) or not raw_path:
+        return None
+    if "\x00" in raw_path or "\\" in raw_path:
+        return None
+    path = Path(raw_path)
+    if path.is_absolute():
+        try:
+            relative = path.resolve(strict=False).relative_to(source_root.resolve(strict=False))
+        except ValueError:
+            return None
+        raw_path = relative.as_posix()
+    return _normalize_candidate_source_path(raw_path)
+
+
+def _candidate_companion_directories(candidate_path: PurePosixPath) -> list[PurePosixPath]:
+    if candidate_path.suffix != ".py":
+        return []
+    stems = [candidate_path.stem]
+    if candidate_path.stem.endswith("_seed"):
+        stems.insert(0, candidate_path.stem.removesuffix("_seed"))
+    return [candidate_path.parent / stem for stem in dict.fromkeys(stems)]
+
+
+def _candidate_source_paths_under(source_root: Path, directory: PurePosixPath) -> set[str]:
+    normalized = _normalize_candidate_source_path(directory.as_posix())
+    if normalized is None:
+        return set()
+    root = source_root / normalized
+    if not root.is_dir() or _has_symlink_component(source_root, root):
+        return set()
+
+    paths = set()
+    for file_path in sorted(root.rglob("*")):
+        if not file_path.is_file() or file_path.suffix not in CANDIDATE_SOURCE_SUFFIXES:
+            continue
+        relative = file_path.relative_to(source_root).as_posix()
+        normalized_file = _normalize_candidate_source_path(relative)
+        if normalized_file is not None and _is_snapshot_source_file(source_root, normalized_file):
+            paths.add(normalized_file)
+    return paths
+
+
+def _normalize_candidate_source_path(path: str) -> str | None:
+    posix_path = PurePosixPath(path)
+    if posix_path.is_absolute():
+        return None
+    if any(part in {"", ".", ".."} for part in posix_path.parts):
+        return None
+    if any(part in SKIPPED_SOURCE_PARTS for part in posix_path.parts):
+        return None
+    if ".git" in posix_path.parts:
+        return None
+    if not posix_path.as_posix().startswith("candidates/"):
+        return None
+    return posix_path.as_posix()
+
+
+def _is_snapshot_source_file(source_root: Path, relative_path: str) -> bool:
+    normalized = _normalize_candidate_source_path(relative_path)
+    if normalized is None:
+        return False
+    path = source_root / normalized
+    if path.suffix not in CANDIDATE_SOURCE_SUFFIXES:
+        return False
+    if not path.is_file() or _has_symlink_component(source_root, path):
+        return False
+    try:
+        path.resolve(strict=True).relative_to(source_root.resolve(strict=True))
+    except (FileNotFoundError, ValueError):
+        return False
+    return True
+
+
+def _has_symlink_component(source_root: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(source_root)
+    except ValueError:
+        return True
+    current = source_root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
 
 
 def _patch_failure_summary(result: PatchResult) -> str:

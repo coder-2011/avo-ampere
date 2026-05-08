@@ -64,9 +64,10 @@ variation steps.
   runs. This does not stage, commit, score, or expand the `next_command`
   allowlist beyond `avo env`, `avo compile`, and `avo score`. If `evolve-once`
   applies a patch and the step is not accepted, it attempts a checked reverse
-  apply so rejected edits do not leak into later attempts. If a patched step is
-  accepted, the lineage commit stores the raw patch and snapshots of the touched
-  candidate files under `patches/latest.patch` and `sources/latest/`.
+  apply so rejected edits do not leak into later attempts. If a candidate step
+  is accepted, the lineage commit stores snapshots of the scored candidate
+  module and companion source directory under `sources/latest/`; patched accepted
+  steps also store the raw patch under `patches/latest.patch`.
 
 ## Search Space
 

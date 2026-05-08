@@ -236,7 +236,7 @@ uv run python -m avo apply-patch candidate.patch
 
 `apply-patch` reads a raw unified diff, extracts `diff --git` paths, rejects paths outside `candidates/`, rejects path traversal, symlink-mode patches, binary patches, renames, deletes, and mode changes, then runs `git apply --check --whitespace=error` before applying. It does not stage, commit, score, or bypass the lineage gate.
 
-Anthropic decisions now include a required `candidate_patch` string. Empty means no edit. A non-empty raw unified diff is applied through the same validator before `run-decision` or `evolve-once` runs the bounded `next_command`; the command allowlist remains limited to `avo env`, `avo compile`, and `avo score`. When `evolve-once` applies a patch but the step is not accepted by the score gate, it checks and applies the reverse patch so rejected edits do not pollute the next attempt. When a patched step is accepted, the lineage commit records `patches/latest.patch` and `sources/latest/...` snapshots for the touched candidate files alongside `scores/latest.json`.
+Anthropic decisions now include a required `candidate_patch` string. Empty means no edit. A non-empty raw unified diff is applied through the same validator before `run-decision` or `evolve-once` runs the bounded `next_command`; the command allowlist remains limited to `avo env`, `avo compile`, and `avo score`. When `evolve-once` applies a patch but the step is not accepted by the score gate, it checks and applies the reverse patch so rejected edits do not pollute the next attempt. When a candidate step is accepted, the lineage commit records `sources/latest/...` snapshots for the scored candidate module and companion source directory alongside `scores/latest.json`; patched accepted steps also record `patches/latest.patch`.
 
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the existing lineage gate.
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
@@ -260,7 +260,7 @@ uv run python -m avo evolve-loop \
 - Scaling the tiny WMMA QK/PV seed beyond its 16/32-token smoke shapes.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
 - Longer-running autonomous supervision beyond the minimal capped `evolve-loop`, including no-progress detection and richer stop policies.
-- Full source snapshotting for unmodified companion files around accepted candidate patches.
+- Broader dependency manifests for accepted candidates that import files outside the scored module and companion source directory.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.
 
