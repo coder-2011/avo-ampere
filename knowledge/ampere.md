@@ -366,6 +366,13 @@ variation steps.
   rewriting the MMA QK block, remove the old single-fragment fill/load/mma lines
   completely and store the accumulated two-chunk score fragment only after the
   chunk loop.
+  Another generated head_dim32 two-chunk patch was rejected before compile
+  because its context did not match the current source and it again left stale
+  single-chunk QK load/mma lines after the new two-chunk loop. The decision text
+  itself warned those stale lines might reference undeclared fragments and must
+  be removed. The planner now rejects non-empty patches when their own risk text
+  calls out stale code that still needs removal or may reference undeclared
+  symbols.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
