@@ -765,6 +765,23 @@ def test_parse_variation_decision_allows_batched_mma_shape_score() -> None:
     }
 
 
+def test_parse_variation_decision_rejects_mma_score_beyond_transform_cap() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Change kMaxSeqLen from 256 to 1024 in "
+        "candidates/cuda_mma_attention/attention_kernel.cu and add 1024 to "
+        "SMOKE_SEQUENCES in candidates/cuda_mma_attention_seed.py."
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 1024,2048 --total-tokens 32768 --num-heads 16 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="beyond the transformed cap"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_unpatched_mma_workload_scaling() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Score the existing MMA seed at a larger token workload."
@@ -2532,6 +2549,22 @@ def test_decision_feedback_explains_wrapper_only_mma_shape_error() -> None:
     content = updated["messages"][0]["content"]
     assert "structured transform batch" in content
     assert "Wrapper-only cap edits are not enough" in content
+
+
+def test_decision_feedback_explains_transform_cap_score_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command scores MMA seq_lens beyond the transformed cap; "
+            "max requested seq_len=2048 but kMaxSeqLen=1024"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "within the cap expressed by the structured transform" in content
+    assert "cover every requested seq_len" in content
 
 
 def test_decision_feedback_explains_unpatched_warp_row_score_error() -> None:

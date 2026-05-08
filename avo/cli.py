@@ -41,7 +41,7 @@ from .evolve import (
     write_step_record,
 )
 from .isolation import module_worker_args, print_result, run_json_worker
-from .lineage import commit_score, init_lineage_repo, seed_baseline
+from .lineage import commit_score, init_lineage_repo, lineage_score_summary, seed_baseline
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -505,10 +505,7 @@ def _step_exit_code(step: EvolutionStep) -> int:
 
 
 def _lineage_summary(path: Path) -> str:
-    latest = path / "scores" / "latest.json"
-    if not latest.exists():
-        return "No accepted candidates yet."
-    return latest.read_text(encoding="utf-8")
+    return lineage_score_summary(path)
 
 
 def _baseline_build_env(env: dict[str, str]) -> dict[str, str]:

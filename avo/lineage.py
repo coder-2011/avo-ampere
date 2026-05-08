@@ -132,7 +132,11 @@ def commit_score(
     decision = decide_gate(candidate, best, best_payload=best_payload)
     if not decision.accepted:
         return decision
-    if not (candidate_patch or "").strip() and _source_snapshot_matches_latest(path, source_files):
+    if (
+        best_payload is not None
+        and not (candidate_patch or "").strip()
+        and _source_snapshot_matches_latest(path, source_files)
+    ):
         return GateDecision(
             False,
             "candidate source is unchanged from current best",
@@ -172,6 +176,55 @@ def latest_score_payload(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def lineage_score_summary(path: Path, *, max_lanes: int = 8) -> str:
+    if not (path / ".git").exists() or not _has_commits(path):
+        return "No accepted candidates yet."
+    lanes = accepted_score_lanes(path)
+    if not lanes:
+        return "No accepted candidates yet."
+    latest = latest_score_payload(path)
+    payload = {
+        "latest": _score_payload_brief(latest) if latest is not None else None,
+        "benchmark_lanes": [
+            {
+                "commit": lane["commit"],
+                **_score_payload_brief(lane["payload"]),
+            }
+            for lane in lanes[:max_lanes]
+        ],
+    }
+    return json.dumps(payload, indent=2, sort_keys=True)
+
+
+def accepted_score_lanes(path: Path) -> list[dict[str, Any]]:
+    lanes: dict[tuple[str, ...], dict[str, Any]] = {}
+    if not (path / ".git").exists() or not _has_commits(path):
+        return []
+    for commit in _git_capture(path, "rev-list", "HEAD").splitlines():
+        try:
+            raw = _git_capture(path, "show", f"{commit}:scores/latest.json")
+        except subprocess.CalledProcessError:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict):
+            continue
+        signature = _benchmark_signature(payload)
+        if not signature:
+            continue
+        geomean = _score_geomean(payload)
+        current = lanes.get(signature)
+        if current is None or geomean > _score_geomean(current["payload"]):
+            lanes[signature] = {"commit": commit, "payload": payload}
+    return sorted(
+        lanes.values(),
+        key=lambda lane: _score_geomean(lane["payload"]),
+        reverse=True,
+    )
+
+
 def best_score_payload_for_signature(
     path: Path,
     candidate: dict[str, Any],
@@ -206,6 +259,34 @@ def best_score_payload_for_signature(
             best_payload = payload
             best_geomean = geomean
     return best_payload
+
+
+def _score_payload_brief(payload: dict[str, Any]) -> dict[str, Any]:
+    brief: dict[str, Any] = {
+        "all_correct": bool(payload.get("all_correct")),
+        "backend": payload.get("backend"),
+        "case_signature_hash": _benchmark_signature_hash(payload),
+        "geomean_tflops": _score_geomean(payload),
+        "cases": _score_case_dicts(payload),
+    }
+    for key in ("candidate_path", "role", "source"):
+        if payload.get(key) is not None:
+            brief[key] = payload[key]
+    return brief
+
+
+def _score_case_dicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
+    cases = payload.get("cases")
+    if not isinstance(cases, list):
+        return []
+    result: list[dict[str, Any]] = []
+    for case_payload in cases:
+        if not isinstance(case_payload, dict):
+            continue
+        case = case_payload.get("case")
+        if isinstance(case, dict):
+            result.append(dict(case))
+    return result
 
 
 def _read_score_payload(path: Path) -> dict[str, Any] | None:

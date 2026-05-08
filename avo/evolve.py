@@ -572,10 +572,10 @@ def validate_decision_against_attempt_history(
     payloads = [payload for _, payload in _load_step_payloads(directory)]
     if not payloads:
         return
-    latest_transform = _successful_compile_only_transform(payloads[-1])
-    if latest_transform is None:
+    pending_transform = _pending_compile_only_transform(payloads)
+    if pending_transform is None:
         return
-    if decision.candidate_transform != latest_transform:
+    if decision.candidate_transform != pending_transform:
         return
     if _decision_subcommand(decision) != "compile":
         return
@@ -742,8 +742,7 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
 def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
     if not payloads:
         return ""
-    latest = payloads[-1]
-    if _successful_compile_only_transform(latest) is None:
+    if _pending_compile_only_transform(payloads) is None:
         return ""
     return (
         "Follow-up signal: the latest structured transform compiled successfully but has "
@@ -763,6 +762,42 @@ def _successful_compile_only_transform(payload: dict[str, Any]) -> dict[str, Any
     decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
     transform = decision.get("candidate_transform")
     return transform if isinstance(transform, dict) else None
+
+
+def _pending_compile_only_transform(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
+    scored_transforms = {
+        _transform_identity(transform)
+        for transform in (
+            _decision_transform(payload)
+            for payload in payloads
+            if isinstance(_step_score_payload(payload), dict)
+        )
+        if transform is not None
+    }
+    for payload in reversed(payloads):
+        transform = _successful_compile_only_transform(payload)
+        if transform is None:
+            continue
+        if _transform_identity(transform) not in scored_transforms:
+            return transform
+    return None
+
+
+def _decision_transform(payload: dict[str, Any]) -> dict[str, Any] | None:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    transform = decision.get("candidate_transform")
+    return transform if isinstance(transform, dict) else None
+
+
+def _step_score_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    score_payload = attempt.get("score_payload")
+    return score_payload if isinstance(score_payload, dict) else None
+
+
+def _transform_identity(transform: dict[str, Any]) -> str:
+    return json.dumps(transform, sort_keys=True, separators=(",", ":"))
 
 
 def _decision_subcommand(decision: VariationDecision) -> str:

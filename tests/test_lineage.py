@@ -8,6 +8,7 @@ from avo.lineage import (
     commit_score,
     decide_gate,
     init_lineage_repo,
+    lineage_score_summary,
     seed_baseline,
 )
 
@@ -88,6 +89,27 @@ def test_commit_score_accepts_new_benchmark_shape_lane(tmp_path) -> None:
     assert best_score_payload_for_signature(repo, changed_shape)["geomean_tflops"] == 2.0
 
 
+def test_commit_score_accepts_new_benchmark_shape_for_unchanged_source(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    source = {"candidates/seed.py": "VALUE = 1\n"}
+    commit_score(
+        repo,
+        score_payload(seq_len=128, geomean=1.0),
+        source_files=source,
+        candidate_patch="diff --git a/candidates/seed.py b/candidates/seed.py\n",
+    )
+
+    decision = commit_score(
+        repo,
+        score_payload(seq_len=256, geomean=2.0),
+        source_files=source,
+    )
+
+    assert decision.accepted
+    assert "established benchmark case set" in decision.reason
+
+
 def test_commit_score_rejects_same_benchmark_shape_regression(tmp_path) -> None:
     repo = tmp_path / "lineage"
     init_lineage_repo(repo)
@@ -103,6 +125,20 @@ def test_commit_score_rejects_same_benchmark_shape_regression(tmp_path) -> None:
     assert "regressed" in decision.reason
     assert head_after == head_before
     assert best_geomean(repo) == 2.0
+
+
+def test_lineage_score_summary_lists_benchmark_lanes(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    commit_score(repo, score_payload(seq_len=128, geomean=1.0))
+    commit_score(repo, score_payload(seq_len=256, geomean=2.0))
+
+    summary = json.loads(lineage_score_summary(repo))
+
+    lanes = summary["benchmark_lanes"]
+    assert [lane["geomean_tflops"] for lane in lanes] == [2.0, 1.0]
+    assert {lane["cases"][0]["seq_len"] for lane in lanes} == {128, 256}
+    assert summary["latest"]["cases"][0]["seq_len"] == 256
 
 
 def test_commit_score_rejects_unchanged_source_rerun(tmp_path) -> None:

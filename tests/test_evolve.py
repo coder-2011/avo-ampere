@@ -981,6 +981,49 @@ def test_summarize_attempt_history_requests_score_after_compile_only_transform(
     assert "score the same candidate_transform" in summary
 
 
+def test_summarize_attempt_history_keeps_compile_followup_after_planning_failure(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 1024,
+    }
+    compile_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=compile_attempt, gate_decision=None))
+    write_step_record(attempts, planning_failure_step(ValueError("invalid planner compile")))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "compiled successfully but has not been scored" in summary
+    assert "score the same candidate_transform" in summary
+
+
 def test_attempt_history_rejects_repeated_compile_only_transform(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     transform = {
@@ -1031,6 +1074,53 @@ def test_attempt_history_rejects_repeated_compile_only_transform(tmp_path: Path)
         ),
         attempts,
     )
+
+
+def test_attempt_history_rejects_repeated_compile_after_planning_failure(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 1024,
+    }
+    compile_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=compile_attempt, gate_decision=None))
+    write_step_record(attempts, planning_failure_step(ValueError("invalid planner compile")))
+
+    with pytest.raises(ValueError, match="repeats a successful compile-only"):
+        validate_decision_against_attempt_history(
+            decision(
+                "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+                candidate_transform=transform,
+            ),
+            attempts,
+        )
 
 
 def test_summarize_attempt_history_promotes_recurring_failure_class(tmp_path: Path) -> None:

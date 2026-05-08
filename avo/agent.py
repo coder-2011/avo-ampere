@@ -33,6 +33,7 @@ RECORDED_NO_PATCH_COMPILE_SOURCES = frozenset(
         "candidates/cuda_warp_rows_attention/attention_kernel.cu",
     }
 )
+MMA_BASE_SMOKE_SEQUENCES = frozenset({16, 32, 64, 128, 256})
 ENV_COMMAND_KEYWORDS = (
     "baseline",
     "build",
@@ -747,6 +748,12 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "For larger MMA scores, use a structured transform batch that changes the "
             "wrapper cap and the kernel cap/dataflow together. Wrapper-only cap edits "
             "are not enough to graduate out of the smoke shape. "
+        )
+    if "scores MMA seq_lens beyond the transformed cap" in message:
+        return (
+            "Keep the score workload within the cap expressed by the structured transform. "
+            "If scoring larger sequence lengths, first extend both kMaxSeqLen and the "
+            "wrapper sequence set to cover every requested seq_len. "
         )
     if "recorded no-patch warp-row seed score" in message:
         return (
@@ -1859,6 +1866,10 @@ def _validate_patched_mma_score_shape_extension(
         MMA_SEED,
         "candidates/cuda_mma_attention/attention_kernel.cu",
     } <= changed_paths:
+        _validate_mma_transform_covers_score_shape(
+            candidate_transform,
+            seq_lens=seq_lens,
+        )
         return
     raise ValueError(
         "next_command scores a patched MMA shape extension beyond the current smoke cap; "
@@ -1880,6 +1891,101 @@ def _is_mma_seed_smoke_shape(
         and total_tokens <= 1024
         and num_heads <= 4
     )
+
+
+def _validate_mma_transform_covers_score_shape(
+    candidate_transform: dict[str, Any],
+    *,
+    seq_lens: tuple[int, ...],
+) -> None:
+    max_seq_len = _candidate_transform_int_value(
+        candidate_transform,
+        op="set_constexpr_int",
+        name="kMaxSeqLen",
+    )
+    if max_seq_len is not None and any(seq_len > max_seq_len for seq_len in seq_lens):
+        raise ValueError(
+            "next_command scores MMA seq_lens beyond the transformed cap; "
+            f"max requested seq_len={max(seq_lens)} but kMaxSeqLen={max_seq_len}"
+        )
+    wrapper_sequences = _candidate_transform_python_set_values(
+        candidate_transform,
+        name="SMOKE_SEQUENCES",
+    )
+    if wrapper_sequences is None:
+        return
+    missing = sorted(set(seq_lens) - (MMA_BASE_SMOKE_SEQUENCES | wrapper_sequences))
+    if missing:
+        missing_text = ",".join(str(seq_len) for seq_len in missing)
+        raise ValueError(
+            "next_command scores MMA seq_lens beyond the transformed cap; "
+            f"wrapper sequence set does not include: {missing_text}"
+        )
+
+
+def _candidate_transform_int_value(
+    candidate_transform: dict[str, Any],
+    *,
+    op: str,
+    name: str,
+) -> int | None:
+    for step in _candidate_transform_steps_for_validation(candidate_transform):
+        if step.get("op") == op and step.get("name") == name and isinstance(step.get("value"), int):
+            return int(step["value"])
+    return None
+
+
+def _candidate_transform_python_set_values(
+    candidate_transform: dict[str, Any],
+    *,
+    name: str,
+) -> frozenset[int] | None:
+    values: set[int] = set()
+    found_set_transform = False
+    for step in _candidate_transform_steps_for_validation(candidate_transform):
+        if step.get("name") != name:
+            continue
+        if step.get("op") == "add_int_to_python_set" and isinstance(step.get("value"), int):
+            found_set_transform = True
+            values.add(int(step["value"]))
+        elif step.get("op") == "replace_once":
+            replacement = str(step.get("replace") or "")
+            parsed = _python_int_set_values_from_assignment(replacement, name=name)
+            if parsed is not None:
+                found_set_transform = True
+                values.update(parsed)
+    return frozenset(values) if found_set_transform else None
+
+
+def _candidate_transform_steps_for_validation(
+    candidate_transform: dict[str, Any],
+) -> list[dict[str, Any]]:
+    if candidate_transform.get("op") == "batch":
+        return [
+            step
+            for step in candidate_transform.get("steps", [])
+            if isinstance(step, dict)
+        ]
+    return [candidate_transform]
+
+
+def _python_int_set_values_from_assignment(text: str, *, name: str) -> frozenset[int] | None:
+    match = re.fullmatch(
+        rf"\s*{re.escape(name)}\s*=\s*\{{(?P<body>[^}}]*)\}}\s*",
+        text,
+    )
+    if match is None:
+        return None
+    values: set[int] = set()
+    for raw_item in match.group("body").split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        try:
+            values.add(int(item))
+        except ValueError:
+            return None
+    return frozenset(values)
 
 
 def _validate_env_command_context(planning_text: str) -> None:

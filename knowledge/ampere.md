@@ -1033,6 +1033,27 @@ source files.
   that recorded seq512 score was replayed into lineage as commit
   `bc05dd85ccc8872308c786ba57664cfdffdc4640` with reason `candidate
   established benchmark case set`.
+  The agent prompt now receives a compact lineage summary containing the latest
+  accepted score plus all best benchmark-signature lanes, so creating a new lane
+  no longer hides the earlier seq256/head_dim128 best from subsequent planning.
+  The same pass loosened the unchanged-source guard only for new benchmark
+  signatures; same-signature no-patch reruns remain rejected as timing-noise
+  probes.
+  After seeing both the seq512 and seq256 lanes, the planner proposed a seq1024
+  shape-graduation batch (`kMaxSeqLen=1024`, add `1024` to `SMOKE_SEQUENCES`).
+  Compile-check passed on sm86 with no spills, 40 registers, 1 barrier, and
+  9920 bytes shared memory. A follow-up planning failure temporarily hid the
+  compile follow-up signal, so attempt history now keeps the "score the compiled
+  transform" signal alive until that transform is scored.
+  The subsequent seq1024 score tried `seq_lens=1024,2048,4096` with
+  `total_tokens=32768`, `num_heads=16`, `head_dim=128`, BF16, both causal modes.
+  The 1024 cases passed correctness: noncausal max error `0.001953125`, median
+  `27.58780860900879 ms`, `9.963745610959426` TFLOPS; causal max error
+  `0.0078125`, median `27.701984405517578 ms`, `4.961339644846` TFLOPS. The
+  2048 and 4096 cases failed wrapper validation because the structured transform
+  only added the 1024 cap. Runtime planning now rejects MMA score commands whose
+  requested `seq_lens` exceed the `kMaxSeqLen` and wrapper sequence set expressed
+  by the same structured transform.
   Exa research refresh on agent failure handling reinforced the same design:
   classify failure types before deciding retry/fallback behavior, persist failure
   signatures to avoid infinite implement-verify loops, and enforce deterministic
