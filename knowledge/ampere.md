@@ -801,3 +801,11 @@ source files.
   the required matrix element type, and its own risk text said "Do not use this
   diff". The planner now treats that language as self-invalid and rejects WMMA
   matrix fragments that omit `__nv_bfloat16` or another supported element type.
+  A follow-up QK software-pipeline patch used a valid `k_frag_next` WMMA
+  matrix-B fragment, loaded chunk 0 before the QK chunk loop, consumed
+  `k_frag_next` in `mma_sync`, and loaded `next_chunk` at the end of each
+  chunk. It compiled with unchanged resources and preserved correctness, but
+  regressed geomean throughput to `0.4462305013884498` TFLOPS versus the
+  current best `0.4924015757468769`. Do not repeat this exact QK
+  `k_frag_next` preload chain; future QK scheduling work needs materially
+  different overlap or profiler evidence.

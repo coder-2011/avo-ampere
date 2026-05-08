@@ -756,6 +756,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch adds an MMA preload fragment that is loaded but never consumed; "
             "compile-only unused preload skeletons do not affect correctness or throughput"
         )
+    if _candidate_patch_repeats_mma_qk_fragment_preload_chain(added_text):
+        raise ValueError(
+            "candidate_patch repeats the MMA QK k_frag_next preload chain; "
+            "the recorded score preserved correctness but regressed geomean throughput"
+        )
     if _candidate_patch_uses_global_offset_for_shared_k_tile(added_text):
         raise ValueError(
             "candidate_patch stages an MMA K tile in shared memory but loads it "
@@ -868,6 +873,17 @@ def _candidate_patch_uses_missing_wmma_matrix_element_type(added_text: str) -> b
             r"(?:nvcuda::)?wmma::(?:row|col)_major>",
             compact,
         )
+    )
+
+
+def _candidate_patch_repeats_mma_qk_fragment_preload_chain(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return (
+        "k_frag_next" in added_text
+        and "mma_sync(score_frag,q_frag,k_frag_next,score_frag)" in compact
+        and "next_chunk=chunk+1" in compact
+        and "next_chunk<8" in compact
+        and "next_chunk*16" in compact
     )
 
 
