@@ -15,6 +15,11 @@ constexpr int kTileKeys = kWarpSize;
 constexpr int kMaxHeadDim = 128;
 constexpr int kMaxLaneDims = kMaxHeadDim / kWarpSize;
 
+template <typename scalar_t>
+struct alignas(sizeof(scalar_t) * 4) ScalarPack4 {
+  scalar_t values[4];
+};
+
 __device__ __forceinline__ float warp_reduce_max(float value) {
 #pragma unroll
   for (int offset = kWarpSize / 2; offset > 0; offset >>= 1) {
@@ -29,6 +34,31 @@ __device__ __forceinline__ float warp_reduce_sum(float value) {
     value += __shfl_xor_sync(0xffffffff, value, offset);
   }
   return value;
+}
+
+template <typename scalar_t>
+__device__ __forceinline__ float dot_product(const scalar_t* __restrict__ q_row,
+                                             const scalar_t* __restrict__ k_row,
+                                             int head_dim) {
+  float score = 0.0f;
+  if ((head_dim & 3) == 0) {
+    const auto* q_pack = reinterpret_cast<const ScalarPack4<scalar_t>*>(q_row);
+    const auto* k_pack = reinterpret_cast<const ScalarPack4<scalar_t>*>(k_row);
+    for (int dim = 0; dim < head_dim / 4; ++dim) {
+      const ScalarPack4<scalar_t> qv = q_pack[dim];
+      const ScalarPack4<scalar_t> kv = k_pack[dim];
+#pragma unroll
+      for (int inner = 0; inner < 4; ++inner) {
+        score += static_cast<float>(qv.values[inner]) * static_cast<float>(kv.values[inner]);
+      }
+    }
+    return score;
+  }
+
+  for (int dim = 0; dim < head_dim; ++dim) {
+    score += static_cast<float>(q_row[dim]) * static_cast<float>(k_row[dim]);
+  }
+  return score;
 }
 
 template <typename scalar_t>
@@ -75,11 +105,7 @@ __global__ void warp_rows_attention_kernel(const scalar_t* __restrict__ q,
     if (lane < tile_keys) {
       const int key = tile_start + lane;
       const int k_offset = base + key * head_dim;
-      score = 0.0f;
-      for (int dim = 0; dim < head_dim; ++dim) {
-        score += static_cast<float>(q[q_offset + dim]) * static_cast<float>(k[k_offset + dim]);
-      }
-      score *= scale;
+      score = dot_product(q + q_offset, k + k_offset, head_dim) * scale;
     }
 
     const float tile_max = warp_reduce_max(score);

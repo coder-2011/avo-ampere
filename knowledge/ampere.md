@@ -54,8 +54,10 @@ variation steps.
 - Split-Q versus split-K work partitioning.
 - The current warp-row seed uses four query rows per CTA, one warp per row,
   32-key score tiles, warp-shuffle max/sum reductions, FP32 row state, and
-  online output rescaling. This is still far from FA2: it does not use
-  `mma.sync`, `cp.async`, or shared K/V staging.
+  online output rescaling. Its dot-product path uses a 4-wide packed load when
+  head dimension is divisible by 4, with a scalar fallback for odd smoke shapes.
+  This is still far from FA2: it does not use `mma.sync`, `cp.async`, or shared
+  K/V staging.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
@@ -66,6 +68,8 @@ variation steps.
   https://docs.nvidia.com/cuda/ampere-tuning-guide/
 - FlashAttention-2 interface and sm8x block-size heuristic:
   https://github.com/Dao-AILab/flash-attention/blob/v2.8.3/flash_attn/flash_attn_interface.py
+- NVIDIA vectorized memory access guidance:
+  https://developer.nvidia.com/blog/cuda-pro-tip-increase-performance-with-vectorized-memory-access/
 
 ## Gate
 
