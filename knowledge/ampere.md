@@ -176,7 +176,12 @@ variation steps.
   `head_dim=16`, `total_tokens=32`, `num_heads=1`, BF16, both causal modes)
   passed correctness but was gate-rejected at `6.539498372773744e-05` geomean
   TFLOPS versus the then-current `0.10830947571120902` best, so do not repeat that
-  baseline score as a candidate-improving step.
+  baseline score as a candidate-improving step. A later no-edit diagnostic
+  repeated the same smoke after the fixed-case gate and again passed correctness
+  at `7.894282511202798e-05` geomean TFLOPS, but was rejected because its case
+  signature differs from the seq256 warp-row best. Do not spend another loop on
+  the unpatched MMA baseline unless checking that the CUDA extension toolchain
+  still works after an environment change.
   A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
   to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as
   `fragment<matrix_a, 16, 16, 32, ...>` and `fragment<accumulator, 16, 32, 16,
