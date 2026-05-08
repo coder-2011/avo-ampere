@@ -105,7 +105,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/cuda_mma_attention/attention_kernel.cu" in context
     assert "candidates/cuda_identity/identity_kernel.cu" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
-    assert "--seq-lens 16" in context
+    assert "--seq-lens 32" in context
     assert "avo score --backend candidate" in context
     assert "csrc/flash_attn" not in context
 

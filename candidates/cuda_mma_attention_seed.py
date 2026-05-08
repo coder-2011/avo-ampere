@@ -8,7 +8,7 @@ from torch.utils.cpp_extension import load
 
 SOURCE_DIR = Path(__file__).resolve().parent / "cuda_mma_attention"
 CUDA_HOME = Path("/usr/local/cuda-12.9")
-SMOKE_SEQUENCE = 16
+SMOKE_SEQUENCES = {16, 32}
 SMOKE_HEAD_DIM = 16
 
 
@@ -34,9 +34,9 @@ def _extension():
 def attention(q, k, v, causal: bool):
     seq_len = q.shape[2]
     head_dim = q.shape[3]
-    if seq_len != SMOKE_SEQUENCE or head_dim != SMOKE_HEAD_DIM:
+    if seq_len not in SMOKE_SEQUENCES or head_dim != SMOKE_HEAD_DIM:
         raise RuntimeError(
-            "cuda_mma_attention_seed is a 16x16 BF16 tensor-core correctness seed; "
+            "cuda_mma_attention_seed is a 16/32-token BF16 tensor-core correctness seed; "
             f"got seq_len={seq_len}, head_dim={head_dim}"
         )
     if str(q.dtype) != "torch.bfloat16":
