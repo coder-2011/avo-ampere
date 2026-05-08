@@ -182,6 +182,11 @@ variation steps.
   caps alone is not a correctness fix; larger tiled scores must include a kernel
   change for the known larger-shape failure, and the planner now rejects
   wrapper-cap-only tiled larger-shape scores.
+  A later warp-row WMMA QK skeleton patch was rejected before compile because
+  `git apply --check` found trailing whitespace in added lines. Its risk text
+  also admitted an early return would break correctness if scored. The planner
+  now rejects candidate patches with trailing whitespace in added diff lines and
+  treats `would break correctness` as self-invalid language for non-empty patches.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
