@@ -258,6 +258,13 @@ variation steps.
   Future tiled fixes should keep the online-softmax invariant explicit:
   `output_acc = output_acc * old_scale + tile_acc * tile_scale`, with
   `row_sum = row_sum * old_scale + tile_sum * tile_scale`.
+  Dao-AILab's CuTe softmax helper reinforces this recurrence: it computes a
+  per-row scale from the previous row max to the current row max, updates the
+  running row sum using `old_row_sum * row_scale` as the reduction initializer,
+  and exposes `rescale_O` to multiply the accumulated output by that row scale
+  before consuming the current probability tile. Do not remove either the old
+  accumulator scale or the current tile scale when the local probabilities were
+  normalized to a tile-local maximum.
   A later tiled rescale probe did the opposite: it removed `tile_scale` from the
   output update while its own risk text said the patch would break correctness
   and should be rejected. That patch applied and compiled, then was cleaned up
@@ -414,6 +421,8 @@ variation steps.
   https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/ampere/flash_attention_v2.py
 - Dao-AILab CuTe FlashAttention forward implementation:
   https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/flash_fwd.py
+- Dao-AILab CuTe FlashAttention online softmax helper:
+  https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/softmax.py
 - NVIDIA CUDA Samples BF16 Tensor Core GEMM:
   https://github.com/NVIDIA/cuda-samples/blob/master/Samples/3_CUDA_Features/bf16TensorCoreGemm/bf16TensorCoreGemm.cu
 - NVIDIA CUDA C++ Programming Guide, Warp Matrix Functions:
