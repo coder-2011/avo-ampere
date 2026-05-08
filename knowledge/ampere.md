@@ -195,6 +195,13 @@ variation steps.
   small aligned shared-memory tile path without early returns or dead score tiles;
   direct global-load skeletons that do not integrate with online softmax are not
   useful progress.
+  The next accepted warp-row improvement added one padding column to both staged
+  K and V shared-memory tiles (`kMaxHeadDim + 1`) to reduce bank conflicts in the
+  V accumulation path. It preserved correctness on the seq256/head_dim128 BF16
+  suite and improved geomean from 0.4012802607933843 to 0.43185073056556733
+  TFLOPS: noncausal 0.60304142909027 TFLOPS, causal 0.3092574481513733 TFLOPS.
+  Ptxas for sm86 reports no spills; BF16/Half use 48 registers and 17024 bytes
+  shared memory, FP32 uses 56 registers and 33536 bytes shared memory.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
