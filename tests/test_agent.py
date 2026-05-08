@@ -1272,6 +1272,31 @@ def test_parse_variation_decision_rejects_2d_probability_index_without_declarati
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_regressed_mma_score_stride_skew() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Skew the MMA score tile and score it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,8 @@\n"
+        "-old\n"
+        "+constexpr int kScoreStride = 24;\n"
+        "+__shared__ float scores[kTile][kScoreStride];\n"
+        "+wmma::store_matrix_sync(\n"
+        "+    &scores[0][0], score_frag, kScoreStride, wmma::mem_row_major);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="score-tile stride-24 skew"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."

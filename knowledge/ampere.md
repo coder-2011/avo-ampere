@@ -844,3 +844,9 @@ source files.
   Retry feedback now explicitly includes "cannot improve throughput" among the
   self-invalid patch descriptions that require a corrected diff or no-edit
   diagnostic instead of another patch attempt.
+  A later corrected score-tile skew patch padded `scores` with
+  `kScoreStride = 24`, updated the WMMA score store to `&scores[0][0]`, and
+  used 2D score indexing. It passed correctness but regressed geomean to
+  `0.5374411946079206` TFLOPS versus the accepted `0.5772885607891738`.
+  Do not repeat this exact score-tile stride-24 skew without a materially
+  different score/softmax dataflow or profiler evidence.
