@@ -1,4 +1,5 @@
 import json
+import os
 import sys
 from pathlib import Path
 from textwrap import dedent
@@ -25,7 +26,7 @@ from avo.evolve import (
 from avo.lineage import best_geomean
 
 
-def decision(next_command: str) -> VariationDecision:
+def decision(next_command: str, *, candidate_patch: str = "") -> VariationDecision:
     return VariationDecision(
         hypothesis="validate the execution substrate",
         files_to_inspect=["avo/evolve.py"],
@@ -33,6 +34,7 @@ def decision(next_command: str) -> VariationDecision:
         expected_effect="records an attempt without shell execution",
         risk="command may fail",
         next_command=next_command,
+        candidate_patch=candidate_patch,
     )
 
 
@@ -231,6 +233,57 @@ def test_run_decision_command_executes_allowed_command() -> None:
 
     assert attempt.command_result.ok
     assert "AVO_RESULT_JSON" in attempt.command_result.stdout_tail
+    assert attempt.patch_result is None
+
+
+def test_run_decision_command_applies_candidate_patch_before_command(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+
+    attempt = run_decision_command(
+        decision("avo worker-sleep --seconds 0", candidate_patch=candidate_value_patch()),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+
+    assert attempt.patch_result is not None
+    assert attempt.patch_result.ok
+    assert attempt.command_result.ok
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
+def test_run_decision_command_stops_when_candidate_patch_is_rejected(tmp_path: Path) -> None:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+
+    attempt = run_decision_command(
+        decision(
+            "avo worker-sleep --seconds 0",
+            candidate_patch=dedent(
+                """\
+                diff --git a/README.md b/README.md
+                --- a/README.md
+                +++ b/README.md
+                @@ -1 +1 @@
+                -old
+                +new
+                """
+            ),
+        ),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+
+    assert attempt.patch_result is not None
+    assert not attempt.patch_result.ok
+    assert not attempt.command_result.ok
+    assert attempt.command_result.returncode is None
+    assert "candidate patch rejected" in attempt.command_result.stderr_tail
 
 
 def test_write_attempt_records_json(tmp_path: Path) -> None:

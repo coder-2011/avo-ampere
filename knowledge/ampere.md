@@ -55,8 +55,10 @@ variation steps.
   `avo apply-patch PATCH --dry-run` accepts only ordinary unified diffs under
   `candidates/`, rejects path traversal, symlink-mode patches, binary patches,
   renames, deletes, and mode changes, and runs `git apply --check` before any
-  real apply. It does not stage, commit, score, or currently appear in the
-  agent `run-decision` allowlist.
+  real apply. Anthropic decisions also include `candidate_patch`: a non-empty
+  patch is applied through the same validator before the bounded `next_command`
+  runs. This does not stage, commit, score, or expand the `next_command`
+  allowlist beyond `avo env`, `avo compile`, and `avo score`.
 
 ## Search Space
 

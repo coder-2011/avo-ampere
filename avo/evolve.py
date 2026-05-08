@@ -82,6 +82,7 @@ class VariationAttempt:
     started_at: str
     completed_at: str
     score_payload: dict[str, Any] | None = None
+    patch_result: PatchResult | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -90,6 +91,9 @@ class VariationAttempt:
             "started_at": self.started_at,
             "completed_at": self.completed_at,
             "score_payload": self.score_payload,
+            "patch_result": (
+                self.patch_result.as_dict() if self.patch_result is not None else None
+            ),
         }
 
 
@@ -252,6 +256,22 @@ def run_decision_command(
 ) -> VariationAttempt:
     command = command_from_decision(decision, allowed_subcommands=allowed_subcommands)
     started_at = _utc_now()
+    patch_result = _maybe_apply_candidate_patch(decision, cwd=cwd)
+    if patch_result is not None and not patch_result.ok:
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=command,
+                returncode=None,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail=_patch_failure_summary(patch_result),
+            ),
+            started_at=started_at,
+            completed_at=_utc_now(),
+            patch_result=patch_result,
+        )
+
     try:
         completed = subprocess.run(
             command,
@@ -286,6 +306,7 @@ def run_decision_command(
         started_at=started_at,
         completed_at=_utc_now(),
         score_payload=score_payload,
+        patch_result=patch_result,
     )
 
 
@@ -377,6 +398,20 @@ def _looks_like_score_payload(payload: dict[str, Any]) -> bool:
         and "geomean_tflops" in payload
         and isinstance(payload.get("cases"), list)
     )
+
+
+def _maybe_apply_candidate_patch(decision: VariationDecision, *, cwd: Path) -> PatchResult | None:
+    if not decision.candidate_patch.strip():
+        return None
+    return apply_candidate_patch(decision.candidate_patch, cwd=cwd)
+
+
+def _patch_failure_summary(result: PatchResult) -> str:
+    if result.rejected_reason:
+        return f"candidate patch rejected: {result.rejected_reason}"
+    if result.stderr_tail:
+        return f"candidate patch failed: {result.stderr_tail}"
+    return "candidate patch failed"
 
 
 def _contains_rejected_patch_marker(line: str) -> bool:
@@ -493,16 +528,20 @@ def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
     command_result = (
         attempt.get("command_result") if isinstance(attempt.get("command_result"), dict) else {}
     )
+    patch_result = (
+        attempt.get("patch_result") if isinstance(attempt.get("patch_result"), dict) else None
+    )
     score_payload = attempt.get("score_payload")
     gate_decision = payload.get("gate_decision")
 
     status = _command_status(command_result)
+    patch = _patch_status(patch_result)
     gate = _gate_status(gate_decision)
     score = _score_status(score_payload)
     command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
     hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
     return (
-        f"{name}: {status}; {gate}; {score}; "
+        f"{name}: {status}; {patch}; {gate}; {score}; "
         f"command={command}; hypothesis={hypothesis}"
     )
 
@@ -513,7 +552,20 @@ def _command_status(command_result: dict[str, Any]) -> str:
     returncode = command_result.get("returncode")
     if returncode == 0:
         return "command ok"
+    if returncode is None:
+        return "command not run"
     return f"command returncode={returncode}"
+
+
+def _patch_status(patch_result: Any) -> str:
+    if not isinstance(patch_result, dict):
+        return "no candidate patch"
+    ok = patch_result.get("ok")
+    paths = patch_result.get("patch_paths")
+    reason = _shorten(str(patch_result.get("rejected_reason") or ""), 120)
+    if ok:
+        return f"patch ok paths={paths}"
+    return f"patch rejected reason={reason}"
 
 
 def _gate_status(gate_decision: Any) -> str:

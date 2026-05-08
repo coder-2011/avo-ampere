@@ -9,6 +9,7 @@ from avo.agent import (
     DEFAULT_AGENT_MODEL,
     VariationDecision,
     _request_decision_response,
+    _request_valid_decision,
     build_repo_context,
     build_variation_prompt,
     decision_tool,
@@ -22,6 +23,7 @@ def decision_payload() -> dict[str, object]:
         "hypothesis": "cp.async staging may hide K/V latency",
         "files_to_inspect": ["kernel.cu"],
         "candidate_edit": "inspect pipeline depth",
+        "candidate_patch": "",
         "expected_effect": "better long-sequence throughput",
         "risk": "higher shared memory pressure",
         "next_command": "avo score --backend flash-attn",
@@ -33,6 +35,16 @@ def test_parse_variation_decision() -> None:
     decision = parse_decision_text(json.dumps(payload))
     assert isinstance(decision, VariationDecision)
     assert decision.files_to_inspect == ["kernel.cu"]
+    assert decision.candidate_patch == ""
+
+
+def test_parse_variation_decision_defaults_missing_candidate_patch() -> None:
+    payload = decision_payload()
+    del payload["candidate_patch"]
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
 
 
 def test_parse_variation_decision_rejects_malformed_json() -> None:
@@ -82,11 +94,43 @@ def test_parse_variation_decision_rejects_unsupported_avo_subcommand() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_non_string_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_patch"] = {"diff": "not-a-string"}
+
+    with pytest.raises(ValueError, match="candidate_patch must be a string"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_recovers_non_diff_patch_text_as_empty() -> None:
+    payload = decision_payload()
+    payload["candidate_patch"] = "No edit needed."
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+
+
+def test_parse_variation_decision_rejects_markdown_fenced_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_patch"] = (
+        "```diff\n"
+        "diff --git a/candidates/seed.py b/candidates/seed.py\n"
+        "--- a/candidates/seed.py\n"
+        "+++ b/candidates/seed.py\n"
+        "```\n"
+    )
+
+    with pytest.raises(ValueError, match="raw diff"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_decision_tool_uses_strict_schema() -> None:
     tool = decision_tool()
     assert tool["name"] == DECISION_TOOL_NAME
     assert tool["strict"] is True
     assert tool["input_schema"]["additionalProperties"] is False
+    assert "candidate_patch" in tool["input_schema"]["required"]
 
 
 def test_default_agent_model_supports_structured_outputs_family() -> None:
@@ -106,6 +150,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/cuda_identity/identity_kernel.cu" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
+    assert "candidate_patch as a raw unified diff" in context
     assert "avo score --backend candidate" in context
     assert "csrc/flash_attn" not in context
 
@@ -159,6 +204,7 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "Knowledge:\nAmpere only." in prompt
     assert "Lineage:\nNo accepted candidates yet." in prompt
     assert "Local repo context:" in prompt
+    assert "candidate_patch" in prompt
     assert "candidates/cuda_identity_seed.py" in prompt
 
 
@@ -282,3 +328,33 @@ def test_decision_request_retries_transient_api_error() -> None:
     assert "tools" in messages.calls[0]
     assert "tools" in messages.calls[1]
     assert parse_decision_response(response).next_command == decision_payload()["next_command"]
+
+
+def test_valid_decision_request_retries_invalid_decision_with_feedback() -> None:
+    class FakeMessages:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            payload = decision_payload()
+            if len(self.calls) == 1:
+                payload["candidate_patch"] = (
+                    "```diff\n"
+                    "diff --git a/candidates/seed.py b/candidates/seed.py\n"
+                    "--- a/candidates/seed.py\n"
+                    "+++ b/candidates/seed.py\n"
+                    "```\n"
+                )
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=json.dumps(payload))])
+
+    messages = FakeMessages()
+    decision = _request_valid_decision(
+        SimpleNamespace(messages=messages),
+        {"model": "claude", "messages": [{"role": "user", "content": "plan"}]},
+        retry_delay_s=0.0,
+    )
+
+    assert decision.candidate_patch == ""
+    assert len(messages.calls) == 2
+    assert "Validation error:" in messages.calls[1]["messages"][0]["content"]

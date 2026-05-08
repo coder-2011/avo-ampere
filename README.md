@@ -234,7 +234,9 @@ uv run python -m avo apply-patch candidate.patch --dry-run
 uv run python -m avo apply-patch candidate.patch
 ```
 
-`apply-patch` reads a raw unified diff, extracts `diff --git` paths, rejects paths outside `candidates/`, rejects path traversal, symlink-mode patches, binary patches, renames, deletes, and mode changes, then runs `git apply --check --whitespace=error` before applying. It does not stage, commit, score, or bypass the lineage gate. The command is not yet wired into `run-decision`; it is the bounded executor surface needed before the Anthropic loop can safely propose candidate edits.
+`apply-patch` reads a raw unified diff, extracts `diff --git` paths, rejects paths outside `candidates/`, rejects path traversal, symlink-mode patches, binary patches, renames, deletes, and mode changes, then runs `git apply --check --whitespace=error` before applying. It does not stage, commit, score, or bypass the lineage gate.
+
+Anthropic decisions now include a required `candidate_patch` string. Empty means no edit. A non-empty raw unified diff is applied through the same validator before `run-decision` or `evolve-once` runs the bounded `next_command`; the command allowlist remains limited to `avo env`, `avo compile`, and `avo score`.
 
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the existing lineage gate.
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
@@ -244,7 +246,7 @@ When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step 
 
 - Scaling the tiny WMMA QK/PV seed beyond its 16/32-token smoke shapes.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
-- Wiring the candidate-only patch substrate into a complete agent mutation loop.
+- Multi-step autonomous edit/score/diagnose sessions beyond one bounded patched decision.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.
 

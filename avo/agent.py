@@ -31,6 +31,13 @@ DECISION_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "Small proposed change or inspection step before editing.",
         },
+        "candidate_patch": {
+            "type": "string",
+            "description": (
+                "Raw unified diff for one small candidate edit under candidates/, or empty string "
+                "when the next step is inspection/scoring only. Do not use markdown fences."
+            ),
+        },
         "expected_effect": {
             "type": "string",
             "description": "Expected correctness or throughput effect if the hypothesis is right.",
@@ -52,6 +59,7 @@ DECISION_SCHEMA: dict[str, Any] = {
         "hypothesis",
         "files_to_inspect",
         "candidate_edit",
+        "candidate_patch",
         "expected_effect",
         "risk",
         "next_command",
@@ -80,22 +88,27 @@ class VariationDecision:
     expected_effect: str
     risk: str
     next_command: str
+    candidate_patch: str = ""
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> VariationDecision:
-        missing = [key for key in DECISION_SCHEMA["required"] if key not in payload]
+        normalized_payload = {"candidate_patch": "", **payload}
+        missing = [key for key in DECISION_SCHEMA["required"] if key not in normalized_payload]
         if missing:
             raise ValueError(f"variation decision missing required keys: {', '.join(missing)}")
-        files = payload["files_to_inspect"]
+        files = normalized_payload["files_to_inspect"]
         if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
             raise ValueError("files_to_inspect must be a list of strings")
         return cls(
-            hypothesis=_require_string(payload, "hypothesis"),
+            hypothesis=_require_string(normalized_payload, "hypothesis"),
             files_to_inspect=files,
-            candidate_edit=_require_string(payload, "candidate_edit"),
-            expected_effect=_require_string(payload, "expected_effect"),
-            risk=_require_string(payload, "risk"),
-            next_command=_validate_next_command(_require_string(payload, "next_command")),
+            candidate_edit=_require_string(normalized_payload, "candidate_edit"),
+            candidate_patch=_validate_candidate_patch(normalized_payload, "candidate_patch"),
+            expected_effect=_require_string(normalized_payload, "expected_effect"),
+            risk=_require_string(normalized_payload, "risk"),
+            next_command=_validate_next_command(
+                _require_string(normalized_payload, "next_command")
+            ),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -103,6 +116,7 @@ class VariationDecision:
             "hypothesis": self.hypothesis,
             "files_to_inspect": self.files_to_inspect,
             "candidate_edit": self.candidate_edit,
+            "candidate_patch": self.candidate_patch,
             "expected_effect": self.expected_effect,
             "risk": self.risk,
             "next_command": self.next_command,
@@ -178,11 +192,10 @@ def request_variation_decision(
 
     kwargs: dict[str, Any] = {
         "model": model,
-        "max_tokens": 1200,
+        "max_tokens": 4000,
         "messages": [{"role": "user", "content": prompt}],
     }
-    response = _request_decision_response(client, kwargs)
-    return parse_decision_response(response)
+    return _request_valid_decision(client, kwargs)
 
 
 def build_variation_prompt(
@@ -203,6 +216,9 @@ def build_variation_prompt(
     return (
         "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
+        "Use candidate_patch for exactly one small repo-local unified diff under candidates/. "
+        "If no edit is needed, candidate_patch must be exactly the empty string \"\". Do not "
+        "include markdown fences or commentary in candidate_patch.\n"
         "Return exactly one decision. The next_command must be a single bounded command that "
         "starts with 'avo' and uses only one of: env, compile, score. Do not use shell pipes, "
         "redirection, command chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
@@ -223,6 +239,8 @@ def build_repo_context(root: Path) -> str:
         "Use only files that exist in this repository.",
         "Do not propose upstream FlashAttention csrc paths unless they are present locally.",
         "Available bounded commands: avo env, avo compile, avo score.",
+        "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
+        "or empty.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
     ]
     if candidates:
@@ -253,6 +271,46 @@ def _request_decision_response(
                 raise
             time.sleep(retry_delay_s * (2**attempt))
     raise AssertionError("unreachable")
+
+
+def _request_valid_decision(
+    client: Any,
+    kwargs: dict[str, Any],
+    *,
+    attempts: int = DEFAULT_AGENT_REQUEST_ATTEMPTS,
+    retry_delay_s: float = DEFAULT_AGENT_RETRY_DELAY_S,
+) -> VariationDecision:
+    last_error: ValueError | None = None
+    for attempt in range(attempts):
+        request_kwargs = _decision_kwargs_with_feedback(kwargs, last_error)
+        response = _request_decision_response(client, request_kwargs)
+        try:
+            return parse_decision_response(response)
+        except ValueError as exc:
+            last_error = exc
+            if attempt + 1 >= attempts:
+                raise ValueError(
+                    f"agent returned invalid variation decision after {attempts} attempts: {exc}"
+                ) from exc
+            time.sleep(retry_delay_s * (2**attempt))
+    raise AssertionError("unreachable")
+
+
+def _decision_kwargs_with_feedback(
+    kwargs: dict[str, Any],
+    last_error: ValueError | None,
+) -> dict[str, Any]:
+    if last_error is None:
+        return kwargs
+    updated = dict(kwargs)
+    messages = [dict(message) for message in kwargs["messages"]]
+    messages[-1]["content"] = (
+        f"{messages[-1]['content']}\n\n"
+        "The previous decision was invalid and was not executed. "
+        f"Validation error: {last_error}. Return one corrected decision."
+    )
+    updated["messages"] = messages
+    return updated
 
 
 def _request_decision_response_once(client: Any, kwargs: dict[str, Any]) -> Any:
@@ -294,6 +352,25 @@ def _require_string(payload: dict[str, Any], key: str) -> str:
     value = payload[key]
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} must be a non-empty string")
+    return value
+
+
+def _optional_string(payload: dict[str, Any], key: str) -> str:
+    value = payload[key]
+    if not isinstance(value, str):
+        raise ValueError(f"{key} must be a string")
+    return value
+
+
+def _validate_candidate_patch(payload: dict[str, Any], key: str) -> str:
+    value = _optional_string(payload, key)
+    if not value.strip():
+        return ""
+    has_diff = any(line.startswith("diff --git ") for line in value.splitlines())
+    if not has_diff:
+        return ""
+    if "```" in value:
+        raise ValueError("candidate_patch must be raw diff text, not markdown")
     return value
 
 
