@@ -360,6 +360,8 @@ def build_repo_context(root: Path) -> str:
         "candidate_patch, not source-file inspection.",
         "Standalone pragma-only performance patches are already recorded as regressed noise; "
         "if using unroll, pair it with a substantive code change and run a bounded score.",
+        "WMMA matrix fragments in generic PyTorch kernels must use explicit CUDA element "
+        "types, not scalar_t, because dispatch instantiates unsupported float/c10 types.",
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
         "or empty. Patch hunks must use exact current file context, apply cleanly, and avoid "
         "trailing whitespace.",
@@ -618,6 +620,13 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "keep the score fragment K at 16 and accumulate two 16-wide chunks "
             "into a 16x16 accumulator"
         )
+    if _candidate_patch_uses_generic_scalar_wmma_fragments(added_text):
+        raise ValueError(
+            "candidate_patch uses scalar_t as a WMMA matrix fragment element; "
+            "generic PyTorch kernels instantiate float/c10 scalar types that WMMA "
+            "does not support, so use explicit CUDA WMMA element types in "
+            "dtype-specific code"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -659,6 +668,16 @@ def _candidate_patch_uses_unsupported_mma_score_k32(added_text: str) -> bool:
         )
     )
     return (sets_khead32 and symbolic_score) or literal_score
+
+
+def _candidate_patch_uses_generic_scalar_wmma_fragments(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return bool(
+        re.search(
+            r"fragment<(?:nvcuda::)?wmma::matrix_[ab],[^>]*,scalar_t,",
+            compact,
+        )
+    )
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:

@@ -728,6 +728,30 @@ def test_parse_variation_decision_rejects_literal_mma_score_k32_fragment() -> No
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_scalar_t_wmma_matrix_fragment() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch warp-row WMMA skeleton and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1,3 @@\n"
+        "-old\n"
+        "+wmma::fragment<wmma::matrix_a, 16, 16, 16, scalar_t, "
+        "wmma::row_major> q_frag;\n"
+        "+wmma::fragment<wmma::matrix_b, 16, 16, 16, scalar_t, "
+        "wmma::col_major> k_frag;\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/warp_wmma"
+    )
+
+    with pytest.raises(ValueError, match="scalar_t as a WMMA matrix fragment"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
@@ -859,6 +883,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "Standalone pragma-only performance patches" in context
+    assert "WMMA matrix fragments in generic PyTorch kernels" in context
     assert "No-patch compile diagnostics are already recorded" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
     assert "Patch hunks must use exact current file context" in context
