@@ -1015,6 +1015,8 @@ def test_summarize_attempt_history_requests_score_after_compile_only_transform(
 
     assert "compiled successfully but has not been scored" in summary
     assert "score the same candidate_transform" in summary
+    assert '"op":"set_constexpr_int"' in summary
+    assert '"value":512' in summary
 
 
 def test_summarize_attempt_history_keeps_compile_followup_after_planning_failure(
@@ -1058,6 +1060,8 @@ def test_summarize_attempt_history_keeps_compile_followup_after_planning_failure
 
     assert "compiled successfully but has not been scored" in summary
     assert "score the same candidate_transform" in summary
+    assert '"op":"set_constexpr_int"' in summary
+    assert '"value":1024' in summary
 
 
 def test_attempt_history_rejects_repeated_compile_only_transform(tmp_path: Path) -> None:

@@ -257,7 +257,7 @@ def test_parse_variation_decision_infers_batch_from_extend_constant_text() -> No
 def test_parse_variation_decision_rejects_inconsistent_mma_compile_caps() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = (
-        "Set kMaxSeqLen to 4096 in the kernel and add 2048 to SMOKE_SEQUENCES."
+        "Set kMaxSeqLen to 8192 in the kernel and add 4096 to SMOKE_SEQUENCES."
     )
     payload["candidate_transform"] = {
         "op": "batch",
@@ -266,19 +266,19 @@ def test_parse_variation_decision_rejects_inconsistent_mma_compile_caps() -> Non
                 "op": "set_constexpr_int",
                 "path": "candidates/cuda_mma_attention/attention_kernel.cu",
                 "name": "kMaxSeqLen",
-                "value": 4096,
+                "value": 8192,
             },
             {
                 "op": "add_int_to_python_set",
                 "path": "candidates/cuda_mma_attention_seed.py",
                 "name": "SMOKE_SEQUENCES",
-                "value": 2048,
+                "value": 4096,
             },
         ],
     }
     payload["next_command"] = (
         "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
-        "--out-dir build/mma_4096"
+        "--out-dir build/mma_8192"
     )
 
     with pytest.raises(ValueError, match="inconsistent MMA shape caps"):
@@ -287,16 +287,16 @@ def test_parse_variation_decision_rejects_inconsistent_mma_compile_caps() -> Non
 
 def test_parse_variation_decision_rejects_kernel_only_mma_sequence_cap() -> None:
     payload = decision_payload()
-    payload["candidate_edit"] = "Set kMaxSeqLen to 4096 in the kernel."
+    payload["candidate_edit"] = "Set kMaxSeqLen to 8192 in the kernel."
     payload["candidate_transform"] = {
         "op": "set_constexpr_int",
         "path": "candidates/cuda_mma_attention/attention_kernel.cu",
         "name": "kMaxSeqLen",
-        "value": 4096,
+        "value": 8192,
     }
     payload["next_command"] = (
         "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
-        "--out-dir build/mma_4096"
+        "--out-dir build/mma_8192"
     )
 
     with pytest.raises(ValueError, match="wrapper sequence set is not updated"):
@@ -790,7 +790,7 @@ def test_parse_variation_decision_rejects_unpatched_mma_smoke_cap() -> None:
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 2048 --total-tokens 16384 --num-heads 16 --head-dim 128"
+        "--seq-lens 4096 --total-tokens 32768 --num-heads 16 --head-dim 128"
     )
 
     with pytest.raises(ValueError, match="recorded unpatched MMA seed score"):
@@ -879,20 +879,20 @@ def test_parse_variation_decision_rejects_unpatched_mma_below_accepted_lane() ->
         "--seq-lens 256 --total-tokens 2048 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="below the current accepted seq2048"):
+    with pytest.raises(ValueError, match="below the current accepted seq4096"):
         parse_decision_text(json.dumps(payload))
 
 
 def test_parse_variation_decision_rejects_unpatched_mma_beyond_current_seq_cap() -> None:
     payload = decision_payload()
-    payload["candidate_edit"] = "Score the existing MMA seed at seq4096."
+    payload["candidate_edit"] = "Score the existing MMA seed at seq8192."
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 4096 --total-tokens 32768 --num-heads 16 --head-dim 128"
+        "--seq-lens 8192 --total-tokens 32768 --num-heads 16 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="seq_len 16/32/64/128/256/1024/2048"):
+    with pytest.raises(ValueError, match="seq_len 16/32/64/128/256/1024/2048/4096"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -2496,6 +2496,7 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     assert "'No edit;'" in content
     assert "diff --git" in content
     assert "Do not mention fixing" in content
+    assert "exact candidate_transform object from the follow-up signal" in content
 
 
 def test_decision_feedback_explains_mutually_exclusive_edit_channels() -> None:

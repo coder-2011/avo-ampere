@@ -13,7 +13,7 @@ namespace {
 using namespace nvcuda;
 
 constexpr int kTile = 16;
-constexpr int kMaxSeqLen = 2048;
+constexpr int kMaxSeqLen = 4096;
 constexpr int kHeadDim = 128;
 constexpr int kScoreElements = kTile * kTile;
 constexpr int kOutputElements = kTile * kHeadDim;

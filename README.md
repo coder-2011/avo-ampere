@@ -9,11 +9,11 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Target hardware: NVIDIA RTX A6000 / Ampere, compute capability `sm_86`.
 - Target workload: BF16 forward attention with head dimension 128 and sequence lengths 4096, 8192, 16384, and 32768.
 - Baseline: FlashAttention-2. FlashAttention-4 is intentionally excluded because its Blackwell path uses primitives that are not available on Ampere.
-- Candidate support: Python candidate modules plus CUDA-extension attention candidates, including a BF16 WMMA QK/PV seed accepted through the seq2048 lane.
+- Candidate support: Python candidate modules plus CUDA-extension attention candidates, including a BF16 WMMA QK/PV seed accepted through the seq4096 lane.
 - Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, and a candidate-only patch application substrate.
 - Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, and environment metadata in JSON.
 - Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage and feed recent summaries back into later agent prompts.
-- Research state: the autonomous loop has accepted multiple small benchmark lanes, including a seq2048 BF16 WMMA lane. The open result is still scaling toward the 4096/8192/16384/32768 target suite and beating FlashAttention-2 there.
+- Research state: the autonomous loop has accepted multiple benchmark lanes, including a seq4096 BF16 WMMA lane. The open result is still scaling toward 8192/16384/32768 and beating FlashAttention-2 on the target suite.
 
 ## What was built
 
@@ -28,7 +28,7 @@ Recent commits show the work moved in layers:
 - `feat: add CUDA extension candidate smoke` added a minimal compiled CUDA extension path that copies an SDPA result, proving the candidate build/load path before replacing the attention computation itself.
 - `feat: add tiny mma attention seed` added a 16/32/64/128/256-token BF16 WMMA QK/PV candidate so the local search has a tensor-core attention-math foothold.
 - `feat: promote structural cuda preflights` added structured transform preflights for recurring failure classes and generalized WMMA fragment-shape validation.
-- `fix: align mma sequence guard with wrapper` made wrapper-advertised MMA sequence caps match the CUDA guard, then a bounded agent loop advanced the MMA source to the accepted seq2048 lane.
+- `fix: align mma sequence guard with wrapper` made wrapper-advertised MMA sequence caps match the CUDA guard; follow-up bounded loops advanced the MMA source to accepted seq2048 and seq4096 lanes.
 
 ## Repository layout
 
@@ -168,14 +168,14 @@ uv run --extra cuda python -m avo score \
   --timeout-s 300
 ```
 
-Score the BF16 WMMA QK/PV attention candidate on the accepted seq2048 lane:
+Score the BF16 WMMA QK/PV attention candidate on the accepted seq4096 lane:
 
 ```bash
 uv run --extra cuda python -m avo score \
   --backend candidate \
   --candidate candidates/cuda_mma_attention_seed.py \
-  --seq-lens 2048 \
-  --total-tokens 16384 \
+  --seq-lens 4096 \
+  --total-tokens 32768 \
   --num-heads 16 \
   --head-dim 128 \
   --dtype bf16 \
@@ -273,7 +273,7 @@ uv run python -m avo evolve-loop \
 
 ## What is still missing
 
-- Scaling the accepted seq2048 WMMA QK/PV seed toward the long-sequence target shapes.
+- Scaling the accepted seq4096 WMMA QK/PV seed toward the remaining long-sequence target shapes.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
 - Longer-running autonomous supervision beyond the minimal capped `evolve-loop`, including active intervention and richer stop policies.
 - Broader dependency manifests for accepted candidates that import files outside the scored module and companion source directory.

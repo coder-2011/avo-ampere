@@ -21,7 +21,7 @@ DEFAULT_SCORE_HEAD_DIM = 128
 DEFAULT_SCORE_NUM_HEADS = 16
 DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
 DEFAULT_SCORE_TOTAL_TOKENS = 32768
-MMA_ACCEPTED_VALIDATION_SEQ = 2048
+MMA_ACCEPTED_VALIDATION_SEQ = 4096
 MAX_REPO_CONTEXT_FILE_CHARS = 12_000
 MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
@@ -34,7 +34,7 @@ RECORDED_NO_PATCH_COMPILE_SOURCES = frozenset(
         "candidates/cuda_warp_rows_attention/attention_kernel.cu",
     }
 )
-MMA_BASE_SMOKE_SEQUENCES = frozenset({16, 32, 64, 128, 256, 1024, 2048})
+MMA_BASE_SMOKE_SEQUENCES = frozenset({16, 32, 64, 128, 256, 1024, 2048, 4096})
 ENV_COMMAND_KEYWORDS = (
     "baseline",
     "build",
@@ -552,7 +552,7 @@ def build_repo_context(root: Path) -> str:
         "optimization steps; compile only when build-checking a materialized edit.",
         "Unpatched seed score caps are smoke-only safety fences: "
         "candidates/cuda_mma_attention_seed.py supports "
-        "seq_lens up to the accepted seq2048 lane with head_dim 128; "
+        "seq_lens up to the accepted seq4096 lane with head_dim 128; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
         "head_dim <= 128 with total_tokens <= 1024 and num_heads <= 4; "
         "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
@@ -679,7 +679,8 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "'' and candidate_edit must start with 'No edit;' followed only by the "
             "bounded score/compile/env diagnostic to run. "
             "Do not mention fixing, extending, updating, modifying, or implementing code in "
-            "no-edit mode. "
+            "no-edit mode. If this is a follow-up score for a compiled transform, include "
+            "the exact candidate_transform object from the follow-up signal. "
         )
     if "candidate_patch and candidate_transform are mutually exclusive" in message:
         return (
@@ -1962,7 +1963,7 @@ def _validate_known_candidate_score_shape(
         ):
             raise ValueError(
                 "next_command scores cuda_mma_attention_seed.py outside its unpatched "
-                "seq_len 16/32/64/128/256/1024/2048, head_dim 128, total_tokens<=32768, "
+                "seq_len 16/32/64/128/256/1024/2048/4096, head_dim 128, total_tokens<=32768, "
                 "and num_heads<=16 cap; "
                 "include candidate_transform/candidate_patch to update the wrapper/kernel first"
             )
@@ -2045,6 +2046,7 @@ def _is_recorded_mma_seed_score(
         in {
             ((1024,), 128, 8192, 8),
             ((2048,), 128, 16384, 16),
+            ((4096,), 128, 32768, 16),
         }
     )
 

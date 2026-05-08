@@ -752,13 +752,16 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
 def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
     if not payloads:
         return ""
-    if _pending_compile_only_transform(payloads) is None:
+    pending_transform = _pending_compile_only_transform(payloads)
+    if pending_transform is None:
         return ""
+    transform_json = json.dumps(pending_transform, sort_keys=True, separators=(",", ":"))
     return (
         "Follow-up signal: the latest structured transform compiled successfully but has "
         "not been scored. Do not repeat the compile-only check; score the same "
         "candidate_transform on the next validation workload, or choose a materially "
-        "different transform family."
+        "different transform family. Exact pending candidate_transform JSON: "
+        f"{transform_json}"
     )
 
 

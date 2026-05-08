@@ -57,7 +57,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for the accepted seq2048 head-dim 128
+  `candidates/cuda_mma_attention_seed.py` for the accepted seq4096 head-dim 128
   BF16 tensor-core QK/PV lane
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
@@ -1102,5 +1102,17 @@ source files.
   total_tokens 16384, num_heads 16, head_dim 128, BF16, both causal modes
   passed correctness and was accepted into lineage as commit
   `39af063`: geomean `7.079133390217197` TFLOPS, noncausal
-  `9.955973678368473` TFLOPS, causal `5.033573930129197` TFLOPS. Runtime
-  source now carries the accepted seq2048 cap.
+  `9.955973678368473` TFLOPS, causal `5.033573930129197` TFLOPS. At that
+  checkpoint, runtime source carried the accepted seq2048 cap.
+  The first follow-up loop toward seq4096 showed a reliability issue: it
+  compile-checked the seq4096 structured batch successfully, then a planning
+  retry tried to score "the compiled transform" while omitting the transform
+  object. Attempt-history follow-up signals now include the exact compact
+  `candidate_transform` JSON, and validation feedback tells the planner to reuse
+  that exact object for compiled-transform scores. With that fix, the next
+  bounded loop scored and accepted the seq4096 lane in one step. Nested lineage
+  commit `7162462` passed correctness at seq_len 4096, total_tokens 32768,
+  num_heads 16, head_dim 128, BF16, both causal modes, with three timing trials:
+  geomean `7.527287085824243` TFLOPS, noncausal `10.59316564199843` TFLOPS,
+  and causal `5.348736419996861` TFLOPS. Runtime source now carries
+  `kMaxSeqLen=4096` and wrapper `SMOKE_SEQUENCES` includes 4096.
