@@ -94,6 +94,52 @@ def test_parse_variation_decision_rejects_unsupported_avo_subcommand() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_compile_candidate_option() -> None:
+    payload = decision_payload()
+    payload["next_command"] = "avo compile --candidate candidates/cuda_mma_attention_seed.py"
+
+    with pytest.raises(ValueError, match="compile does not support --candidate"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_compile_without_required_paths() -> None:
+    payload = decision_payload()
+    payload["next_command"] = "avo compile --source candidates/kernel.cu"
+
+    with pytest.raises(ValueError, match="compile requires --out-dir"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_compile_source_out_dir() -> None:
+    payload = decision_payload()
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/smoke"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command == payload["next_command"]
+
+
+def test_parse_variation_decision_rejects_compile_python_source() -> None:
+    payload = decision_payload()
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention_seed.py --out-dir build/smoke"
+    )
+
+    with pytest.raises(ValueError, match=r"--source must reference a \.cu file"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_candidate_score_without_candidate() -> None:
+    payload = decision_payload()
+    payload["next_command"] = "avo score --backend candidate"
+
+    with pytest.raises(ValueError, match="candidate score requires --candidate"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_non_string_patch() -> None:
     payload = decision_payload()
     payload["candidate_patch"] = {"diff": "not-a-string"}
@@ -109,6 +155,24 @@ def test_parse_variation_decision_recovers_non_diff_patch_text_as_empty() -> Non
     decision = parse_decision_text(json.dumps(payload))
 
     assert decision.candidate_patch == ""
+
+
+def test_parse_variation_decision_allows_explicit_no_edit_with_empty_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "No edit needed; score the existing MMA seed."
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+
+
+def test_parse_variation_decision_rejects_empty_patch_for_code_edit() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Extend the CUDA kernel and update the wrapper for head_dim 32."
+    payload["candidate_patch"] = ""
+
+    with pytest.raises(ValueError, match="candidate_patch must be non-empty"):
+        parse_decision_text(json.dumps(payload))
 
 
 def test_parse_variation_decision_rejects_markdown_fenced_patch() -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import os
 import subprocess
+from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -36,6 +37,7 @@ def compile_cuda_source(
     timeout_s: int = 120,
     nvcc: str | None = None,
     env: dict[str, str] | None = None,
+    include_dirs: Sequence[str | Path] = (),
 ) -> CompileResult:
     if not source.exists():
         raise FileNotFoundError(source)
@@ -48,6 +50,8 @@ def compile_cuda_source(
         "-std=c++17",
         "-O3",
         "-lineinfo",
+        "--expt-relaxed-constexpr",
+        *[flag for include_dir in include_dirs for flag in ("-I", str(include_dir))],
         "-c",
         str(source),
         "-o",

@@ -2,10 +2,11 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import time
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 DECISION_TOOL_NAME = "record_variation_decision"
@@ -14,6 +15,33 @@ DEFAULT_AGENT_REQUEST_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_DELAY_S = 1.0
 ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "score"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
+PATCH_REQUIRED_EDIT_VERBS = frozenset(
+    {
+        "add",
+        "adjust",
+        "alter",
+        "change",
+        "edit",
+        "extend",
+        "fix",
+        "implement",
+        "modify",
+        "patch",
+        "refactor",
+        "remove",
+        "replace",
+        "rewrite",
+        "update",
+    }
+)
+NO_EDIT_PHRASES = (
+    "no edit",
+    "no code edit",
+    "no patch",
+    "without a patch",
+    "without editing",
+    "without any edit",
+)
 
 DECISION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -99,11 +127,14 @@ class VariationDecision:
         files = normalized_payload["files_to_inspect"]
         if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
             raise ValueError("files_to_inspect must be a list of strings")
+        candidate_edit = _require_string(normalized_payload, "candidate_edit")
+        candidate_patch = _validate_candidate_patch(normalized_payload, "candidate_patch")
+        _validate_candidate_edit_matches_patch(candidate_edit, candidate_patch)
         return cls(
             hypothesis=_require_string(normalized_payload, "hypothesis"),
             files_to_inspect=files,
-            candidate_edit=_require_string(normalized_payload, "candidate_edit"),
-            candidate_patch=_validate_candidate_patch(normalized_payload, "candidate_patch"),
+            candidate_edit=candidate_edit,
+            candidate_patch=candidate_patch,
             expected_effect=_require_string(normalized_payload, "expected_effect"),
             risk=_require_string(normalized_payload, "risk"),
             next_command=_validate_next_command(
@@ -218,10 +249,14 @@ def build_variation_prompt(
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
         "Use candidate_patch for exactly one small repo-local unified diff under candidates/. "
         "If no edit is needed, candidate_patch must be exactly the empty string \"\". Do not "
-        "include markdown fences or commentary in candidate_patch.\n"
+        "include markdown fences or commentary in candidate_patch. If candidate_edit describes "
+        "a code change such as extending, updating, modifying, or fixing a candidate, "
+        "candidate_patch must contain the raw diff for that change.\n"
         "Return exactly one decision. The next_command must be a single bounded command that "
-        "starts with 'avo' and uses only one of: env, compile, score. Do not use shell pipes, "
-        "redirection, command chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
+        "starts with 'avo' and uses only one of: env, compile, score. Use valid CLI flags: "
+        "compile requires --source SOURCE.cu and --out-dir DIR; candidate score requires "
+        "--backend candidate and --candidate. Do not use shell pipes, redirection, command "
+        "chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
         f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}"
         f"{attempt_section}{context_section}\n"
     )
@@ -238,7 +273,8 @@ def build_repo_context(root: Path) -> str:
     lines = [
         "Use only files that exist in this repository.",
         "Do not propose upstream FlashAttention csrc paths unless they are present locally.",
-        "Available bounded commands: avo env, avo compile, avo score.",
+        "Available bounded commands: avo env; avo compile --source SOURCE.cu --out-dir DIR; "
+        "avo score --backend BACKEND ...",
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
         "or empty.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
@@ -374,6 +410,22 @@ def _validate_candidate_patch(payload: dict[str, Any], key: str) -> str:
     return value
 
 
+def _validate_candidate_edit_matches_patch(candidate_edit: str, candidate_patch: str) -> None:
+    if candidate_patch.strip() or not _candidate_edit_requires_patch(candidate_edit):
+        return
+    raise ValueError(
+        "candidate_patch must be non-empty when candidate_edit describes a code change"
+    )
+
+
+def _candidate_edit_requires_patch(candidate_edit: str) -> bool:
+    normalized = " ".join(candidate_edit.lower().replace("-", " ").split())
+    if any(phrase in normalized for phrase in NO_EDIT_PHRASES):
+        return False
+    words = re.findall(r"[a-z]+", normalized)
+    return any(word in PATCH_REQUIRED_EDIT_VERBS for word in words)
+
+
 def _validate_next_command(command: str) -> str:
     try:
         parts = shlex.split(command)
@@ -389,7 +441,112 @@ def _validate_next_command(command: str) -> str:
         raise ValueError(
             f"next_command uses unsupported avo subcommand '{subcommand}'; allowed: {allowed}"
         )
+    _validate_subcommand_arguments(parts)
     return command
+
+
+def _validate_subcommand_arguments(parts: list[str]) -> None:
+    subcommand = parts[1]
+    if subcommand == "compile":
+        if _has_option(parts, "--candidate"):
+            raise ValueError(
+                "next_command compile does not support --candidate; use --source and --out-dir"
+            )
+        missing = [
+            option
+            for option in ("--source", "--out-dir")
+            if _single_option_value(parts, option) is None
+        ]
+        if missing:
+            raise ValueError(f"next_command compile requires {', '.join(missing)}")
+        source = _single_option_value(parts, "--source")
+        out_dir = _single_option_value(parts, "--out-dir")
+        if source is not None:
+            _validate_command_path(
+                source,
+                "--source",
+                allowed_roots=("candidates/",),
+                suffixes=(".cu",),
+            )
+        if out_dir is not None:
+            _validate_command_path(out_dir, "--out-dir")
+    elif subcommand == "score":
+        backend = _single_option_value(parts, "--backend")
+        if backend is None:
+            raise ValueError("next_command score requires --backend")
+        if backend not in {"torch-sdpa", "flash-attn", "candidate"}:
+            raise ValueError(f"next_command score uses unsupported backend '{backend}'")
+        candidate = _single_option_value(parts, "--candidate")
+        if backend == "candidate":
+            if candidate is None:
+                raise ValueError("next_command candidate score requires --candidate")
+            _validate_command_path(
+                candidate,
+                "--candidate",
+                allowed_roots=("candidates/",),
+                suffixes=(".py",),
+            )
+
+
+def _has_option(parts: list[str], option: str) -> bool:
+    return _single_option_value(parts, option, allow_missing_value=True) is not None
+
+
+def _single_option_value(
+    parts: list[str],
+    option: str,
+    *,
+    allow_missing_value: bool = False,
+) -> str | None:
+    values = _option_values(parts, option, allow_missing_value=allow_missing_value)
+    if len(values) > 1:
+        raise ValueError(f"next_command repeats {option}")
+    return values[0] if values else None
+
+
+def _option_values(
+    parts: list[str],
+    option: str,
+    *,
+    allow_missing_value: bool = False,
+) -> list[str]:
+    values: list[str] = []
+    prefix = f"{option}="
+    for index, part in enumerate(parts):
+        if part == option:
+            if index + 1 >= len(parts) or parts[index + 1].startswith("--"):
+                if allow_missing_value:
+                    values.append("")
+                    continue
+                raise ValueError(f"next_command {option} requires a value")
+            values.append(parts[index + 1])
+        elif part.startswith(prefix):
+            value = part[len(prefix) :]
+            if not value and not allow_missing_value:
+                raise ValueError(f"next_command {option} requires a value")
+            values.append(value)
+    return values
+
+
+def _validate_command_path(
+    raw_path: str,
+    option: str,
+    *,
+    allowed_roots: tuple[str, ...] | None = None,
+    suffixes: tuple[str, ...] | None = None,
+) -> None:
+    if "\x00" in raw_path or "\\" in raw_path:
+        raise ValueError(f"next_command {option} path contains unsupported characters")
+    path = PurePosixPath(raw_path)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError(f"next_command {option} must be a repo-relative path")
+    normalized = path.as_posix()
+    if allowed_roots is not None and not any(normalized.startswith(root) for root in allowed_roots):
+        roots = ", ".join(root.rstrip("/") for root in allowed_roots)
+        raise ValueError(f"next_command {option} must be under: {roots}")
+    if suffixes is not None and path.suffix not in suffixes:
+        allowed = ", ".join(suffixes)
+        raise ValueError(f"next_command {option} must reference a {allowed} file")
 
 
 def _recover_json_object(text: str) -> dict[str, Any] | None:

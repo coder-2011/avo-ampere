@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import os
+import sysconfig
 from pathlib import Path
 
 from .agent import (
@@ -21,6 +22,7 @@ from .cuda_env import (
     cuda_build_compatibility,
     nvcc_cuda_version,
     nvcc_path_from_env,
+    prepare_torch_extension_env,
 )
 from .evolve import (
     DEFAULT_ATTEMPT_HISTORY_LIMIT,
@@ -234,14 +236,33 @@ def _agent_status(env_file: Path | None) -> dict[str, object]:
 
 
 def _compile(args: argparse.Namespace) -> int:
+    prepare_torch_extension_env(os.environ, max_jobs="1")
     result = compile_cuda_source(
         args.source,
         args.out_dir,
         timeout_s=args.timeout_s,
         env=os.environ.copy(),
+        include_dirs=_torch_cuda_include_dirs(),
     )
     print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     return 0 if result.ok else 2
+
+
+def _torch_cuda_include_dirs() -> list[Path]:
+    include_dirs: list[Path] = []
+    try:
+        from torch.utils.cpp_extension import include_paths
+    except Exception:
+        return include_dirs
+    try:
+        torch_include_paths = include_paths(cuda=True)
+    except TypeError:
+        torch_include_paths = include_paths(device_type="cuda")
+    include_dirs.extend(Path(path) for path in torch_include_paths)
+    python_include = sysconfig.get_paths().get("include")
+    if python_include:
+        include_dirs.append(Path(python_include))
+    return include_dirs
 
 
 def _score(args: argparse.Namespace) -> int:
