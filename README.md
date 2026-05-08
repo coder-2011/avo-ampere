@@ -195,9 +195,6 @@ Seed a FlashAttention-2 baseline lineage:
 ```bash
 uv run --extra cuda python -m avo env
 
-uv pip install nvidia-cuda-nvcc==13.0.88 nvidia-cuda-crt==13.0.88 nvidia-nvvm==13.0.88
-uv run --extra cuda python -m avo env
-
 FLASH_ATTN_CUDA_ARCHS=80 MAX_JOBS=1 NVCC_THREADS=1 \
   uv pip install flash-attn --no-build-isolation
 
@@ -212,7 +209,10 @@ Check the `baseline_build` block from `avo env` before installing FA2. Source bu
 `ok_for_torch_extension_build: true`; a major `torch_cuda`/`nvcc_cuda` mismatch will fail inside
 PyTorch extension setup before any attention benchmark can run. When a matching Python-installed
 NVIDIA CUDA root is present, AVO's baseline worker selects it even if the host image exports an
-incompatible system `CUDA_HOME`.
+incompatible system `CUDA_HOME`. The `cuda` and `baseline` extras pin the CUDA 13 nvcc, CRT, NVVM,
+and CCCL header wheels needed for Torch `cu130` extension builds; the candidate wrapper also
+filters ambient `/usr/local/cuda*` include/lib paths and creates a local `libcudart.so` link shim
+for NVIDIA wheels that only ship the versioned runtime library.
 
 ## Agent workflow
 

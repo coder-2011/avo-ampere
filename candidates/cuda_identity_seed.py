@@ -5,18 +5,18 @@ from functools import lru_cache
 from pathlib import Path
 
 import torch.nn.functional as F
-from torch.utils.cpp_extension import load
+
+from avo.cuda_env import prepare_torch_extension_env
+
+prepare_torch_extension_env(os.environ, max_jobs="2")
 
 SOURCE_DIR = Path(__file__).resolve().parent / "cuda_identity"
-CUDA_HOME = Path("/usr/local/cuda-12.9")
 
 
 @lru_cache(maxsize=1)
 def _extension():
-    os.environ.setdefault("TORCH_CUDA_ARCH_LIST", "8.6")
-    os.environ.setdefault("MAX_JOBS", "2")
-    if CUDA_HOME.exists():
-        os.environ.setdefault("CUDA_HOME", str(CUDA_HOME))
+    from torch.utils.cpp_extension import load
+
     return load(
         name="avo_cuda_identity_seed",
         sources=[

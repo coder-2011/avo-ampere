@@ -10,15 +10,18 @@ from avo.cli import (
     _agent_status,
     _baseline_build_env,
     _baseline_build_status,
-    _cuda_build_compatibility,
     _evolve_loop,
     _evolve_once,
-    _nvcc_path_from_env,
-    _parse_nvcc_release,
-    _python_cuda_home,
     _score,
     _seed_baseline,
     main,
+)
+from avo.cuda_env import (
+    cuda_build_compatibility,
+    nvcc_path_from_env,
+    parse_nvcc_release,
+    prepare_torch_extension_env,
+    python_cuda_home,
 )
 from avo.evolve import CommandResult, VariationAttempt, apply_candidate_patch
 
@@ -47,7 +50,8 @@ def test_agent_status_loads_env_file_without_printing_value(tmp_path: Path, monk
     assert "test-secret" not in repr(status)
 
 
-def test_baseline_build_env_targets_flash_attn_ampere() -> None:
+def test_baseline_build_env_targets_flash_attn_ampere(monkeypatch) -> None:
+    monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: None)
     env = {"FLASH_ATTN_CUDA_ARCHS": "90;100", "OTHER": "keep-me", "PATH": "/bin"}
     updated = _baseline_build_env(env)
 
@@ -68,8 +72,8 @@ def test_baseline_build_env_preserves_explicit_parallelism_limits() -> None:
 
 
 def test_baseline_build_env_uses_python_cuda_home(monkeypatch) -> None:
-    monkeypatch.setattr("avo.cli._compatible_python_cuda_home", lambda env: "/venv/nvidia/cu13")
-    monkeypatch.setattr("avo.cli._cuda_env_is_build_compatible", lambda env: False)
+    monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: "/venv/nvidia/cu13")
+    monkeypatch.setattr("avo.cuda_env.cuda_env_is_build_compatible", lambda env: False)
 
     updated = _baseline_build_env({})
 
@@ -77,8 +81,8 @@ def test_baseline_build_env_uses_python_cuda_home(monkeypatch) -> None:
 
 
 def test_baseline_build_env_preserves_explicit_cuda_home(monkeypatch) -> None:
-    monkeypatch.setattr("avo.cli._compatible_python_cuda_home", lambda env: "/venv/nvidia/cu13")
-    monkeypatch.setattr("avo.cli._cuda_env_is_build_compatible", lambda env: True)
+    monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: "/venv/nvidia/cu13")
+    monkeypatch.setattr("avo.cuda_env.cuda_env_is_build_compatible", lambda env: True)
 
     updated = _baseline_build_env({"CUDA_HOME": "/usr/local/cuda"})
 
@@ -92,41 +96,82 @@ def test_python_cuda_home_finds_single_pip_cuda_root(tmp_path: Path, monkeypatch
     (cuda_home / "bin" / "nvcc").write_text("", encoding="utf-8")
     (cuda_home / "include" / "cuda.h").write_text("", encoding="utf-8")
     monkeypatch.setattr(
-        "avo.cli.sysconfig.get_paths",
+        "avo.cuda_env.sysconfig.get_paths",
         lambda: {"purelib": str(tmp_path / "site-packages")},
     )
 
-    assert _python_cuda_home() == str(cuda_home)
+    assert python_cuda_home() == str(cuda_home)
 
 
 def test_parse_nvcc_release() -> None:
     output = "Cuda compilation tools, release 12.9, V12.9.86"
 
-    assert _parse_nvcc_release(output) == "12.9"
-    assert _parse_nvcc_release("not nvcc output") is None
+    assert parse_nvcc_release(output) == "12.9"
+    assert parse_nvcc_release("not nvcc output") is None
 
 
 def test_cuda_build_compatibility() -> None:
-    assert _cuda_build_compatibility("13.0", "13.0") == ("exact", None)
+    assert cuda_build_compatibility("13.0", "13.0") == ("exact", None)
 
-    minor_status, minor_warning = _cuda_build_compatibility("13.0", "13.1")
+    minor_status, minor_warning = cuda_build_compatibility("13.0", "13.1")
     assert minor_status == "minor_mismatch"
     assert "may warn" in minor_warning
 
-    major_status, major_warning = _cuda_build_compatibility("13.0", "12.9")
+    major_status, major_warning = cuda_build_compatibility("13.0", "12.9")
     assert major_status == "major_mismatch"
     assert "will fail" in major_warning
 
 
 def test_nvcc_path_prefers_cuda_home() -> None:
-    assert _nvcc_path_from_env({"CUDA_HOME": "/opt/cuda", "PATH": "/bin"}) == (
+    assert nvcc_path_from_env({"CUDA_HOME": "/opt/cuda", "PATH": "/bin"}) == (
         "/opt/cuda/bin/nvcc"
     )
 
 
+def test_prepare_torch_extension_env_uses_python_cuda_home(monkeypatch) -> None:
+    monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: "/venv/nvidia/cu13")
+    monkeypatch.setattr("avo.cuda_env.cuda_env_is_build_compatible", lambda env: False)
+
+    env: dict[str, str] = {
+        "CPATH": "/usr/local/cuda-12.9/include:/opt/include",
+        "LD_LIBRARY_PATH": "/usr/local/cuda-12.9/lib64:/lib",
+        "PATH": "/usr/local/cuda-12.9/bin:/usr/bin",
+    }
+    updated = prepare_torch_extension_env(env, max_jobs="3")
+
+    assert updated is env
+    assert updated["TORCH_CUDA_ARCH_LIST"] == "8.6"
+    assert updated["MAX_JOBS"] == "3"
+    assert updated["CUDA_HOME"] == "/venv/nvidia/cu13"
+    assert updated["CUDA_PATH"] == "/venv/nvidia/cu13"
+    assert updated["CUDACXX"] == "/venv/nvidia/cu13/bin/nvcc"
+    assert updated["CPATH"].split(":") == ["/venv/nvidia/cu13/include", "/opt/include"]
+    assert updated["LIBRARY_PATH"].split(":") == ["/venv/nvidia/cu13/lib"]
+    assert updated["LD_LIBRARY_PATH"].split(":") == ["/venv/nvidia/cu13/lib", "/lib"]
+    assert updated["PATH"].split(":") == ["/venv/nvidia/cu13/bin", "/usr/bin"]
+
+
+def test_prepare_torch_extension_env_adds_cudart_link_dir(tmp_path: Path, monkeypatch) -> None:
+    cuda_home = tmp_path / "site-packages" / "nvidia" / "cu13"
+    (cuda_home / "lib").mkdir(parents=True)
+    cudart = cuda_home / "lib" / "libcudart.so.13"
+    cudart.write_text("", encoding="utf-8")
+    link_dir = tmp_path / "cuda-links"
+    monkeypatch.setenv("AVO_CUDA_LINK_DIR", str(link_dir))
+    monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: str(cuda_home))
+    monkeypatch.setattr("avo.cuda_env.cuda_env_is_build_compatible", lambda env: False)
+
+    env: dict[str, str] = {}
+    prepare_torch_extension_env(env)
+
+    assert (link_dir / "libcudart.so").resolve() == cudart.resolve()
+    assert env["LIBRARY_PATH"].split(":")[:2] == [str(link_dir), str(cuda_home / "lib")]
+    assert env["LD_LIBRARY_PATH"].split(":")[:2] == [str(link_dir), str(cuda_home / "lib")]
+
+
 def test_baseline_build_status_reports_cuda_mismatch(monkeypatch) -> None:
-    monkeypatch.setattr("avo.cli._nvcc_path_from_env", lambda env: "/usr/local/cuda/bin/nvcc")
-    monkeypatch.setattr("avo.cli._nvcc_cuda_version", lambda nvcc_path, env: ("12.9", None))
+    monkeypatch.setattr("avo.cli.nvcc_path_from_env", lambda env: "/usr/local/cuda/bin/nvcc")
+    monkeypatch.setattr("avo.cli.nvcc_cuda_version", lambda nvcc_path, env: ("12.9", None))
     monkeypatch.setattr("avo.cli.importlib.util.find_spec", lambda name: None)
 
     status = _baseline_build_status({"PATH": "/usr/bin"}, torch_cuda="13.0")
