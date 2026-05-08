@@ -51,6 +51,7 @@ def compile_cuda_source(
         "-O3",
         "-lineinfo",
         "--expt-relaxed-constexpr",
+        "--ptxas-options=-v",
         *[flag for include_dir in include_dirs for flag in ("-I", str(include_dir))],
         "-c",
         str(source),
