@@ -145,6 +145,14 @@ variation steps.
   address up to 99 KB per thread block only through dynamic shared memory with explicit opt-in.
   CUDA's function attributes also constrain the requested dynamic shared memory plus static shared
   memory to the device opt-in limit. Do not propose a static shared-memory allocation above 48 KB.
+  A later MMA double-buffer skeleton applied but failed compile. It used
+  `__pipeline_wait_prior<1>()`, while the local public CUDA primitive is the
+  non-template `__pipeline_wait_prior(prior)` wrapper. It also issued scalar
+  BF16 `__pipeline_memcpy_async(..., sizeof(__nv_bfloat16))` copies instead of
+  16-byte aligned groups and accidentally removed the opening
+  `wmma::fragment<wmma::matrix_a, ...>` declaration line, leaving stray template
+  arguments and an undefined `q_frag`. The planner now rejects patches that add
+  templated `__pipeline_wait_prior<...>` or scalar BF16 async copies.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
