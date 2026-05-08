@@ -209,6 +209,13 @@ variation steps.
   `q_row = q + q_offset` pointer is likely too small to beat timing noise, and
   any such patch must use exact context after `can_stage_shared` is declared if
   it branches on that value.
+  A small patch adding `#pragma unroll` to the packed 4-wide dot-product outer
+  loop applied and compiled on sm86. BF16/Half diagnostics stayed at 48
+  registers, 1 barrier, and 16896 bytes shared memory with no spills; FP32 rose
+  to 64 registers and 33280 bytes shared memory with no spills. This is a
+  plausible low-risk score candidate on the fixed seq256/head_dim128 BF16
+  warp-row suite; the next step can score the same patch rather than repeating
+  compile-only.
   NVIDIA's CUDA Programming Guide says the mapping of matrix elements into
   WMMA fragment internal storage is unspecified and can change across
   architectures. Do not infer row/column positions from `fragment.x[]`; apply
