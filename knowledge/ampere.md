@@ -308,6 +308,16 @@ variation steps.
   16x32 tile. For row-major widened output tiles, each 16-wide PV chunk should
   store at the column offset, e.g. `&pv_tile[chunk * 16]`, with leading dimension
   `kHeadDim`.
+  A compile-only two-chunk MMA structural patch later applied and compiled on
+  sm86 with no spills: ptxas reported 40 registers, 1 barrier, and 3776 bytes
+  shared memory. This proves the two 16-wide WMMA fragment loops can compile, but
+  the patch is not scoreable or correctness-proven. It kept `kHeadDim == 16` and
+  the 16x16 `pv_tile`/`output_acc` buffers, loaded chunk 1 with `kHeadDim` as the
+  global row stride, and stored PV chunk 1 with leading dimension `kHeadDim * 2`
+  into buffers sized only for 16x16. A real head_dim32 patch must introduce a
+  runtime or constant 32-wide row stride, widen `pv_tile` and `output_acc` to
+  16x32, and store each 16-column PV chunk at a column offset that stays inside
+  the widened row-major tile before running a score.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
