@@ -26,7 +26,7 @@ Recent commits show the work moved in layers:
 - `feat: add candidate scoring backend` added the candidate interface and a PyTorch SDPA seed candidate.
 - `fix: harden Anthropic agent planning` improved structured-tool fallbacks and validation.
 - `feat: add CUDA extension candidate smoke` added a minimal compiled CUDA extension path that copies an SDPA result, proving the candidate build/load path before replacing the attention computation itself.
-- `feat: add tiny mma attention seed` added a 16x16 BF16 WMMA QK candidate so the local search has a tensor-core attention-math foothold.
+- `feat: add tiny mma attention seed` added a 16x16 BF16 WMMA QK/PV candidate so the local search has a tensor-core attention-math foothold.
 
 ## Repository layout
 
@@ -44,7 +44,7 @@ avo/                         Python package and CLI
 candidates/
   torch_sdpa_seed.py         Correctness seed that delegates to PyTorch SDPA
   cuda_identity_seed.py      CUDA-extension smoke candidate
-  cuda_mma_attention_seed.py BF16 WMMA QK attention smoke candidate
+  cuda_mma_attention_seed.py BF16 WMMA QK/PV attention smoke candidate
   cuda_identity/             Minimal PyTorch/CUDA extension source
   cuda_mma_attention/        Tiny tensor-core attention source
 kernels/smoke.cu             NVCC smoke source
@@ -166,7 +166,7 @@ uv run --extra cuda python -m avo score \
   --timeout-s 300
 ```
 
-Score the tiny BF16 WMMA QK attention smoke candidate on its fixed 16x16 shape:
+Score the tiny BF16 WMMA QK/PV attention smoke candidate on its fixed 16x16 shape:
 
 ```bash
 uv run --extra cuda python -m avo score \
@@ -233,7 +233,7 @@ When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step 
 
 ## What is still missing
 
-- Scaling the tiny WMMA QK seed beyond its fixed 16x16 smoke shape and adding tensor-core PV.
+- Scaling the tiny WMMA QK/PV seed beyond its fixed 16x16 smoke shape.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
 - A complete mutation loop that edits candidate code safely.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.

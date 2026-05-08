@@ -25,6 +25,8 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
                                      bool causal,
                                      float scale) {
   __shared__ float scores[kTileElements];
+  __shared__ __nv_bfloat16 probabilities[kTileElements];
+  __shared__ float output_tile[kTileElements];
 
   const int bh = blockIdx.x;
   if (bh >= batch_heads) {
@@ -57,9 +59,7 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
   }
   __syncthreads();
 
-  for (int linear = threadIdx.x; linear < kTileElements; linear += blockDim.x) {
-    const int row = linear / kHeadDim;
-    const int dim = linear % kHeadDim;
+  for (int row = threadIdx.x; row < kSeqLen; row += blockDim.x) {
     const int key_limit = causal ? row + 1 : kSeqLen;
 
     float row_max = -std::numeric_limits<float>::infinity();
@@ -68,13 +68,45 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
     }
 
     float denom = 0.0f;
-    float acc = 0.0f;
     for (int key = 0; key < key_limit; ++key) {
       const float weight = expf(scores[row * kSeqLen + key] * scale - row_max);
       denom += weight;
-      acc += weight * __bfloat162float(v[base + key * kHeadDim + dim]);
     }
-    output[base + row * kHeadDim + dim] = __float2bfloat16(acc / denom);
+    for (int key = 0; key < kSeqLen; ++key) {
+      const float probability =
+          key < key_limit ? expf(scores[row * kSeqLen + key] * scale - row_max) / denom : 0.0f;
+      probabilities[row * kSeqLen + key] = __float2bfloat16(probability);
+    }
+  }
+  __syncthreads();
+
+  if (threadIdx.x < warpSize) {
+    wmma::fragment<wmma::matrix_a,
+                   kSeqLen,
+                   kHeadDim,
+                   kSeqLen,
+                   __nv_bfloat16,
+                   wmma::row_major>
+        probability_frag;
+    wmma::fragment<wmma::matrix_b,
+                   kSeqLen,
+                   kHeadDim,
+                   kSeqLen,
+                   __nv_bfloat16,
+                   wmma::row_major>
+        v_frag;
+    wmma::fragment<wmma::accumulator, kSeqLen, kHeadDim, kSeqLen, float> output_frag;
+
+    wmma::fill_fragment(output_frag, 0.0f);
+    wmma::load_matrix_sync(probability_frag, probabilities, kSeqLen);
+    wmma::load_matrix_sync(v_frag, v + base, kHeadDim);
+    wmma::mma_sync(output_frag, probability_frag, v_frag, output_frag);
+    wmma::store_matrix_sync(output_tile, output_frag, kHeadDim, wmma::mem_row_major);
+  }
+  __syncthreads();
+
+  for (int linear = threadIdx.x; linear < kTileElements; linear += blockDim.x) {
+    output[base + linear] = __float2bfloat16(output_tile[linear]);
   }
 }
 

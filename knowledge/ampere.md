@@ -41,7 +41,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for a fixed 16x16 BF16 tensor-core QK smoke
+  `candidates/cuda_mma_attention_seed.py` for a fixed 16x16 BF16 tensor-core QK/PV smoke
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
   `cuda_naive_attention_seed.py` is the simpler one-thread-per-row attention
@@ -72,9 +72,10 @@ variation steps.
   same-head CTAs; head dimension 128 and boundary CTAs use the global packed path.
   This is still far from FA2: it does not use `mma.sync` or `cp.async`.
 - The tiny MMA seed uses CUDA WMMA on sm86 to compute one 16x16 BF16 QK score tile
-  with tensor cores, then applies softmax and V with scalar code. It is only a
-  correctness foothold for tensor-core attention: it does not yet use tensor-core
-  PV, online tiling beyond 16 keys, or production layouts.
+  and one BF16 PV output tile with tensor cores. It stores softmax probabilities as
+  BF16 between the two MMA operations. It is only a correctness foothold for
+  tensor-core attention: it does not yet use online tiling beyond 16 keys or
+  production layouts.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
