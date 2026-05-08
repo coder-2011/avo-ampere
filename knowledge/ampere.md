@@ -144,6 +144,12 @@ variation steps.
   were unused. This proves header/API availability, not performance. The next cp.async attempt must
   still add a real double-buffered overlap and must keep 16-byte groups aligned and disjoint from
   scalar tail writes.
+  A fresh primary-source pass over NVIDIA CUTLASS's Ampere FlashAttention v2 example and
+  FlashAttention-2 SM80 traits reinforced the same target shape: Q/K/V global-to-shared copies use
+  128-bit copy atoms, BF16 head-dim128 maps to 8 BF16 values per global-copy vector, shared layouts
+  are swizzled to manage bank conflicts, and the async path is coupled to tensor-core MMA plus
+  online-softmax rescaling. This is not support for scalar BF16 `__pipeline_memcpy_async`; it is
+  evidence that useful async-copy patches should be vector-group dataflow changes.
   A first double-buffered cp.async structural patch applied but failed compile because the doubled
   static K/V shared-memory buffers made the FP32 template instantiation use 66048 bytes of shared
   memory, above the 49152-byte static allocation limit. BF16/Half reached ptxas with 33280 bytes
@@ -742,6 +748,8 @@ variation steps.
   https://docs.nvidia.com/cutlass/4.4.0/media/docs/cpp/functionality.html
 - NVIDIA cuBLASDx performance guidance, alignment and shared-memory layouts:
   https://docs.nvidia.com/cuda/archive/13.0.1/cublasdx/performance.html
+- vLLM FlashAttention SM80 kernel traits:
+  https://github.com/vllm-project/flash-attention/blob/8798f277/csrc/flash_attn/src/kernel_traits.h
 
 ## Gate
 

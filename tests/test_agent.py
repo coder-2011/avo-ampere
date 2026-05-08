@@ -1406,7 +1406,8 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     content = updated["messages"][0]["content"]
     assert "Do not retry scalar sizeof(__nv_bfloat16) async copies" in content
     assert "8 BF16 elements per copy" in content
-    assert "choose a materially different non-async candidate patch" in content
+    assert "avoid __pipeline_memcpy_async entirely" in content
+    assert "choose a materially different non-async candidate patch in this retry" in content
 
 
 def test_parse_variation_decision_response_prefers_tool_use() -> None:

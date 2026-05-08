@@ -412,6 +412,9 @@ def build_repo_context(root: Path) -> str:
         "For MMA probability-buffer skew, WMMA load_matrix_sync leading dimensions must "
         "stay 16-byte aligned; kTile + 1 is invalid, and the corrected kTile + 8 "
         "stride preserved correctness but regressed throughput.",
+        "Scalar BF16 async-copy patches are invalid: do not use __pipeline_memcpy_async "
+        "with sizeof(__nv_bfloat16) or per-element BF16 loops. Use async copy only for "
+        "real aligned 16-byte groups in dataflow; otherwise choose a non-async patch.",
         "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
         "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
@@ -509,8 +512,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "Do not retry scalar sizeof(__nv_bfloat16) async copies. A valid Ampere "
             "async-copy patch must copy aligned 16-byte groups, which is 8 BF16 elements "
             "per copy, and keep any scalar tail path separate after the pipeline wait. "
+            "Your corrected decision should avoid __pipeline_memcpy_async entirely unless "
+            "the diff contains real 16-byte-group dataflow, not wrapper/API proof code. "
             "If you cannot express that cleanly as a small diff, choose a materially "
-            "different non-async candidate patch. "
+            "different non-async candidate patch in this retry. "
         )
     return ""
 
