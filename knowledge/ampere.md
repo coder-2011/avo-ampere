@@ -126,6 +126,13 @@ variation steps.
   were unused. This proves header/API availability, not performance. The next cp.async attempt must
   still add a real double-buffered overlap and must keep 16-byte groups aligned and disjoint from
   scalar tail writes.
+  A first double-buffered cp.async structural patch applied but failed compile because the doubled
+  static K/V shared-memory buffers made the FP32 template instantiation use 66048 bytes of shared
+  memory, above the 49152-byte static allocation limit. BF16/Half reached ptxas with 33280 bytes
+  shared memory, 56 registers, and no spills, but the translation unit still fails while the FP32
+  entry point is instantiated. Future double-buffering must either avoid doubling the FP32 static
+  buffers, reduce the staged tile footprint, split dtype-specific kernels, or move above-48KB use to
+  dynamic shared memory with the required launch attribute.
 - Shared-memory layouts and bank-conflict reduction.
 - Register pressure and spill avoidance.
 - Warp-level online softmax reductions.
