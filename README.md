@@ -51,6 +51,8 @@ failed score record instead of taking down the orchestrator.
 The variation-agent wrapper stays in the Anthropic ecosystem and reads
 `ANTHROPIC_API_KEY` from the environment. For local development, source the
 paper repo's `.env.local` before running agent commands.
+Variation decisions prefer Anthropic strict tool use and fall back to validated
+JSON text when a local SDK/model path does not support that request shape.
 
 ```bash
 set -a && source /home/ubuntu/avo/.env.local && set +a

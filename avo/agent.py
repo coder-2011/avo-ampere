@@ -6,6 +6,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+DECISION_TOOL_NAME = "record_variation_decision"
+
 DECISION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -26,6 +28,18 @@ DECISION_SCHEMA: dict[str, Any] = {
     ],
     "additionalProperties": False,
 }
+
+
+def decision_tool() -> dict[str, Any]:
+    return {
+        "name": DECISION_TOOL_NAME,
+        "description": (
+            "Record exactly one proposed Ampere AVO variation step. "
+            "This is a planning tool only; the orchestrator validates and executes commands."
+        ),
+        "strict": True,
+        "input_schema": DECISION_SCHEMA,
+    }
 
 
 @dataclass(frozen=True)
@@ -88,6 +102,23 @@ def parse_decision_text(text: str) -> VariationDecision:
     return VariationDecision.from_mapping(payload)
 
 
+def parse_decision_response(response: Any) -> VariationDecision:
+    for block in getattr(response, "content", []):
+        if _block_type(block) != "tool_use":
+            continue
+        if _block_value(block, "name") != DECISION_TOOL_NAME:
+            continue
+        payload = _block_value(block, "input")
+        if not isinstance(payload, dict):
+            raise ValueError("variation decision tool input must be an object")
+        return VariationDecision.from_mapping(payload)
+
+    text = _response_text(response)
+    if text.strip():
+        return parse_decision_text(text)
+    raise ValueError(f"agent did not call {DECISION_TOOL_NAME}")
+
+
 def request_variation_decision(
     *,
     lineage_summary: str,
@@ -118,20 +149,28 @@ def request_variation_decision(
         "max_tokens": 1200,
         "messages": [{"role": "user", "content": prompt}],
     }
-    # Newer Anthropic SDKs support output_config; older SDKs will raise TypeError,
-    # in which case local validation still catches malformed responses.
+    # Prefer strict tool use because it schema-constrains the decision boundary.
+    # Keep JSON output fallback for SDK/model combinations that do not support it.
     try:
         response = client.messages.create(
             **kwargs,
-            output_config={"format": {"type": "json_schema", "schema": DECISION_SCHEMA}},
+            tools=[decision_tool()],
+            tool_choice={
+                "type": "tool",
+                "name": DECISION_TOOL_NAME,
+                "disable_parallel_tool_use": True,
+            },
         )
     except TypeError:
-        response = client.messages.create(**kwargs)
+        try:
+            response = client.messages.create(
+                **kwargs,
+                output_config={"format": {"type": "json_schema", "schema": DECISION_SCHEMA}},
+            )
+        except TypeError:
+            response = client.messages.create(**kwargs)
 
-    text = "\n".join(
-        block.text for block in response.content if getattr(block, "type", None) == "text"
-    )
-    return parse_decision_text(text)
+    return parse_decision_response(response)
 
 
 def _require_string(payload: dict[str, Any], key: str) -> str:
@@ -153,3 +192,21 @@ def _recover_json_object(text: str) -> dict[str, Any] | None:
         if isinstance(payload, dict):
             return payload
     return None
+
+
+def _response_text(response: Any) -> str:
+    return "\n".join(
+        str(_block_value(block, "text"))
+        for block in getattr(response, "content", [])
+        if _block_type(block) == "text" and _block_value(block, "text") is not None
+    )
+
+
+def _block_type(block: Any) -> str | None:
+    return _block_value(block, "type")
+
+
+def _block_value(block: Any, key: str) -> Any:
+    if isinstance(block, dict):
+        return block.get(key)
+    return getattr(block, key, None)
