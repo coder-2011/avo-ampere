@@ -2,21 +2,48 @@ from __future__ import annotations
 
 import json
 import os
+import shlex
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 DECISION_TOOL_NAME = "record_variation_decision"
+DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250929"
+ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "score"})
+SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 
 DECISION_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
-        "hypothesis": {"type": "string"},
-        "files_to_inspect": {"type": "array", "items": {"type": "string"}},
-        "candidate_edit": {"type": "string"},
-        "expected_effect": {"type": "string"},
-        "risk": {"type": "string"},
-        "next_command": {"type": "string"},
+        "hypothesis": {
+            "type": "string",
+            "description": "Ampere-specific performance hypothesis to investigate next.",
+        },
+        "files_to_inspect": {
+            "type": "array",
+            "items": {"type": "string"},
+            "description": "Repo-local files relevant to the hypothesis.",
+        },
+        "candidate_edit": {
+            "type": "string",
+            "description": "Small proposed change or inspection step before editing.",
+        },
+        "expected_effect": {
+            "type": "string",
+            "description": "Expected correctness or throughput effect if the hypothesis is right.",
+        },
+        "risk": {
+            "type": "string",
+            "description": "Main correctness, benchmark, or hardware risk.",
+        },
+        "next_command": {
+            "type": "string",
+            "description": (
+                "One bounded command for the orchestrator. Must start with 'avo' and use only "
+                "one of these subcommands: env, compile, score. Do not include shell pipes, "
+                "redirection, command chaining, git, rm, cat, head, or arbitrary shell."
+            ),
+        },
     },
     "required": [
         "hypothesis",
@@ -65,7 +92,7 @@ class VariationDecision:
             candidate_edit=_require_string(payload, "candidate_edit"),
             expected_effect=_require_string(payload, "expected_effect"),
             risk=_require_string(payload, "risk"),
-            next_command=_require_string(payload, "next_command"),
+            next_command=_validate_next_command(_require_string(payload, "next_command")),
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -123,7 +150,7 @@ def request_variation_decision(
     *,
     lineage_summary: str,
     knowledge: str,
-    model: str = "claude-sonnet-4-20250514",
+    model: str = DEFAULT_AGENT_MODEL,
 ) -> VariationDecision:
     try:
         import anthropic
@@ -140,7 +167,9 @@ def request_variation_decision(
     prompt = (
         "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
-        "Return exactly one JSON object matching the requested schema.\n\n"
+        "Return exactly one decision. The next_command must be a single bounded command that "
+        "starts with 'avo' and uses only one of: env, compile, score. Do not use shell pipes, "
+        "redirection, command chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
         f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}\n"
     )
 
@@ -149,10 +178,15 @@ def request_variation_decision(
         "max_tokens": 1200,
         "messages": [{"role": "user", "content": prompt}],
     }
+    response = _request_decision_response(client, kwargs)
+    return parse_decision_response(response)
+
+
+def _request_decision_response(client: Any, kwargs: dict[str, Any]) -> Any:
     # Prefer strict tool use because it schema-constrains the decision boundary.
     # Keep JSON output fallback for SDK/model combinations that do not support it.
     try:
-        response = client.messages.create(
+        return client.messages.create(
             **kwargs,
             tools=[decision_tool()],
             tool_choice={
@@ -162,15 +196,25 @@ def request_variation_decision(
             },
         )
     except TypeError:
-        try:
-            response = client.messages.create(
-                **kwargs,
-                output_config={"format": {"type": "json_schema", "schema": DECISION_SCHEMA}},
-            )
-        except TypeError:
-            response = client.messages.create(**kwargs)
+        return _request_decision_json_response(client, kwargs)
+    except Exception as exc:
+        if not _strict_tools_unsupported(exc):
+            raise
+        return _request_decision_json_response(client, kwargs)
 
-    return parse_decision_response(response)
+
+def _request_decision_json_response(client: Any, kwargs: dict[str, Any]) -> Any:
+    try:
+        return client.messages.create(
+            **kwargs,
+            output_config={"format": {"type": "json_schema", "schema": DECISION_SCHEMA}},
+        )
+    except TypeError:
+        return client.messages.create(**kwargs)
+    except Exception as exc:
+        if not _structured_outputs_unsupported(exc):
+            raise
+        return client.messages.create(**kwargs)
 
 
 def _require_string(payload: dict[str, Any], key: str) -> str:
@@ -178,6 +222,24 @@ def _require_string(payload: dict[str, Any], key: str) -> str:
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} must be a non-empty string")
     return value
+
+
+def _validate_next_command(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError as exc:
+        raise ValueError(f"next_command is not parseable: {exc}") from exc
+    if len(parts) < 2 or parts[0] != "avo":
+        raise ValueError("next_command must start with 'avo'")
+    if any(part in SHELL_CONTROL_TOKENS for part in parts):
+        raise ValueError("next_command must not contain shell control tokens")
+    subcommand = parts[1]
+    if subcommand not in ALLOWED_NEXT_COMMANDS:
+        allowed = ", ".join(sorted(ALLOWED_NEXT_COMMANDS))
+        raise ValueError(
+            f"next_command uses unsupported avo subcommand '{subcommand}'; allowed: {allowed}"
+        )
+    return command
 
 
 def _recover_json_object(text: str) -> dict[str, Any] | None:
@@ -192,6 +254,20 @@ def _recover_json_object(text: str) -> dict[str, Any] | None:
         if isinstance(payload, dict):
             return payload
     return None
+
+
+def _strict_tools_unsupported(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return "strict" in text and "tool" in text and _unsupported(text)
+
+
+def _structured_outputs_unsupported(exc: Exception) -> bool:
+    text = str(exc).lower()
+    return ("output_config" in text or "structured output" in text) and _unsupported(text)
+
+
+def _unsupported(text: str) -> bool:
+    return "does not support" in text or "unsupported" in text or "not supported" in text
 
 
 def _response_text(response: Any) -> str:

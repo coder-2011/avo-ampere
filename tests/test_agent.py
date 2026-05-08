@@ -5,7 +5,9 @@ import pytest
 
 from avo.agent import (
     DECISION_TOOL_NAME,
+    DEFAULT_AGENT_MODEL,
     VariationDecision,
+    _request_decision_response,
     decision_tool,
     parse_decision_response,
     parse_decision_text,
@@ -53,11 +55,39 @@ def test_parse_variation_decision_rejects_missing_key() -> None:
         parse_decision_text(json.dumps({"hypothesis": "x"}))
 
 
+def test_parse_variation_decision_rejects_unbounded_next_command() -> None:
+    payload = decision_payload()
+    payload["next_command"] = "cat kernel.cu | head -20"
+
+    with pytest.raises(ValueError, match="must start with 'avo'"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_shell_next_command() -> None:
+    payload = decision_payload()
+    payload["next_command"] = "avo env && rm -rf /"
+
+    with pytest.raises(ValueError, match="shell control"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_unsupported_avo_subcommand() -> None:
+    payload = decision_payload()
+    payload["next_command"] = "avo commit-score lineage score.json"
+
+    with pytest.raises(ValueError, match="unsupported"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_decision_tool_uses_strict_schema() -> None:
     tool = decision_tool()
     assert tool["name"] == DECISION_TOOL_NAME
     assert tool["strict"] is True
     assert tool["input_schema"]["additionalProperties"] is False
+
+
+def test_default_agent_model_supports_structured_outputs_family() -> None:
+    assert DEFAULT_AGENT_MODEL == "claude-sonnet-4-5-20250929"
 
 
 def test_parse_variation_decision_response_prefers_tool_use() -> None:
@@ -90,3 +120,53 @@ def test_parse_variation_decision_response_requires_expected_tool() -> None:
 
     with pytest.raises(ValueError, match=DECISION_TOOL_NAME):
         parse_decision_response(response)
+
+
+def test_decision_request_falls_back_when_strict_tools_are_unsupported() -> None:
+    class FakeMessages:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                raise RuntimeError("model does not support strict tools")
+            text = json.dumps(decision_payload())
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+    messages = FakeMessages()
+    response = _request_decision_response(
+        SimpleNamespace(messages=messages),
+        {"model": "old-model"},
+    )
+
+    assert "tools" in messages.calls[0]
+    assert "output_config" in messages.calls[1]
+    assert parse_decision_response(response).hypothesis == decision_payload()["hypothesis"]
+
+
+def test_decision_request_falls_back_to_plain_json_when_structured_outputs_fail() -> None:
+    class FakeMessages:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                raise RuntimeError("model does not support strict tools")
+            if len(self.calls) == 2:
+                raise RuntimeError("model does not support output_config")
+            text = json.dumps(decision_payload())
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+    messages = FakeMessages()
+    response = _request_decision_response(
+        SimpleNamespace(messages=messages),
+        {"model": "old-model"},
+    )
+
+    assert "tools" in messages.calls[0]
+    assert "output_config" in messages.calls[1]
+    assert "tools" not in messages.calls[2]
+    assert "output_config" not in messages.calls[2]
+    assert parse_decision_response(response).candidate_edit == decision_payload()["candidate_edit"]

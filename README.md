@@ -68,6 +68,8 @@ The variation-agent wrapper stays in the Anthropic ecosystem and reads
 paper repo's `.env.local` before running agent commands.
 Variation decisions prefer Anthropic strict tool use and fall back to validated
 JSON text when a local SDK/model path does not support that request shape.
+The default model is `claude-sonnet-4-5-20250929`, which supports structured
+outputs and strict tool use on the Claude API.
 
 ```bash
 set -a && source /home/ubuntu/avo/.env.local && set +a
