@@ -60,6 +60,7 @@ baseline = [
     { name = "torch" },
 ]
 cuda = [
+    { name = "ninja" },
     { name = "numpy" },
     { name = "torch" },
 ]
@@ -73,6 +74,7 @@ requires-dist = [
     { name = "anthropic", marker = "extra == 'agent'", specifier = ">=0.72.0" },
     { name = "flash-attn", marker = "extra == 'baseline'", specifier = ">=2.7.0" },
     { name = "ninja", marker = "extra == 'baseline'", specifier = ">=1.11" },
+    { name = "ninja", marker = "extra == 'cuda'", specifier = ">=1.11" },
     { name = "numpy", marker = "extra == 'baseline'", specifier = ">=1.26" },
     { name = "numpy", marker = "extra == 'cuda'", specifier = ">=1.26" },
     { name = "packaging", marker = "extra == 'baseline'", specifier = ">=24.0" },

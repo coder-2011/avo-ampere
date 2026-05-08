@@ -40,6 +40,7 @@ uv run python -m avo compile --source kernels/smoke.cu --out-dir /tmp/avo-build
 uv run --extra cuda python -m avo env
 uv run --extra cuda python -m avo score --backend torch-sdpa --seq-lens 4096 --causal both --repeats 3 --warmup 1
 uv run --extra cuda python -m avo score --backend candidate --candidate candidates/torch_sdpa_seed.py --seq-lens 4096 --causal both --repeats 3 --warmup 1
+uv run --extra cuda python -m avo score --backend candidate --candidate candidates/cuda_identity_seed.py --seq-lens 4096 --causal false --repeats 1 --warmup 1 --timeout-s 300
 uv run --extra cuda --extra baseline python -m avo seed-baseline ./lineage --backend flash-attn --seq-lens 4096,8192,16384,32768 --repeats 3 --warmup 1
 ```
 
@@ -58,8 +59,10 @@ attention(q, k, v, causal: bool)
 Inputs and outputs use PyTorch SDPA layout: `(batch, heads, seq, head_dim)`.
 The seed module at `candidates/torch_sdpa_seed.py` delegates to PyTorch SDPA so
 the scorer contract can be verified before replacing it with CUDA extension
-code. Future CUDA candidates should hide their `torch.utils.cpp_extension`
-build/load path behind the same function.
+code. `candidates/cuda_identity_seed.py` is the first CUDA-extension smoke
+candidate: PyTorch SDPA computes attention, then a custom CUDA kernel copies the
+output. Future CUDA candidates should move attention work itself behind the same
+function.
 
 ## Agent Use
 
