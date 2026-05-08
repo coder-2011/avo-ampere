@@ -724,6 +724,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "with the global key_start offset; use tile-local k_shared + "
             "chunk_offset addressing with kHeadDim as the leading dimension"
         )
+    if _candidate_patch_repeats_sync_mma_q_staging(added_text):
+        raise ValueError(
+            "candidate_patch repeats synchronous MMA Q shared-memory staging; "
+            "the recorded score preserved correctness but regressed throughput, "
+            "so add real overlap or a materially different dataflow before revisiting"
+        )
     if _candidate_patch_repeats_sync_mma_k_staging(added_text):
         raise ValueError(
             "candidate_patch repeats synchronous MMA K shared-memory staging; "
@@ -866,6 +872,15 @@ def _candidate_patch_leaves_orphan_mma_k_fragment(added_text: str) -> bool:
 
 def _candidate_patch_uses_global_offset_for_shared_k_tile(added_text: str) -> bool:
     return bool(re.search(r"\bk_shared\s*\+\s*key_start\s*\*\s*kHeadDim\b", added_text))
+
+
+def _candidate_patch_repeats_sync_mma_q_staging(added_text: str) -> bool:
+    return (
+        "__shared__ __nv_bfloat16 q_shared[kTile * kHeadDim]" in added_text
+        and bool(re.search(r"\bq_shared\s*\+\s*chunk_offset\b", added_text))
+        and "cp.async" not in added_text
+        and "memcpy_async" not in added_text
+    )
 
 
 def _candidate_patch_repeats_sync_mma_k_staging(added_text: str) -> bool:

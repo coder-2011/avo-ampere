@@ -936,6 +936,29 @@ def test_parse_variation_decision_rejects_sync_mma_k_staging_repeat() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_sync_mma_q_staging_repeat() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Stage the full MMA Q tile in shared memory and score it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,4 @@\n"
+        "-old\n"
+        "+__shared__ __nv_bfloat16 q_shared[kTile * kHeadDim];\n"
+        "+wmma::load_matrix_sync(q_frag, q_shared + chunk_offset, kHeadDim);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="synchronous MMA Q shared-memory staging"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_sync_mma_v_staging_repeat() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Stage the MMA V tile in double-buffered shared memory."

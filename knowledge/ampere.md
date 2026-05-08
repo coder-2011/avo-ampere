@@ -670,6 +670,12 @@ variation steps.
   A later planner loop still retried static synchronous K staging after the no-patch and scalar-async
   guards. Runtime feedback now explicitly tells the agent to stop retrying `k_shared` K staging and
   either add real overlap or choose a different non-K-staging patch.
+  A later manual Q-staging score tested the analogous static `q_shared[kTile * kHeadDim]` path.
+  It compiled with no spills, 40 registers, 1 barrier, and 22208 bytes shared memory, then passed
+  correctness but regressed to geomean `0.42035719120740594` TFLOPS. Noncausal was
+  `0.5929811502224299` TFLOPS at median 0.9053760170936584 ms; causal was
+  `0.2979861470023096` TFLOPS at median 0.9008319973945618 ms. Do not repeat static synchronous
+  `q_shared` staging without real overlap or a materially different Q/K dataflow.
   A follow-up loop proposed static double-buffered V staging in the MMA seed:
   `v_shared[2][kTile * kHeadDim]`, cooperative warp loads of the current and
   next 16x128 V tiles, and PV `wmma::load_matrix_sync` from
