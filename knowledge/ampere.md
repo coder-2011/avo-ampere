@@ -160,6 +160,12 @@ variation steps.
   passed correctness but was gate-rejected at `6.539498372773744e-05` geomean
   TFLOPS versus the current `0.10830947571120902` best, so do not repeat that
   baseline score as a candidate-improving step.
+  A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
+  to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as
+  `fragment<matrix_a, 16, 16, 32, ...>` and `fragment<accumulator, 16, 32, 16,
+  ...>` are incomplete/unsupported. Any head-dimension-32 MMA extension must keep
+  WMMA K fragments at 16 and explicitly process two 16-wide chunks for QK and PV;
+  do not repeat the constant-only `kHeadDim=32` patch.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
