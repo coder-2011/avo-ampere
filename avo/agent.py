@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import os
 import shlex
+import time
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 DECISION_TOOL_NAME = "record_variation_decision"
 DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_AGENT_REQUEST_ATTEMPTS = 3
+DEFAULT_AGENT_RETRY_DELAY_S = 1.0
 ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "score"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 
@@ -223,7 +226,25 @@ def build_repo_context(root: Path) -> str:
     return "\n".join(lines)
 
 
-def _request_decision_response(client: Any, kwargs: dict[str, Any]) -> Any:
+def _request_decision_response(
+    client: Any,
+    kwargs: dict[str, Any],
+    *,
+    attempts: int = DEFAULT_AGENT_REQUEST_ATTEMPTS,
+    retry_delay_s: float = DEFAULT_AGENT_RETRY_DELAY_S,
+) -> Any:
+    for attempt in range(attempts):
+        try:
+            return _request_decision_response_once(client, kwargs)
+        except Exception as exc:
+            is_last_attempt = attempt + 1 >= attempts
+            if is_last_attempt or not _transient_api_error(exc):
+                raise
+            time.sleep(retry_delay_s * (2**attempt))
+    raise AssertionError("unreachable")
+
+
+def _request_decision_response_once(client: Any, kwargs: dict[str, Any]) -> Any:
     # Prefer strict tool use because it schema-constrains the decision boundary.
     # Keep JSON output fallback for SDK/model combinations that do not support it.
     try:
@@ -309,6 +330,13 @@ def _relative_files(root: Path, dirname: str, *, suffix: str) -> list[str]:
 
 
 def _preferred_candidate_score_command(candidates: list[str]) -> str:
+    if "candidates/cuda_tiled_attention_seed.py" in candidates:
+        return (
+            "avo score --backend candidate "
+            "--candidate candidates/cuda_tiled_attention_seed.py "
+            "--seq-lens 16 --total-tokens 16 --num-heads 1 --head-dim 16 "
+            "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
+        )
     if "candidates/cuda_naive_attention_seed.py" in candidates:
         return (
             "avo score --backend candidate "
@@ -337,6 +365,14 @@ def _strict_tools_unsupported(exc: Exception) -> bool:
 def _structured_outputs_unsupported(exc: Exception) -> bool:
     text = str(exc).lower()
     return ("output_config" in text or "structured output" in text) and _unsupported(text)
+
+
+def _transient_api_error(exc: Exception) -> bool:
+    status_code = getattr(exc, "status_code", None)
+    if status_code in {408, 409, 429, 500, 502, 503, 504, 529}:
+        return True
+    class_name = type(exc).__name__
+    return class_name in {"APIConnectionError", "APITimeoutError"}
 
 
 def _unsupported(text: str) -> bool:

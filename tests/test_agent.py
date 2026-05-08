@@ -98,12 +98,26 @@ def test_build_repo_context_lists_local_candidates() -> None:
 
     assert "candidates/cuda_identity_seed.py" in context
     assert "candidates/cuda_naive_attention_seed.py" in context
+    assert "candidates/cuda_tiled_attention_seed.py" in context
     assert "candidates/torch_sdpa_seed.py" in context
     assert "candidates/cuda_identity/identity_kernel.cu" in context
-    assert "--candidate candidates/cuda_naive_attention_seed.py" in context
+    assert "--candidate candidates/cuda_tiled_attention_seed.py" in context
     assert "--seq-lens 16" in context
     assert "avo score --backend candidate" in context
     assert "csrc/flash_attn" not in context
+
+
+def test_build_repo_context_falls_back_to_naive_candidate(tmp_path: Path) -> None:
+    candidates = tmp_path / "candidates"
+    cuda_source = candidates / "cuda_naive_attention"
+    cuda_source.mkdir(parents=True)
+    (candidates / "cuda_naive_attention_seed.py").write_text("", encoding="utf-8")
+    (cuda_source / "attention_kernel.cu").write_text("", encoding="utf-8")
+
+    context = build_repo_context(tmp_path)
+
+    assert "--candidate candidates/cuda_naive_attention_seed.py" in context
+    assert "--candidate candidates/cuda_tiled_attention_seed.py" not in context
 
 
 def test_build_repo_context_falls_back_to_identity_candidate(tmp_path: Path) -> None:
@@ -212,3 +226,31 @@ def test_decision_request_falls_back_to_plain_json_when_structured_outputs_fail(
     assert "tools" not in messages.calls[2]
     assert "output_config" not in messages.calls[2]
     assert parse_decision_response(response).candidate_edit == decision_payload()["candidate_edit"]
+
+
+def test_decision_request_retries_transient_api_error() -> None:
+    class FakeTransientError(RuntimeError):
+        status_code = 500
+
+    class FakeMessages:
+        def __init__(self) -> None:
+            self.calls = []
+
+        def create(self, **kwargs):
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                raise FakeTransientError("internal server error")
+            text = json.dumps(decision_payload())
+            return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+    messages = FakeMessages()
+    response = _request_decision_response(
+        SimpleNamespace(messages=messages),
+        {"model": "claude"},
+        retry_delay_s=0.0,
+    )
+
+    assert len(messages.calls) == 2
+    assert "tools" in messages.calls[0]
+    assert "tools" in messages.calls[1]
+    assert parse_decision_response(response).next_command == decision_payload()["next_command"]
