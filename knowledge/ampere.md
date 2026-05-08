@@ -216,6 +216,11 @@ variation steps.
   plausible low-risk score candidate on the fixed seq256/head_dim128 BF16
   warp-row suite; the next step can score the same patch rather than repeating
   compile-only.
+  That patch was scored with three trials and passed correctness but regressed:
+  noncausal `0.4773985262900999` TFLOPS, causal `0.2881296921121001` TFLOPS,
+  and `0.3708809652634344` geomean TFLOPS versus the current `0.4012802607933843`
+  best. Do not repeat the packed dot-product outer-loop unroll as a
+  candidate-improving step.
   NVIDIA's CUDA Programming Guide says the mapping of matrix elements into
   WMMA fragment internal storage is unspecified and can change across
   architectures. Do not infer row/column positions from `fragment.x[]`; apply
