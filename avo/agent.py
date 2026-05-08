@@ -721,6 +721,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "storing scores; remove old single-chunk QK fragment declarations "
             "completely"
         )
+    if _candidate_patch_uses_thread_local_mma_row_state_for_cross_thread_rows(added_text):
+        raise ValueError(
+            "candidate_patch moves MMA row softmax state into per-thread registers but "
+            "later uses row / blockDim.x from other threads; the recorded score failed "
+            "correctness with non-finite outputs"
+        )
     if _candidate_patch_uses_global_offset_for_shared_k_tile(added_text):
         raise ValueError(
             "candidate_patch stages an MMA K tile in shared memory but loads it "
@@ -875,6 +881,19 @@ def _candidate_patch_leaves_orphan_mma_k_fragment(added_text: str) -> bool:
 
 def _candidate_patch_uses_global_offset_for_shared_k_tile(added_text: str) -> bool:
     return bool(re.search(r"\bk_shared\s*\+\s*key_start\s*\*\s*kHeadDim\b", added_text))
+
+
+def _candidate_patch_uses_thread_local_mma_row_state_for_cross_thread_rows(
+    added_text: str,
+) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return (
+        "row_max_reg" in compact
+        and "row_sum_reg" in compact
+        and "old_scale_reg" in compact
+        and "row/blockDim.x" in compact
+        and "output_acc[linear]*=old_scale_reg[reg_idx]" in compact
+    )
 
 
 def _candidate_patch_repeats_sync_mma_q_staging(added_text: str) -> bool:

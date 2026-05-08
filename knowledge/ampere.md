@@ -720,6 +720,11 @@ variation steps.
   `__pipeline_memcpy_async` after three attempts. The base repo context now treats cp.async as a
   cooled-down direction unless the diff is a complete 16-byte-group dataflow change with exact
   current context and no scalar async calls.
+  A later non-async MMA register-row-state patch applied and scored, but failed correctness for both
+  causal modes with non-finite outputs. It moved `row_max`, `row_sum`, and `old_scale` into
+  per-thread arrays, then used `row / blockDim.x` in output-scaling/final-store loops where threads
+  did not own the row state. Do not repeat this per-thread register-state mapping; any register
+  row-state patch must keep all row consumers on the owning thread or publish state safely.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.

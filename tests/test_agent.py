@@ -913,6 +913,35 @@ def test_parse_variation_decision_rejects_global_offset_for_shared_mma_k_tile() 
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_thread_local_mma_row_state() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Move MMA row softmax state into registers and score it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,9 @@\n"
+        "-old\n"
+        "+float row_max_reg[1];\n"
+        "+float row_sum_reg[1];\n"
+        "+float old_scale_reg[1];\n"
+        "+const int tid = threadIdx.x;\n"
+        "+const int row = linear / kHeadDim;\n"
+        "+const int reg_idx = row / blockDim.x;\n"
+        "+output_acc[linear] *= old_scale_reg[reg_idx];\n"
+        "+output[linear] = __float2bfloat16(output_acc[linear] / row_sum_reg[reg_idx]);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="per-thread registers"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_sync_mma_k_staging_repeat() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Stage the full MMA K tile in shared memory and score it."
