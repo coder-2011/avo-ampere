@@ -687,6 +687,9 @@ variation steps.
   1.0978879928588867 ms. Do not repeat static synchronous `v_shared[2]`
   staging; revisit V staging only with real async-copy overlap or a materially
   different scheduling strategy.
+  A later single-buffer `v_shared[kTile * kHeadDim]` compile-only variant also compiled at 22208
+  bytes shared memory and was cleaned up, but it was the same synchronous V-staging direction without
+  overlap. The planner now rejects both single-buffer and double-buffer static V staging repeats.
   A later probability-buffer skew patch tried to pad the 16x16 BF16
   `probabilities` tile before the PV WMMA load. The generated `kTile + 1`
   leading dimension was invalid for WMMA because NVIDIA documents

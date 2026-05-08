@@ -1057,7 +1057,29 @@ def test_parse_variation_decision_rejects_sync_mma_v_staging_repeat() -> None:
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="synchronous double-buffered MMA V"):
+    with pytest.raises(ValueError, match="synchronous MMA V"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_single_buffer_sync_mma_v_staging_repeat() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Stage the MMA V tile in shared memory."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,4 @@\n"
+        "-old\n"
+        "+__shared__ __nv_bfloat16 v_shared[kTile * kHeadDim];\n"
+        "+wmma::load_matrix_sync(v_frag, v_shared + chunk_offset, kHeadDim);\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_v_staging"
+    )
+
+    with pytest.raises(ValueError, match="synchronous MMA V"):
         parse_decision_text(json.dumps(payload))
 
 

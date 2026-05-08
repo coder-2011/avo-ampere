@@ -527,7 +527,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "async-copy or double-buffered overlap; otherwise choose a different "
             "non-K-staging candidate patch. "
         )
-    if "synchronous double-buffered MMA V shared-memory staging" in message:
+    if (
+        "synchronous MMA V shared-memory staging" in message
+        or "synchronous double-buffered MMA V shared-memory staging" in message
+    ):
         return (
             "Do not retry static v_shared[2] MMA V staging. It already passed correctness "
             "and regressed throughput. A corrected V-staging decision must add real "
@@ -752,7 +755,7 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
         )
     if _candidate_patch_repeats_sync_mma_v_staging(added_text):
         raise ValueError(
-            "candidate_patch repeats synchronous double-buffered MMA V shared-memory staging; "
+            "candidate_patch repeats synchronous MMA V shared-memory staging; "
             "the recorded score preserved correctness but regressed throughput, "
             "so add real async-copy overlap before revisiting"
         )
@@ -929,9 +932,16 @@ def _candidate_patch_repeats_sync_mma_k_staging(added_text: str) -> bool:
 
 
 def _candidate_patch_repeats_sync_mma_v_staging(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
     return (
-        "__shared__ __nv_bfloat16 v_shared[2][kTile * kHeadDim]" in added_text
-        and "v_shared[current_buffer][chunk_offset]" in added_text
+        (
+            "__shared____nv_bfloat16v_shared[2][kTile*kHeadDim]" in compact
+            or "__shared____nv_bfloat16v_shared[kTile*kHeadDim]" in compact
+        )
+        and (
+            "v_shared[current_buffer][chunk_offset]" in compact
+            or "v_shared+chunk_offset" in compact
+        )
         and "cp.async" not in added_text
         and "memcpy_async" not in added_text
     )
