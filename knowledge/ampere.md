@@ -1060,3 +1060,30 @@ source files.
   guardrails around probabilistic planner output. Keep future reliability work
   centered on classifier-driven preflights and search-loop routing, not on
   accumulating phrase-specific bans.
+  Follow-up hardening made that promotion path operational instead of advisory.
+  Active promoted failure classes are now passed into materialized transform
+  preflight. For repeated `stale_or_undefined_symbol` failures, the promoted
+  track rejects CUDA edits that remove a declaration while still adding uses of
+  the old identifier, or that introduce duplicate local declarations in one
+  edit. These are structural symbol-lifecycle checks, not exact text bans.
+  WMMA fragment-shape preflight now parses added `wmma::fragment<...>` templates
+  and resolves added `constexpr int` dimensions, rejecting any resolvable
+  Ampere BF16 fragment dimension outside the supported 16x16x16 shape. This
+  replaces narrower checks for individual historical k32/m32 spellings.
+  Sequence-cap graduation is also a structural track: a patch that increases
+  `kMaxSeqLen` must include the new value in `SMOKE_SEQUENCES` in the same
+  wrapper/kernel edit, and wrapper-only additions beyond the accepted base cap
+  are rejected before compile.
+  The parser still recovers tiny integer transforms from prose, but MMA
+  sequence-cap transforms are no longer allowed to be kernel-only compile
+  probes. A `kMaxSeqLen` graduation outside the accepted base requires the
+  wrapper sequence set in the same batch. Repeating a successful compile-only
+  transform remains blocked even after that transform has been scored; the
+  search must score the compiled transform or choose a different family.
+  Runtime source now carries the accepted MMA seq1024 lane (`kMaxSeqLen=1024`
+  and `SMOKE_SEQUENCES={16, 32, 64, 128, 256, 1024}`). No-edit MMA scoring below
+  seq1024 is rejected so the planner does not keep spending steps on tiny smoke
+  workloads. The accepted seq1024 lineage lane is commit
+  `a9f55492223c977ea4525347145fe991f5e06174`: seq_len 1024, total_tokens 8192,
+  num_heads 8, head_dim 128, BF16, both causal modes, geomean
+  `5.073625790914057` TFLOPS.

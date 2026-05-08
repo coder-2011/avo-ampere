@@ -441,6 +441,42 @@ def test_run_decision_command_preflights_materialized_cuda_transform(tmp_path: P
     assert kernel.read_text(encoding="utf-8") == "old\n"
 
 
+def test_run_decision_command_applies_promoted_preflight_to_transform(
+    tmp_path: Path,
+) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text("float old_scale = 1.0f;\nacc *= old_scale;\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+
+    attempt = run_decision_command(
+        decision(
+            "avo worker-sleep --seconds 0",
+            candidate_transform={
+                "op": "replace_once",
+                "path": "candidates/kernel.cu",
+                "find": "float old_scale = 1.0f;\nacc *= old_scale;\n",
+                "replace": "float new_scale = 1.0f;\nacc += old_scale;\n",
+            },
+        ),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+        promoted_preflight_classes=frozenset({"stale_or_undefined_symbol"}),
+    )
+
+    assert attempt.patch_result is not None
+    assert not attempt.patch_result.ok
+    assert "structural promoted preflight" in str(attempt.patch_result.rejected_reason)
+    assert "promoted_symbol_lifecycle_removed_declaration" in str(
+        attempt.patch_result.rejected_reason
+    )
+    assert attempt.command_result.returncode is None
+    assert kernel.read_text(encoding="utf-8") == "float old_scale = 1.0f;\nacc *= old_scale;\n"
+
+
 def test_run_decision_command_stops_when_candidate_patch_is_rejected(tmp_path: Path) -> None:
     env = os.environ.copy()
     env["PYTHONPATH"] = str(Path.cwd())
@@ -1117,6 +1153,69 @@ def test_attempt_history_rejects_repeated_compile_after_planning_failure(
         validate_decision_against_attempt_history(
             decision(
                 "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+                candidate_transform=transform,
+            ),
+            attempts,
+        )
+
+
+def test_attempt_history_rejects_repeated_compile_after_transform_score(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 1024,
+    }
+    compile_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    score_attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 1024",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={"all_correct": False, "geomean_tflops": 0.0, "cases": []},
+        started_at="2026-05-08T00:00:02+00:00",
+        completed_at="2026-05-08T00:00:03+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=compile_attempt, gate_decision=None))
+    write_step_record(attempts, EvolutionStep(attempt=score_attempt, gate_decision=None))
+
+    with pytest.raises(ValueError, match="repeats a successful compile-only"):
+        validate_decision_against_attempt_history(
+            decision(
+                "avo compile --source candidates/kernel.cu --out-dir build/kernel_again",
                 candidate_transform=transform,
             ),
             attempts,

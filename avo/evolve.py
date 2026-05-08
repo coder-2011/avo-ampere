@@ -572,6 +572,16 @@ def validate_decision_against_attempt_history(
     payloads = [payload for _, payload in _load_step_payloads(directory)]
     if not payloads:
         return
+    if (
+        decision.candidate_transform is not None
+        and _decision_subcommand(decision) == "compile"
+        and _has_successful_compile_only_transform(payloads, decision.candidate_transform)
+    ):
+        raise ValueError(
+            "next_command repeats a successful compile-only candidate_transform; score the "
+            "same structured transform on a validation workload or choose a materially "
+            "different transform family"
+        )
     pending_transform = _pending_compile_only_transform(payloads)
     if pending_transform is None:
         return
@@ -762,6 +772,21 @@ def _successful_compile_only_transform(payload: dict[str, Any]) -> dict[str, Any
     decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
     transform = decision.get("candidate_transform")
     return transform if isinstance(transform, dict) else None
+
+
+def _has_successful_compile_only_transform(
+    payloads: list[dict[str, Any]],
+    transform: dict[str, Any],
+) -> bool:
+    transform_identity = _transform_identity(transform)
+    return any(
+        _transform_identity(previous) == transform_identity
+        for previous in (
+            _successful_compile_only_transform(payload)
+            for payload in payloads
+        )
+        if previous is not None
+    )
 
 
 def _pending_compile_only_transform(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
@@ -983,6 +1008,7 @@ def _preflight_materialized_candidate_patch(
         validate_candidate_patch_structural_preflight(
             patch_text,
             allow_cuda_source_edits=allow_cuda_source_edits,
+            promoted_preflight_classes=promoted_preflight_classes,
         )
     except ValueError as exc:
         promoted = ""

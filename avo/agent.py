@@ -21,6 +21,7 @@ DEFAULT_SCORE_HEAD_DIM = 128
 DEFAULT_SCORE_NUM_HEADS = 16
 DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
 DEFAULT_SCORE_TOTAL_TOKENS = 32768
+MMA_ACCEPTED_VALIDATION_SEQ = 1024
 MAX_REPO_CONTEXT_FILE_CHARS = 12_000
 MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
@@ -33,7 +34,7 @@ RECORDED_NO_PATCH_COMPILE_SOURCES = frozenset(
         "candidates/cuda_warp_rows_attention/attention_kernel.cu",
     }
 )
-MMA_BASE_SMOKE_SEQUENCES = frozenset({16, 32, 64, 128, 256})
+MMA_BASE_SMOKE_SEQUENCES = frozenset({16, 32, 64, 128, 256, 1024})
 ENV_COMMAND_KEYWORDS = (
     "baseline",
     "build",
@@ -105,22 +106,24 @@ PLANNING_RISK_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
         (
             r"\b(?:cannot|does not|do not)\s+(?:affect|improve)\s+"
             r"(?:correctness(?:\s+or\s+throughput)?|throughput)",
-            r"\bcompile\s+only\s+structural\s+probe\b",
-            r"\b(?:stub is empty|not yet called|does not yet consume|unused in this patch)",
+            r"\b(?:compile\s+only|no-effect|no\s+effect)\s+"
+            r"(?:probe|skeleton|stub|edit|change)\b",
+            r"\b(?:stub|helper|buffer|fragment|preload)\b"
+            r".*\b(?:empty|not wired|not called|not consumed|unused)\b",
             r"\b(?:must not|do not)\s+be\s+scored\b",
-            r"\bunused\s+(?:doubled buffers|preload|skeleton)",
+            r"\bunused\b.*\b(?:dataflow|helper|buffer|fragment|preload|skeleton)\b",
         ),
     ),
     (
         "incomplete_or_malformed_edit",
         (
-            r"\b(?:diff is incomplete|diff structure error|duplicate store line)\b",
-            r"\b(?:not ready|must be updated before scoring)\b",
+            r"\b(?:diff|patch|edit|transform)\b.*\b(?:incomplete|malformed|invalid)\b",
+            r"\b(?:not ready|must be updated|missing|partial)\b.*\b(?:compile|score|scoring)\b",
             r"\bdo not (?:apply this patch|use this diff)\b",
             r"\b(?:reject this direction|should be rejected)\b",
-            r"\bstale\b.*\b(?:must remove|undeclared)\b",
-            r"\bincomplete removal\b.*\bshould be completely removed\b",
-            r"\bmust define\b.*\bbefore using it\b",
+            r"\b(?:stale|undefined|undeclared|duplicate)\b"
+            r".*\b(?:symbols?|identifiers?|declarations?|fragments?|variables?)\b",
+            r"\bmust\s+(?:define|declare|remove)\b.*\bbefore\b",
         ),
     ),
     (
@@ -148,7 +151,9 @@ PLANNING_RISK_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
 class CandidatePatchInspection:
     patch_text: str
     added_lines: tuple[str, ...]
+    removed_lines: tuple[str, ...]
     added_text: str
+    removed_text: str
     changed_paths: frozenset[str]
 
     @property
@@ -543,20 +548,15 @@ def build_repo_context(root: Path) -> str:
         "candidate_patch raw diffs are allowed only for non-CUDA candidate files; "
         ".cu/.cuh kernel edits must use candidate_transform.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
-        "No-patch compile diagnostics are already recorded for "
-        "candidates/cuda_mma_attention/attention_kernel.cu, "
-        "candidates/cuda_warp_rows_attention/attention_kernel.cu, and "
-        "candidates/cuda_tiled_attention/attention_kernel.cu; compile those sources only "
-        "when build-checking a candidate_transform/candidate_patch.",
+        "No-patch compiles of existing CUDA candidates are baseline diagnostics, not "
+        "optimization steps; compile only when build-checking a materialized edit.",
         "Unpatched seed score caps are smoke-only safety fences: "
         "candidates/cuda_mma_attention_seed.py supports "
-        "seq_lens 16, 32, 64, 128, or 256 with head_dim 128, total_tokens <= 1024, "
-        "and num_heads <= 4; "
+        "seq_lens up to the accepted seq1024 lane with head_dim 128; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
         "head_dim <= 128 with total_tokens <= 1024 and num_heads <= 4; "
         "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
-        "head_dim 16, total_tokens <= 16, and num_heads 1, but that no-patch smoke is "
-        "already recorded and should not be repeated. Larger seed scores need "
+        "head_dim 16, total_tokens <= 16, and num_heads 1. Larger seed scores need "
         "candidate_transform/candidate_patch to update the wrapper/kernel.",
         "Structural CUDA preflight tracks are hard safety checks, not historical phrase "
         "bans: edit-channel integrity, transform path/materialization, WMMA fragment "
@@ -738,10 +738,16 @@ def _validation_feedback_hint(error: ValueError) -> str:
         return (
             "Do not retry a no-edit score of cuda_mma_attention_seed.py. That exact "
             "MMA seed score is already in lineage. To score this candidate again, use "
-            "edit mode with candidate_transform or a legacy candidate_patch that "
-            "structurally changes candidates/cuda_mma_attention/attention_kernel.cu or "
-            "its wrapper; otherwise choose a different diagnostic such as a compile "
-            "check for a new edit. "
+            "candidate_transform, preferably a small batch, to structurally change "
+            "candidates/cuda_mma_attention/attention_kernel.cu and its wrapper; raw "
+            "candidate_patch cannot edit CUDA kernel sources. Otherwise choose a "
+            "different diagnostic such as a compile check for a new edit. "
+        )
+    if "below the current accepted seq1024 validation lane" in message:
+        return (
+            "Do not spend no-edit score steps below the accepted seq1024 lane. Score the "
+            "current MMA seed at seq1024 or use a structured transform batch that moves "
+            "the wrapper and kernel toward larger long-sequence workloads. "
         )
     if "patched MMA shape extension beyond the current smoke cap" in message:
         return (
@@ -953,12 +959,7 @@ def _infer_candidate_transform_from_edit(
     if source_path is None:
         return None
     steps: list[dict[str, Any]] = []
-    const_match = re.search(
-        r"\b(?:change|set|setting|update|updating)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
-        r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
-        candidate_edit,
-        flags=re.IGNORECASE,
-    )
+    const_match = _infer_integer_constant_change(candidate_edit)
     if const_match is None:
         return None
     steps.append(
@@ -1001,6 +1002,24 @@ def _infer_candidate_transform_from_edit(
     if len(steps) == 1:
         return steps[0]
     return {"op": "batch", "steps": steps}
+
+
+def _infer_integer_constant_change(candidate_edit: str) -> re.Match[str] | None:
+    patterns = (
+        r"\b(?:change|extend|extending|set|setting|update|updating)\s+"
+        r"(?:the\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+        r"(?:\s+(?:constant|cap|value))?"
+        r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
+        r"\b(?:change|extend|extending|set|setting|update|updating)\b"
+        r"(?:(?!\b(?:to|=)\b).){0,96}?"
+        r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+(?:constant|cap|value)"
+        r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, candidate_edit, flags=re.IGNORECASE)
+        if match is not None:
+            return match
+    return None
 
 
 def _infer_python_set_name_from_edit(candidate_edit: str) -> str | None:
@@ -1093,6 +1112,7 @@ def validate_candidate_patch_structural_preflight(
     candidate_patch: str,
     *,
     allow_cuda_source_edits: bool,
+    promoted_preflight_classes: frozenset[str] = frozenset(),
 ) -> None:
     if not candidate_patch.strip():
         return
@@ -1101,6 +1121,14 @@ def validate_candidate_patch_structural_preflight(
         if added_line.rstrip(" \t") != added_line:
             raise ValueError("candidate_patch added lines must not contain trailing whitespace")
     for track in CUDA_STRUCTURAL_PREFLIGHT_TRACKS:
+        if track.detector(inspection):
+            raise ValueError(
+                f"structural preflight track {track.name} classified as "
+                f"{track.failure_class}: {track.message}"
+            )
+    for track in CUDA_PROMOTED_STRUCTURAL_PREFLIGHT_TRACKS:
+        if track.failure_class not in promoted_preflight_classes:
+            continue
         if track.detector(inspection):
             raise ValueError(
                 f"structural preflight track {track.name} classified as "
@@ -1115,10 +1143,13 @@ def validate_candidate_patch_structural_preflight(
 
 def _inspect_candidate_patch(candidate_patch: str) -> CandidatePatchInspection:
     added_lines = tuple(_candidate_patch_added_lines(candidate_patch))
+    removed_lines = tuple(_candidate_patch_removed_lines(candidate_patch))
     return CandidatePatchInspection(
         patch_text=candidate_patch,
         added_lines=added_lines,
+        removed_lines=removed_lines,
         added_text="\n".join(added_lines),
+        removed_text="\n".join(removed_lines),
         changed_paths=frozenset(_candidate_patch_changed_paths(candidate_patch)),
     )
 
@@ -1128,6 +1159,14 @@ def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
         line[1:]
         for line in candidate_patch.splitlines()
         if line.startswith("+") and not line.startswith("+++")
+    ]
+
+
+def _candidate_patch_removed_lines(candidate_patch: str) -> list[str]:
+    return [
+        line[1:]
+        for line in candidate_patch.splitlines()
+        if line.startswith("-") and not line.startswith("---")
     ]
 
 
@@ -1180,37 +1219,6 @@ def _candidate_patch_adds_only_unroll_pragmas(candidate_patch: str) -> bool:
     )
 
 
-def _candidate_patch_uses_unsupported_mma_score_k32(added_text: str) -> bool:
-    compact = re.sub(r"\s+", "", added_text)
-    sets_khead32 = "kHeadDim=32" in compact
-    symbolic_score = "fragment<wmma::accumulator,kTile,kTile,kHeadDim,float>" in compact
-    literal_score = bool(
-        re.search(
-            r"fragment<(?:nvcuda::)?wmma::accumulator,16,16,32,float(?:,void)?>",
-            compact,
-        )
-    )
-    return (sets_khead32 and symbolic_score) or literal_score
-
-
-def _candidate_patch_uses_unsupported_mma_m32_fragment(added_text: str) -> bool:
-    compact = re.sub(r"\s+", "", added_text)
-    explicit_m32 = bool(
-        re.search(
-            r"fragment<(?:nvcuda::)?wmma::(?:accumulator|matrix_[ab]),32,16,16,",
-            compact,
-        )
-    )
-    sets_ktile32 = "kTile=32" in compact or "kTile=32;" in compact
-    symbolic_m32 = bool(
-        re.search(
-            r"fragment<(?:nvcuda::)?wmma::(?:accumulator|matrix_[ab]),kTile,16,16,",
-            compact,
-        )
-    )
-    return explicit_m32 or (sets_ktile32 and symbolic_m32)
-
-
 def _candidate_patch_uses_generic_scalar_wmma_fragments(added_text: str) -> bool:
     compact = re.sub(r"\s+", "", added_text)
     return bool(
@@ -1230,6 +1238,45 @@ def _candidate_patch_uses_missing_wmma_matrix_element_type(added_text: str) -> b
             compact,
         )
     )
+
+
+def _candidate_patch_uses_unsupported_wmma_fragment_shape(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    constants = _integer_constants_from_text(added_text)
+    for args in _wmma_fragment_args(compact):
+        if len(args) < 5:
+            continue
+        use = args[0].removeprefix("nvcuda::")
+        if use not in {"wmma::matrix_a", "wmma::matrix_b", "wmma::accumulator"}:
+            continue
+        dims = tuple(_resolve_wmma_dim(arg, constants) for arg in args[1:4])
+        if any(dim is not None and dim != 16 for dim in dims):
+            return True
+    return False
+
+
+def _integer_constants_from_text(text: str) -> dict[str, int]:
+    constants: dict[str, int] = {}
+    for match in re.finditer(
+        r"\bconstexpr\s+int\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*"
+        r"(?P<value>[-+]?\d+)\s*;",
+        text,
+    ):
+        constants[match.group("name")] = int(match.group("value"))
+    return constants
+
+
+def _wmma_fragment_args(compact_text: str) -> list[list[str]]:
+    fragments: list[list[str]] = []
+    for match in re.finditer(r"(?:nvcuda::)?wmma::fragment<(?P<body>[^<>]+)>", compact_text):
+        fragments.append([part for part in match.group("body").split(",") if part])
+    return fragments
+
+
+def _resolve_wmma_dim(value: str, constants: dict[str, int]) -> int | None:
+    if re.fullmatch(r"[-+]?\d+", value):
+        return int(value)
+    return constants.get(value)
 
 
 def _candidate_patch_has_incomplete_mma_head_dim_extension(candidate_patch: str) -> bool:
@@ -1269,6 +1316,56 @@ def _candidate_patch_has_incomplete_mma_head_dim_extension(candidate_patch: str)
         or "kHeadChunks" in compact_added
     )
     return not adds_wider_loop
+
+
+def _candidate_patch_has_inconsistent_mma_sequence_cap(candidate_patch: str) -> bool:
+    kernel_before = re.search(
+        r"(?m)^-\s*constexpr\s+int\s+kMaxSeqLen\s*=\s*(?P<value>\d+)\s*;",
+        candidate_patch,
+    )
+    kernel_after = re.search(
+        r"(?m)^\+\s*constexpr\s+int\s+kMaxSeqLen\s*=\s*(?P<value>\d+)\s*;",
+        candidate_patch,
+    )
+    wrapper_before = _python_int_set_from_patch_line(candidate_patch, "-", "SMOKE_SEQUENCES")
+    wrapper_after = _python_int_set_from_patch_line(candidate_patch, "+", "SMOKE_SEQUENCES")
+    if kernel_after is not None:
+        new_cap = int(kernel_after.group("value"))
+        old_cap = int(kernel_before.group("value")) if kernel_before is not None else 0
+        if new_cap > old_cap and (wrapper_after is None or new_cap not in wrapper_after):
+            return True
+    if wrapper_before is not None and wrapper_after is not None:
+        new_values = wrapper_after - wrapper_before
+        if (
+            any(value not in MMA_BASE_SMOKE_SEQUENCES for value in new_values)
+            and kernel_after is None
+        ):
+            return True
+    return False
+
+
+def _python_int_set_from_patch_line(
+    candidate_patch: str,
+    prefix: str,
+    name: str,
+) -> frozenset[int] | None:
+    escaped_prefix = re.escape(prefix)
+    match = re.search(
+        rf"(?m)^{escaped_prefix}\s*{re.escape(name)}\s*=\s*\{{(?P<body>[^}}]*)\}}",
+        candidate_patch,
+    )
+    if match is None:
+        return None
+    values: set[int] = set()
+    for item in match.group("body").split(","):
+        item = item.strip()
+        if not item:
+            continue
+        try:
+            values.add(int(item))
+        except ValueError:
+            return None
+    return frozenset(values)
 
 
 def _candidate_patch_leaves_orphan_mma_k_fragment(added_text: str) -> bool:
@@ -1354,6 +1451,42 @@ def _candidate_patch_uses_2d_probability_index_without_2d_declaration(
     )
 
 
+def _candidate_patch_removes_declaration_but_still_uses_identifier(
+    inspection: CandidatePatchInspection,
+) -> bool:
+    removed_identifiers = set(_cuda_declared_identifiers(inspection.removed_text))
+    if not removed_identifiers:
+        return False
+    added_identifiers = set(_cuda_declared_identifiers(inspection.added_text))
+    for identifier in sorted(removed_identifiers - added_identifiers):
+        if re.search(rf"\b{re.escape(identifier)}\b", inspection.added_text):
+            return True
+    return False
+
+
+def _candidate_patch_adds_duplicate_cuda_declarations(added_text: str) -> bool:
+    identifiers = _cuda_declared_identifiers(added_text)
+    return len(identifiers) != len(set(identifiers))
+
+
+def _cuda_declared_identifiers(text: str) -> list[str]:
+    identifiers: list[str] = []
+    declaration_patterns = (
+        r"\b(?:nvcuda::)?wmma::fragment<[^;]+>\s+"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:[;=])",
+        r"\b(?:__shared__\s+)?(?:const\s+)?(?:unsigned\s+)?"
+        r"(?:float|double|int|bool|size_t|long|short|auto|half|__half|"
+        r"__nv_bfloat16|torch::Tensor)\s+[*&\s]*"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:[=;\[,])",
+    )
+    for pattern in declaration_patterns:
+        identifiers.extend(
+            match.group("name")
+            for match in re.finditer(pattern, text)
+        )
+    return identifiers
+
+
 def _candidate_patch_adds_unused_async_copy_helpers(added_text: str) -> bool:
     return (
         "__pipeline_memcpy_async" in added_text
@@ -1398,6 +1531,17 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
         ),
     ),
     CandidatePatchPreflightTrack(
+        name="shape_cap_consistency",
+        failure_class="incomplete_or_malformed_edit",
+        message=(
+            "shape-cap graduation must keep wrapper and kernel sequence caps consistent "
+            "inside the same structured edit"
+        ),
+        detector=lambda inspection: _candidate_patch_has_inconsistent_mma_sequence_cap(
+            inspection.patch_text
+        ),
+    ),
+    CandidatePatchPreflightTrack(
         name="cuda_pipeline_api_shape",
         failure_class="cuda_syntax_error",
         message=(
@@ -1420,10 +1564,9 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
         name="wmma_fragment_shape",
         failure_class="unsupported_wmma_shape",
         message="Ampere BF16 WMMA fragments in this kernel must use supported 16x16x16 shapes",
-        detector=lambda inspection: _candidate_patch_uses_unsupported_mma_score_k32(
+        detector=lambda inspection: _candidate_patch_uses_unsupported_wmma_fragment_shape(
             inspection.added_text
-        )
-        or _candidate_patch_uses_unsupported_mma_m32_fragment(inspection.added_text),
+        ),
     ),
     CandidatePatchPreflightTrack(
         name="wmma_fragment_element_type",
@@ -1519,6 +1662,30 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
 )
 
 
+CUDA_PROMOTED_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
+    CandidatePatchPreflightTrack(
+        name="promoted_symbol_lifecycle_removed_declaration",
+        failure_class="stale_or_undefined_symbol",
+        message=(
+            "after repeated stale-symbol failures, edits that remove a declaration must "
+            "replace every remaining use or introduce the replacement declaration"
+        ),
+        detector=_candidate_patch_removes_declaration_but_still_uses_identifier,
+    ),
+    CandidatePatchPreflightTrack(
+        name="promoted_symbol_lifecycle_duplicate_declaration",
+        failure_class="stale_or_undefined_symbol",
+        message=(
+            "after repeated symbol-lifecycle failures, duplicate local declarations in "
+            "one CUDA edit are rejected before compile"
+        ),
+        detector=lambda inspection: _candidate_patch_adds_duplicate_cuda_declarations(
+            inspection.added_text
+        ),
+    ),
+)
+
+
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:
     normalized = " ".join(value.split())
     if len(normalized) <= max_length:
@@ -1608,6 +1775,10 @@ def _validate_subcommand_arguments(
             _validate_compile_source_not_recorded_baseline(
                 source,
                 candidate_patch=candidate_patch,
+                candidate_transform=candidate_transform,
+            )
+            _validate_mma_compile_transform_cap_consistency(
+                source=source,
                 candidate_transform=candidate_transform,
             )
         if out_dir is not None:
@@ -1782,22 +1953,34 @@ def _validate_known_candidate_score_shape(
                 "candidate_transform/candidate_patch to change kernel structure before scoring"
             )
     elif candidate == MMA_SEED:
-        if (
-            any(seq_len not in {16, 32, 64, 128, 256} for seq_len in seq_lens)
-            or head_dim != 128
-            or total_tokens > 1024
-            or num_heads > 4
+        if _is_outside_mma_validated_cap(
+            seq_lens=seq_lens,
+            head_dim=head_dim,
+            total_tokens=total_tokens,
+            num_heads=num_heads,
         ):
             raise ValueError(
                 "next_command scores cuda_mma_attention_seed.py outside its unpatched "
-                "seq_len 16/32/64/128/256, head_dim 128, total_tokens<=1024, and "
-                "num_heads<=4 cap; "
+                "seq_len 16/32/64/128/256/1024, head_dim 128, total_tokens<=32768, "
+                "and num_heads<=16 cap; "
                 "include candidate_transform/candidate_patch to update the wrapper/kernel first"
             )
-        raise ValueError(
-            "next_command repeats a recorded unpatched MMA seed score; include "
-            "candidate_transform/candidate_patch to change kernel structure before scoring"
-        )
+        if max(seq_lens) < MMA_ACCEPTED_VALIDATION_SEQ:
+            raise ValueError(
+                "next_command scores cuda_mma_attention_seed.py below the current accepted "
+                f"seq{MMA_ACCEPTED_VALIDATION_SEQ} validation lane; use seq1024 or a "
+                "larger structured shape-graduation score instead of another small smoke score"
+            )
+        if _is_recorded_mma_seed_score(
+            seq_lens=seq_lens,
+            head_dim=head_dim,
+            total_tokens=total_tokens,
+            num_heads=num_heads,
+        ):
+            raise ValueError(
+                "next_command repeats a recorded unpatched MMA seed score; include "
+                "candidate_transform/candidate_patch to change kernel structure before scoring"
+            )
     elif candidate == TILED_SEED:
         if _is_outside_tiled_validated_cap(
             seq_lens=seq_lens,
@@ -1830,6 +2013,36 @@ def _is_outside_tiled_validated_cap(
         or head_dim != 16
         or total_tokens > 16
         or num_heads != 1
+    )
+
+
+def _is_outside_mma_validated_cap(
+    *,
+    seq_lens: tuple[int, ...],
+    head_dim: int,
+    total_tokens: int,
+    num_heads: int,
+) -> bool:
+    return (
+        any(seq_len not in MMA_BASE_SMOKE_SEQUENCES for seq_len in seq_lens)
+        or head_dim != 128
+        or total_tokens > 32768
+        or num_heads > 16
+    )
+
+
+def _is_recorded_mma_seed_score(
+    *,
+    seq_lens: tuple[int, ...],
+    head_dim: int,
+    total_tokens: int,
+    num_heads: int,
+) -> bool:
+    return (
+        (seq_lens, head_dim, total_tokens, num_heads)
+        in {
+            ((1024,), 128, 8192, 8),
+        }
     )
 
 
@@ -1886,10 +2099,10 @@ def _is_mma_seed_smoke_shape(
     num_heads: int,
 ) -> bool:
     return (
-        all(seq_len in {16, 32, 64, 128, 256} for seq_len in seq_lens)
+        all(seq_len in MMA_BASE_SMOKE_SEQUENCES for seq_len in seq_lens)
         and head_dim == 128
-        and total_tokens <= 1024
-        and num_heads <= 4
+        and total_tokens <= 32768
+        and num_heads <= 16
     )
 
 
@@ -1923,6 +2136,40 @@ def _validate_mma_transform_covers_score_shape(
         )
 
 
+def _validate_mma_compile_transform_cap_consistency(
+    *,
+    source: str,
+    candidate_transform: dict[str, Any] | None,
+) -> None:
+    if source != "candidates/cuda_mma_attention/attention_kernel.cu":
+        return
+    if candidate_transform is None:
+        return
+    max_seq_len = _candidate_transform_int_value(
+        candidate_transform,
+        op="set_constexpr_int",
+        name="kMaxSeqLen",
+    )
+    wrapper_sequences = _candidate_transform_python_set_values(
+        candidate_transform,
+        name="SMOKE_SEQUENCES",
+    )
+    if max_seq_len is None:
+        return
+    if wrapper_sequences is None and max_seq_len not in MMA_BASE_SMOKE_SEQUENCES:
+        raise ValueError(
+            "candidate_transform has inconsistent MMA shape caps; "
+            f"kMaxSeqLen={max_seq_len} but wrapper sequence set is not updated"
+        )
+    if wrapper_sequences is None:
+        return
+    if max_seq_len not in MMA_BASE_SMOKE_SEQUENCES | wrapper_sequences:
+        raise ValueError(
+            "candidate_transform has inconsistent MMA shape caps; "
+            f"kMaxSeqLen={max_seq_len} but wrapper sequence set does not include it"
+        )
+
+
 def _candidate_transform_int_value(
     candidate_transform: dict[str, Any],
     *,
@@ -1943,9 +2190,11 @@ def _candidate_transform_python_set_values(
     values: set[int] = set()
     found_set_transform = False
     for step in _candidate_transform_steps_for_validation(candidate_transform):
-        if step.get("name") != name:
-            continue
-        if step.get("op") == "add_int_to_python_set" and isinstance(step.get("value"), int):
+        if (
+            step.get("op") == "add_int_to_python_set"
+            and step.get("name") == name
+            and isinstance(step.get("value"), int)
+        ):
             found_set_transform = True
             values.add(int(step["value"]))
         elif step.get("op") == "replace_once":
