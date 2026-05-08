@@ -9,7 +9,7 @@ from .agent import DEFAULT_AGENT_MODEL, VariationDecision, load_env_file, reques
 from .benchmark import score_backend, sleep_score
 from .compile import compile_cuda_source
 from .config import AMPERE_A6000, cases_from_cli
-from .evolve import run_decision_command, write_attempt
+from .evolve import finalize_attempt, run_decision_command, write_attempt, write_step
 from .isolation import module_worker_args, print_result, run_json_worker
 from .lineage import commit_score, init_lineage_repo, seed_baseline
 
@@ -63,6 +63,15 @@ def main(argv: list[str] | None = None) -> int:
     run_decision_parser.add_argument("--timeout-s", type=int, default=900)
     run_decision_parser.add_argument("--attempt-json", type=Path, default=None)
 
+    evolve_parser = subparsers.add_parser("evolve-once")
+    evolve_parser.add_argument("--lineage", type=Path, required=True)
+    evolve_parser.add_argument("--knowledge", type=Path, required=True)
+    evolve_parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    evolve_parser.add_argument("--timeout-s", type=int, default=900)
+    evolve_parser.add_argument("--step-json", type=Path, default=None)
+    evolve_parser.add_argument("--env-file", type=Path, default=None)
+    evolve_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
+
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -90,6 +99,8 @@ def main(argv: list[str] | None = None) -> int:
         return _agent_plan(args)
     if args.command == "run-decision":
         return _run_decision(args)
+    if args.command == "evolve-once":
+        return _evolve_once(args)
     raise AssertionError(args.command)
 
 
@@ -244,6 +255,32 @@ def _run_decision(args: argparse.Namespace) -> int:
         write_attempt(args.attempt_json, attempt)
     print(json.dumps(attempt.as_dict(), indent=2, sort_keys=True))
     return 0 if attempt.command_result.ok else 2
+
+
+def _evolve_once(args: argparse.Namespace) -> int:
+    if args.env_file:
+        load_env_file(args.env_file)
+    knowledge = args.knowledge.read_text(encoding="utf-8")
+    decision = request_variation_decision(
+        lineage_summary=_lineage_summary(args.lineage),
+        knowledge=knowledge,
+        model=args.model,
+    )
+    attempt = run_decision_command(
+        decision,
+        cwd=args.cwd,
+        timeout_s=args.timeout_s,
+        env=os.environ.copy(),
+    )
+    step = finalize_attempt(args.lineage, attempt)
+    if args.step_json:
+        write_step(args.step_json, step)
+    print(json.dumps(step.as_dict(), indent=2, sort_keys=True))
+    if not attempt.command_result.ok:
+        return 2
+    if step.gate_decision is not None and not step.gate_decision.accepted:
+        return 2
+    return 0
 
 
 def _lineage_summary(path: Path) -> str:

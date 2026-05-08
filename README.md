@@ -84,8 +84,11 @@ execution, then run a bounded allowlisted command from it:
 
 ```bash
 uv run python -m avo run-decision decision.json --attempt-json attempts/latest.json
+uv run python -m avo evolve-once --lineage ./lineage --knowledge knowledge/ampere.md --step-json attempts/step.json
 ```
 
 `run-decision` accepts only selected `avo ...` subcommands and executes them as
 `python -m avo ...` without a shell. Code-editing tools and autonomous mutation
 loops should be added only after scoring and lineage gates are stable.
+`evolve-once` runs one validated agent decision, records the step, and commits
+only score payloads that pass the existing lineage gate.

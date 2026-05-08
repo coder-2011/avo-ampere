@@ -10,6 +10,8 @@ from pathlib import Path
 from typing import Any
 
 from .agent import VariationDecision
+from .isolation import RESULT_PREFIX
+from .lineage import GateDecision, commit_score
 
 DEFAULT_ALLOWED_SUBCOMMANDS = frozenset({"env", "compile", "score"})
 SHELL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
@@ -44,6 +46,7 @@ class VariationAttempt:
     command_result: CommandResult
     started_at: str
     completed_at: str
+    score_payload: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -51,6 +54,25 @@ class VariationAttempt:
             "command_result": self.command_result.as_dict(),
             "started_at": self.started_at,
             "completed_at": self.completed_at,
+            "score_payload": self.score_payload,
+        }
+
+
+@dataclass(frozen=True)
+class EvolutionStep:
+    attempt: VariationAttempt
+    gate_decision: GateDecision | None
+
+    @property
+    def accepted(self) -> bool:
+        return self.gate_decision is not None and self.gate_decision.accepted
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "attempt": self.attempt.as_dict(),
+            "gate_decision": (
+                self.gate_decision.as_dict() if self.gate_decision is not None else None
+            ),
         }
 
 
@@ -102,6 +124,7 @@ def run_decision_command(
             stdout_tail=_tail(completed.stdout),
             stderr_tail=_tail(completed.stderr),
         )
+        score_payload = _extract_score_payload(completed.stdout)
     except subprocess.TimeoutExpired as exc:
         result = CommandResult(
             command=command,
@@ -110,18 +133,71 @@ def run_decision_command(
             stdout_tail=_tail(exc.stdout or ""),
             stderr_tail=_tail(exc.stderr or ""),
         )
+        score_payload = None
     return VariationAttempt(
         decision=decision,
         command_result=result,
         started_at=started_at,
         completed_at=_utc_now(),
+        score_payload=score_payload,
     )
+
+
+def finalize_attempt(
+    lineage: Path,
+    attempt: VariationAttempt,
+    *,
+    message: str = "evolve: accept candidate",
+) -> EvolutionStep:
+    gate_decision = None
+    if attempt.score_payload is not None:
+        gate_decision = commit_score(lineage, attempt.score_payload, message=message)
+    return EvolutionStep(attempt=attempt, gate_decision=gate_decision)
 
 
 def write_attempt(path: Path, attempt: VariationAttempt) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     payload = json.dumps(attempt.as_dict(), indent=2, sort_keys=True) + "\n"
     path.write_text(payload, encoding="utf-8")
+
+
+def write_step(path: Path, step: EvolutionStep) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = json.dumps(step.as_dict(), indent=2, sort_keys=True) + "\n"
+    path.write_text(payload, encoding="utf-8")
+
+
+def _extract_score_payload(stdout: str) -> dict[str, Any] | None:
+    stripped = stdout.strip()
+    if stripped:
+        try:
+            parsed = json.loads(stripped)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, dict):
+            payload = parsed.get("payload")
+            if isinstance(payload, dict):
+                return payload
+            if _looks_like_score_payload(parsed):
+                return parsed
+
+    for line in reversed(stdout.splitlines()):
+        if not line.startswith(RESULT_PREFIX):
+            continue
+        try:
+            parsed = json.loads(line.removeprefix(RESULT_PREFIX))
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) and _looks_like_score_payload(parsed) else None
+    return None
+
+
+def _looks_like_score_payload(payload: dict[str, Any]) -> bool:
+    return (
+        isinstance(payload.get("all_correct"), bool)
+        and "geomean_tflops" in payload
+        and isinstance(payload.get("cases"), list)
+    )
 
 
 def _utc_now() -> str:
