@@ -68,6 +68,49 @@ def test_parse_variation_decision_accepts_structured_transform() -> None:
     assert decision.candidate_transform == payload["candidate_transform"]
 
 
+def test_parse_variation_decision_infers_set_constexpr_transform_from_edit() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Use candidate_transform set_constexpr_int to change kMaxSeqLen from 256 to 512 "
+        "in candidates/cuda_mma_attention/attention_kernel.cu, compile-check the change."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_seq512"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+    assert decision.candidate_transform == {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 512,
+    }
+
+
+def test_parse_variation_decision_infers_constant_transform_without_channel_word() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Change kMaxSeqLen from 256 to 512 in "
+        "candidates/cuda_mma_attention/attention_kernel.cu, then compile-check the source."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_seq512"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 512,
+    }
+
+
 def test_parse_variation_decision_rejects_patch_and_transform_together() -> None:
     payload = decision_payload()
     payload["candidate_patch"] = (
@@ -390,7 +433,7 @@ def test_parse_variation_decision_rejects_pragma_only_compile_check() -> None:
         "--out-dir build/warp_unroll"
     )
 
-    with pytest.raises(ValueError, match="pragma-only performance patch"):
+    with pytest.raises(ValueError, match="no_effect_pragma_only"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -413,7 +456,7 @@ def test_parse_variation_decision_rejects_pragma_only_score() -> None:
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="pragma-only performance patch"):
+    with pytest.raises(ValueError, match="no_effect_pragma_only"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -871,7 +914,7 @@ def test_parse_variation_decision_rejects_standalone_dynamic_kv_migration() -> N
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="standalone dynamic shared-memory"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -895,7 +938,7 @@ def test_parse_variation_decision_rejects_direct_head_dim128_shared_threshold() 
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="head_dim 128"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -917,7 +960,7 @@ def test_parse_variation_decision_rejects_stale_tiled_rescale_fix() -> None:
         "--seq-lens 128 --total-tokens 512 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="stale tiled output-rescale"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -942,7 +985,7 @@ def test_parse_variation_decision_rejects_tiled_reduction_guard_fix() -> None:
         "--seq-lens 128 --total-tokens 512 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="tiled reduction-bound guard"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -965,7 +1008,7 @@ def test_parse_variation_decision_rejects_symbolic_mma_score_k32_fragment() -> N
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="unsupported WMMA accumulator"):
+    with pytest.raises(ValueError, match="wmma_fragment_shape"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -987,7 +1030,7 @@ def test_parse_variation_decision_rejects_literal_mma_score_k32_fragment() -> No
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="unsupported WMMA accumulator"):
+    with pytest.raises(ValueError, match="wmma_fragment_shape"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1010,7 +1053,7 @@ def test_parse_variation_decision_rejects_literal_mma_m32_fragment() -> None:
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="unsupported WMMA M=32"):
+    with pytest.raises(ValueError, match="wmma_fragment_shape"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1033,7 +1076,7 @@ def test_parse_variation_decision_rejects_symbolic_mma_m32_fragment() -> None:
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="unsupported WMMA M=32"):
+    with pytest.raises(ValueError, match="wmma_fragment_shape"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1062,7 +1105,7 @@ def test_parse_variation_decision_rejects_partial_mma_head_dim128_patch() -> Non
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="partial MMA head_dim128 extension"):
+    with pytest.raises(ValueError, match="incomplete_shape_graduation"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1108,7 +1151,7 @@ def test_parse_variation_decision_rejects_scalar_t_wmma_matrix_fragment() -> Non
         "--out-dir build/warp_wmma"
     )
 
-    with pytest.raises(ValueError, match="scalar_t as a WMMA matrix fragment"):
+    with pytest.raises(ValueError, match="wmma_fragment_element_type"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1130,7 +1173,7 @@ def test_parse_variation_decision_rejects_missing_wmma_matrix_element_type() -> 
         "--out-dir build/mma_q_preload"
     )
 
-    with pytest.raises(ValueError, match="without an element type"):
+    with pytest.raises(ValueError, match="wmma_fragment_element_type"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1158,7 +1201,7 @@ def test_parse_variation_decision_rejects_regressed_mma_qk_preload_chain() -> No
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="k_frag_next preload chain"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1184,7 +1227,7 @@ def test_parse_variation_decision_rejects_regressed_mma_q_preload_chain() -> Non
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="q_frag_next preload chain"):
+    with pytest.raises(ValueError, match="no_effect_wmma_skeleton"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1211,7 +1254,7 @@ def test_parse_variation_decision_rejects_orphan_mma_k_fragment_block() -> None:
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="orphan post-QK WMMA k_frag"):
+    with pytest.raises(ValueError, match="symbol_lifecycle"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1234,7 +1277,7 @@ def test_parse_variation_decision_rejects_global_offset_for_shared_mma_k_tile() 
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="global key_start offset"):
+    with pytest.raises(ValueError, match="shared_tile_scope"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1263,7 +1306,7 @@ def test_parse_variation_decision_rejects_thread_local_mma_row_state() -> None:
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="per-thread registers"):
+    with pytest.raises(ValueError, match="cross_thread_row_state"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1292,7 +1335,7 @@ def test_parse_variation_decision_rejects_thread0_local_row_state_init() -> None
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="per-thread registers"):
+    with pytest.raises(ValueError, match="cross_thread_row_state"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1318,7 +1361,7 @@ def test_parse_variation_decision_rejects_unused_mma_preload_fragment() -> None:
         "--out-dir build/mma_preload"
     )
 
-    with pytest.raises(ValueError, match="preload fragment"):
+    with pytest.raises(ValueError, match="no_effect_wmma_skeleton"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1341,7 +1384,7 @@ def test_parse_variation_decision_rejects_sync_mma_k_staging_repeat() -> None:
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="synchronous MMA K shared-memory staging"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1364,7 +1407,7 @@ def test_parse_variation_decision_rejects_sync_mma_q_staging_repeat() -> None:
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="synchronous MMA Q shared-memory staging"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1387,7 +1430,7 @@ def test_parse_variation_decision_rejects_sync_mma_v_staging_repeat() -> None:
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="synchronous MMA V"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1409,7 +1452,7 @@ def test_parse_variation_decision_rejects_single_buffer_sync_mma_v_staging_repea
         "--out-dir build/mma_v_staging"
     )
 
-    with pytest.raises(ValueError, match="synchronous MMA V"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1430,7 +1473,7 @@ def test_parse_variation_decision_rejects_invalid_probability_wmma_ldm() -> None
         "--out-dir build/mma_prob_skew"
     )
 
-    with pytest.raises(ValueError, match="WMMA probability leading dimension"):
+    with pytest.raises(ValueError, match="wmma_load_alignment"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1453,7 +1496,7 @@ def test_parse_variation_decision_rejects_probability_stride_skew_repeat() -> No
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="stride-24 MMA probability-buffer skew"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1478,7 +1521,7 @@ def test_parse_variation_decision_rejects_probability_stride_skew_2d_repeat() ->
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="stride-24 MMA probability-buffer skew"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1503,7 +1546,7 @@ def test_parse_variation_decision_rejects_probability_stride20_skew_repeat() -> 
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="stride-20 MMA probability-buffer skew"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1526,7 +1569,7 @@ def test_parse_variation_decision_rejects_2d_probability_index_without_declarati
         "--out-dir build/mma_score_skew"
     )
 
-    with pytest.raises(ValueError, match=r"probabilities\[row\]\[key\]"):
+    with pytest.raises(ValueError, match="symbol_lifecycle"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1551,7 +1594,7 @@ def test_parse_variation_decision_rejects_regressed_mma_score_stride_skew() -> N
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="score-tile stride-24 skew"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1640,7 +1683,7 @@ def test_parse_variation_decision_rejects_unused_async_copy_wrappers() -> None:
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="helper wrappers without using them"):
+    with pytest.raises(ValueError, match="no_effect_async_helpers"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1666,7 +1709,7 @@ def test_parse_variation_decision_rejects_async_helper_inside_mma_signature() ->
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="inside the MMA kernel signature"):
+    with pytest.raises(ValueError, match="cuda_helper_placement"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1740,7 +1783,7 @@ def test_parse_variation_decision_rejects_unused_wmma_compile_skeleton() -> None
         "--out-dir build/warp"
     )
 
-    with pytest.raises(ValueError, match="WMMA compile skeleton"):
+    with pytest.raises(ValueError, match="no_effect_wmma_skeleton"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1817,7 +1860,7 @@ def test_parse_variation_decision_rejects_stray_probability_frag_statement() -> 
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="stray probability_frag statement"):
+    with pytest.raises(ValueError, match="symbol_lifecycle"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1843,7 +1886,7 @@ def test_parse_variation_decision_rejects_unused_q_frag_preload_skeleton() -> No
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="preload fragment"):
+    with pytest.raises(ValueError, match="no_effect_wmma_skeleton"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1893,7 +1936,7 @@ def test_parse_variation_decision_rejects_bf16_score_tiles_patch() -> None:
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="BF16 score_tiles conversion"):
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1980,37 +2023,25 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/torch_sdpa_seed.py" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu" in context
     assert "candidates/cuda_identity/identity_kernel.cu" in context
-    assert "Unpatched seed score caps:" in context
+    assert "Target workload is realistic long-sequence BF16 attention" in context
+    assert "Unpatched seed score caps are smoke-only safety fences" in context
     assert "total_tokens <= 1024" in context
     assert "cuda_tiled_attention_seed.py is only validated at seq_lens 16" in context
-    assert (
-        "changing only candidates/cuda_tiled_attention_seed.py wrapper caps is not a fix"
-        in context
-    )
-    assert "current tiled kernel already uses the online-softmax output recurrence" in context
-    assert "tiled reduction-bound guard patch" in context
-    assert "BF16 score_tiles shared-memory conversion" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
-    assert "Standalone pragma-only performance patches" in context
     assert "WMMA matrix fragments in generic PyTorch kernels" in context
     assert "No-patch compile diagnostics are already recorded" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
     assert "Preferred edit channel: candidate_transform" in context
     assert "Legacy candidate_patch raw diffs are allowed only for non-CUDA" in context
     assert ".cu/.cuh kernel edits must use candidate_transform" in context
-    assert "The unpatched MMA seq64/head_dim128 score passed correctness" in context
-    assert "The unpatched MMA seq128/head_dim128 score passed correctness" in context
-    assert "The unpatched MMA seq256/head_dim128 score passed correctness" in context
-    assert "k_shared + key_start * kHeadDim + chunk_offset" in context
-    assert "synchronous full-K MMA staging path preserved correctness but regressed" in context
-    assert "synchronous double-buffered MMA V staging path preserved correctness" in context
-    assert "MMA probability-buffer skew" in context
-    assert "Scalar async-copy validation has failed repeatedly" in context
-    assert "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke" in context
-    assert "partial MMA head_dim128 extension" in context
+    assert "Structural CUDA preflight tracks are hard safety checks" in context
+    assert "WMMA fragment shape and element type" in context
+    assert "Async copy must move aligned 16-byte groups" in context
+    assert "shared-memory loads should use tile-local offsets" in context
+    assert "Shape graduation beyond the current smoke caps is a two-step path" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
-    assert "--seq-lens 256" in context
+    assert "--seq-lens 4096,8192,16384" in context
     assert "candidate_transform" in context
     assert "avo score --backend candidate" in context
     assert "Candidate source excerpts for exact patch context:" in context
@@ -2097,7 +2128,7 @@ def test_build_variation_prompt_includes_attempt_history() -> None:
 
     assert "Recent attempt history:" in prompt
     assert "gate rejected" in prompt
-    assert "avoid repeating failed or regressed directions" in prompt
+    assert "avoid repeating failed or regressed transform families" in prompt
 
 
 def test_decision_feedback_explains_empty_patch_validation_error() -> None:
@@ -2112,10 +2143,14 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
 
     updated = _decision_kwargs_with_feedback(
         kwargs,
-        ValueError("candidate_patch must be non-empty when candidate_edit describes a code change"),
+        ValueError(
+            "candidate_transform or candidate_patch must be provided when candidate_edit "
+            "describes a code change"
+        ),
     )
 
     content = updated["messages"][0]["content"]
+    assert "candidate_transform is one structured operation" in content
     assert "candidate_patch must be a raw git-style unified diff" in content
     assert "Choose exactly one valid mode" in content
     assert "'No edit;'" in content
@@ -2201,10 +2236,10 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "Do not retry scalar sizeof(__nv_bfloat16) async copies" in content
-    assert "8 BF16 elements per copy" in content
-    assert "avoid __pipeline_memcpy_async entirely" in content
-    assert "choose a materially different non-async candidate patch in this retry" in content
+    assert "valid Ampere async-copy transform" in content
+    assert "16-byte groups in real kernel dataflow" in content
+    assert "one small candidate_transform" in content
+    assert "different transform family" in content
 
 
 def test_decision_feedback_explains_self_invalid_patch_error() -> None:
@@ -2273,6 +2308,24 @@ def test_decision_feedback_explains_recorded_env_stability_error() -> None:
     assert "CUDA version mismatch" in content
 
 
+def test_decision_feedback_explains_recorded_no_patch_compile_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command repeats a recorded no-patch compile diagnostic; include "
+            "candidate_transform/candidate_patch to build-check a change or run a bounded "
+            "score instead"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not retry a no-edit compile" in content
+    assert "include candidate_transform" in content
+    assert "set_constexpr_int" in content
+
+
 def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
     kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
 
@@ -2307,36 +2360,21 @@ def test_decision_feedback_explains_unpatched_warp_row_score_error() -> None:
     assert "candidate_transform or a legacy candidate_patch" in content
 
 
-def test_decision_feedback_explains_sync_mma_k_staging_error() -> None:
+def test_decision_feedback_explains_structural_preflight_error() -> None:
     kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
 
     updated = _decision_kwargs_with_feedback(
         kwargs,
         ValueError(
-            "candidate_patch repeats synchronous MMA K shared-memory staging; "
-            "the recorded score preserved correctness but regressed throughput"
+            "structural preflight track wmma_fragment_shape classified as "
+            "unsupported_wmma_shape: unsupported fragment shape"
         ),
     )
 
     content = updated["messages"][0]["content"]
-    assert "Do not retry static k_shared MMA K staging" in content
-    assert "choose a different non-K-staging candidate patch" in content
-
-
-def test_decision_feedback_explains_sync_mma_v_staging_error() -> None:
-    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
-
-    updated = _decision_kwargs_with_feedback(
-        kwargs,
-        ValueError(
-            "candidate_patch repeats synchronous double-buffered MMA V shared-memory staging; "
-            "the recorded score preserved correctness but regressed throughput"
-        ),
-    )
-
-    content = updated["messages"][0]["content"]
-    assert "Do not retry static v_shared[2] MMA V staging" in content
-    assert "choose a different non-V-staging candidate patch" in content
+    assert "failed transform family" in content
+    assert "one smaller candidate_transform" in content
+    assert "avoids the same structural class" in content
 
 
 def test_parse_variation_decision_response_prefers_tool_use() -> None:

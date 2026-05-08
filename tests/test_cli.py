@@ -323,7 +323,7 @@ def test_evolve_once_cleans_up_nonaccepted_candidate_patch(
     def fake_request_variation_decision(**kwargs):
         return decision
 
-    def fake_run_decision_command(decision, *, cwd, timeout_s, env):
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
         patch_result = apply_candidate_patch(decision.candidate_patch, cwd=cwd)
         return VariationAttempt(
             decision=decision,
@@ -395,7 +395,7 @@ def test_evolve_once_snapshots_accepted_candidate_patch(
     def fake_request_variation_decision(**kwargs):
         return decision
 
-    def fake_run_decision_command(decision, *, cwd, timeout_s, env):
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
         patch_result = apply_candidate_patch(decision.candidate_patch, cwd=cwd)
         return VariationAttempt(
             decision=decision,
@@ -461,7 +461,7 @@ def test_evolve_loop_runs_until_accepted_and_records_attempts(
         seen_attempt_histories.append(kwargs["attempt_history"])
         return decisions.pop(0)
 
-    def fake_run_decision_command(decision, *, cwd, timeout_s, env):
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
         geomean = 0.0 if decision.hypothesis == "first rejected" else 3.0
         return VariationAttempt(
             decision=decision,

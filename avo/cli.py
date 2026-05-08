@@ -30,9 +30,11 @@ from .evolve import (
     apply_candidate_patch,
     cleanup_rejected_candidate_patch,
     finalize_attempt,
+    load_promoted_preflight_classes,
     planning_failure_step,
     run_decision_command,
     summarize_attempt_history,
+    update_promoted_preflight_tracks,
     write_attempt,
     write_step,
     write_step_record,
@@ -422,6 +424,7 @@ def _evolve_once(args: argparse.Namespace) -> int:
         write_step(args.step_json, step)
     if args.attempts_dir:
         write_step_record(args.attempts_dir, step)
+        update_promoted_preflight_tracks(args.attempts_dir)
     print(json.dumps(step.as_dict(), indent=2, sort_keys=True))
     return _step_exit_code(step)
 
@@ -437,10 +440,12 @@ def _evolve_loop(args: argparse.Namespace) -> int:
 
     steps: list[EvolutionStep] = []
     stopped_reason = "max_steps"
+    update_promoted_preflight_tracks(args.attempts_dir)
     for _ in range(args.max_steps):
         step = _run_evolve_step(args, knowledge)
         steps.append(step)
         write_step_record(args.attempts_dir, step)
+        update_promoted_preflight_tracks(args.attempts_dir)
         if step.accepted:
             stopped_reason = "accepted"
             break
@@ -481,6 +486,7 @@ def _run_evolve_step(args: argparse.Namespace, knowledge: str) -> EvolutionStep:
         cwd=args.cwd,
         timeout_s=args.timeout_s,
         env=os.environ.copy(),
+        promoted_preflight_classes=load_promoted_preflight_classes(args.attempts_dir),
     )
     step = finalize_attempt(args.lineage, attempt, source_root=args.cwd)
     return cleanup_rejected_candidate_patch(step, cwd=args.cwd)

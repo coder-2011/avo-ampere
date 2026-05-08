@@ -5,6 +5,7 @@ import os
 import re
 import shlex
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -137,6 +138,34 @@ PLANNING_RISK_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
         ),
     ),
 )
+
+
+@dataclass(frozen=True)
+class CandidatePatchInspection:
+    patch_text: str
+    added_lines: tuple[str, ...]
+    added_text: str
+    changed_paths: frozenset[str]
+
+    @property
+    def compact_patch(self) -> str:
+        return re.sub(r"\s+", "", self.patch_text)
+
+    @property
+    def compact_added_text(self) -> str:
+        return re.sub(r"\s+", "", self.added_text)
+
+    @property
+    def edits_cuda_source(self) -> bool:
+        return any(path.endswith((".cu", ".cuh")) for path in self.changed_paths)
+
+
+@dataclass(frozen=True)
+class CandidatePatchPreflightTrack:
+    name: str
+    failure_class: str
+    message: str
+    detector: Callable[[CandidatePatchInspection], bool]
 TRANSFORM_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -187,7 +216,7 @@ DECISION_SCHEMA: dict[str, Any] = {
         "candidate_edit": {
             "type": "string",
             "description": (
-                "Small proposed change or inspection step. If candidate_patch is empty, "
+                "Small proposed change or inspection step. If both edit channels are empty, "
                 "this must start with 'No edit;' and describe only a bounded diagnostic."
             ),
         },
@@ -273,9 +302,10 @@ class VariationDecision:
         hypothesis = _require_string(normalized_payload, "hypothesis")
         candidate_edit = _require_string(normalized_payload, "candidate_edit")
         candidate_patch = _validate_candidate_patch(normalized_payload, "candidate_patch")
-        candidate_transform = _validate_candidate_transform(
-            normalized_payload.get("candidate_transform")
-        )
+        raw_candidate_transform = normalized_payload.get("candidate_transform")
+        if raw_candidate_transform is None and not candidate_patch.strip():
+            raw_candidate_transform = _infer_candidate_transform_from_edit(candidate_edit)
+        candidate_transform = _validate_candidate_transform(raw_candidate_transform)
         if candidate_patch.strip() and candidate_transform is not None:
             raise ValueError(
                 "candidate_patch and candidate_transform are mutually exclusive; "
@@ -409,13 +439,15 @@ def build_variation_prompt(
     attempt_section = (
         "\n\nRecent attempt history:\n"
         f"{attempt_history}\n"
-        "Use this to avoid repeating failed or regressed directions."
+        "Use this to avoid repeating failed or regressed transform families."
         if attempt_history.strip()
         else ""
     )
     return (
         "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
+        "Optimize toward realistic long-sequence BF16 attention workloads; current small "
+        "candidate smoke shapes are safety fences for unsupported seeds, not the end target.\n"
         "Use one of exactly three modes. Preferred edit mode: candidate_transform is one "
         "tiny structured operation under candidates/ and candidate_patch is exactly the "
         "empty string \"\". "
@@ -463,10 +495,10 @@ def build_repo_context(root: Path) -> str:
         "build/environment failure gives a concrete reason.",
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
         "candidate_transform/candidate_patch, not source-file inspection.",
-        "Standalone pragma-only performance patches are already recorded as regressed noise; "
-        "if using unroll, pair it with a substantive code change and run a bounded score.",
-        "WMMA matrix fragments in generic PyTorch kernels must use explicit CUDA element "
-        "types, not scalar_t, because dispatch instantiates unsupported float/c10 types.",
+        "Target workload is realistic long-sequence BF16 attention on sm_86: seq_lens "
+        "4096/8192/16384/32768, total_tokens around 32768, num_heads around 16, "
+        "head_dim 128, and both causal modes. Small candidate shapes are smoke fences, "
+        "not the optimization objective.",
         "Preferred edit channel: candidate_transform, a single tiny structured operation "
         "under candidates/. Supported ops: replace_once, insert_before_once, "
         "insert_after_once, set_constexpr_int. Legacy candidate_patch raw diffs are allowed "
@@ -477,7 +509,8 @@ def build_repo_context(root: Path) -> str:
         "candidates/cuda_warp_rows_attention/attention_kernel.cu, and "
         "candidates/cuda_tiled_attention/attention_kernel.cu; compile those sources only "
         "when build-checking a candidate_transform/candidate_patch.",
-        "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
+        "Unpatched seed score caps are smoke-only safety fences: "
+        "candidates/cuda_mma_attention_seed.py supports "
         "seq_lens 16, 32, 64, 128, or 256 with head_dim 128, total_tokens <= 1024, "
         "and num_heads <= 4; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
@@ -486,49 +519,25 @@ def build_repo_context(root: Path) -> str:
         "head_dim 16, total_tokens <= 16, and num_heads 1, but that no-patch smoke is "
         "already recorded and should not be repeated. Larger seed scores need "
         "candidate_transform/candidate_patch to update the wrapper/kernel.",
-        "For tiled scores outside the tiny validated smoke shape, changing only "
-        "candidates/cuda_tiled_attention_seed.py wrapper caps is not a fix; include a "
-        "kernel change for the known larger-shape correctness failure.",
-        "The current tiled kernel already uses the online-softmax output recurrence "
-        "output_acc * old_scale + tile_acc * tile_scale; do not repeat that stale fix.",
-        "The tiled reduction-bound guard patch still failed seq128/head_dim128 "
-        "correctness; do not repeat that reduce[tid] score/shifted guard change.",
-        "The warp-row BF16 score_tiles shared-memory conversion preserved correctness "
-        "but regressed throughput; do not repeat that buffer-precision change.",
-        "The unpatched warp-row seq256/head_dim128 score passed correctness but "
-        "regressed below the accepted MMA direct-accumulation kernel; do not repeat "
-        "that no-patch diagnostic without a structural candidate_patch.",
-        "The unpatched MMA seq64/head_dim128 score passed correctness but is already "
-        "recorded as structural progress; do not repeat it without a new candidate_patch.",
-        "The unpatched MMA seq128/head_dim128 score passed correctness but is already "
-        "recorded as structural progress; do not repeat it without a new candidate_patch.",
-        "The unpatched MMA seq256/head_dim128 score passed correctness and was accepted "
-        "into lineage; do not repeat it without a structural candidate_patch.",
-        "For MMA shared K staging, k_shared is tile-local: do not load from "
-        "k_shared + key_start * kHeadDim + chunk_offset. Use k_shared + chunk_offset "
-        "with leading dimension kHeadDim after staging the 16x128 tile.",
-        "The corrected synchronous full-K MMA staging path preserved correctness but "
-        "regressed throughput; do not repeat static k_shared staging unless adding "
-        "real async-copy or double-buffered overlap.",
-        "The synchronous double-buffered MMA V staging path preserved correctness but "
-        "regressed throughput; do not repeat static v_shared[2] staging unless adding "
-        "real async-copy overlap.",
-        "For MMA probability-buffer skew, WMMA load_matrix_sync leading dimensions must "
-        "stay 16-byte aligned; kTile + 1 is invalid, and the corrected kTile + 8 "
-        "stride preserved correctness but regressed throughput.",
-        "Scalar BF16 async-copy patches are invalid: do not use __pipeline_memcpy_async "
-        "with sizeof(__nv_bfloat16) or per-element BF16 loops. Use async copy only for "
-        "real aligned 16-byte groups in dataflow; otherwise choose a non-async patch.",
-        "Scalar async-copy validation has failed repeatedly in recent loops. Treat cp.async/"
-        "__pipeline_memcpy_async as a cooled-down direction unless the diff is a complete "
-        "16-byte-group dataflow change with exact current context and no scalar async calls.",
-        "Compile-only WMMA skeletons that add fragments or shared buffers without wiring "
-        "them into MMA and online-softmax dataflow are recorded no-ops; build-check only "
-        "candidate patches that are intended to be scored after a successful compile.",
-        "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
-        "an avo compile build-check first; do not jump straight to score.",
-        "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
-        "and leaves four 16-wide chunks covers only 64 dimensions; do not repeat it.",
+        "Structural CUDA preflight tracks are hard safety checks, not historical phrase "
+        "bans: edit-channel integrity, transform path/materialization, WMMA fragment "
+        "shape and element type, async-copy granularity/API shape, tile-local shared "
+        "memory addressing, symbol lifecycle, complete shape graduation, and no-effect "
+        "skeletons. Failed attempt classes can be promoted into active hard preflight "
+        "tracks by the evolve loop.",
+        "WMMA matrix fragments in generic PyTorch kernels must use explicit CUDA element "
+        "types, not scalar_t, because dispatch instantiates unsupported float/c10 types. "
+        "Ampere BF16 WMMA fragments used here stay on 16x16x16 shapes unless the kernel "
+        "is structurally rewritten around a supported shape.",
+        "Async copy must move aligned 16-byte groups in real dataflow. Wrapper-only API "
+        "proofs, scalar BF16 async copies, and compile-only preload fragments are "
+        "no-effect skeletons.",
+        "MMA shared tiles are tile-local after staging: shared-memory loads should use "
+        "tile-local offsets with the staged leading dimension, not global key_start "
+        "offsets.",
+        "Shape graduation beyond the current smoke caps is a two-step path: first use "
+        "candidate_transform to update kernel/wrapper structure and run avo compile; "
+        "only score larger realistic shapes after that compile succeeds.",
     ]
     if candidates:
         lines.append("Candidate modules:")
@@ -538,7 +547,10 @@ def build_repo_context(root: Path) -> str:
         lines.extend(f"- {source}" for source in cuda_sources)
     preferred_command = _preferred_candidate_score_command(candidates)
     if preferred_command:
-        lines.append(f"Preferred first local candidate score command: {preferred_command}")
+        lines.append(
+            "Preferred target candidate score command after a successful shape-support "
+            f"compile: {preferred_command}"
+        )
     excerpts = _candidate_source_excerpts(root, [*candidates, *cuda_sources])
     if excerpts:
         lines.append("Candidate source excerpts for exact patch context:")
@@ -615,7 +627,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "expected_effect, risk, and next_command. Do not omit expected_effect, "
             "risk, or next_command even in no-edit diagnostic mode. "
         )
-    if "candidate_patch must be non-empty" in message:
+    if (
+        "candidate_patch must be non-empty" in message
+        or "candidate_transform or candidate_patch must be provided" in message
+    ):
         return (
             "Choose exactly one valid mode. Preferred edit mode: candidate_transform is "
             "one structured operation and candidate_patch is ''. Legacy edit mode: "
@@ -645,6 +660,13 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "as one candidate_transform operation, or choose a smaller CUDA transform that "
             "can be represented by replace_once, insert_before_once, insert_after_once, or "
             "set_constexpr_int. Raw candidate_patch is only for non-CUDA candidate files. "
+        )
+    if "structural preflight track" in message:
+        return (
+            "Treat the rejected edit as a failed transform family, not as a phrase to patch "
+            "around. Choose one smaller candidate_transform that changes real dataflow and "
+            "avoids the same structural class, or switch to a bounded diagnostic that gives "
+            "new information for a different transform family. "
         )
     if "known invalid by the decision itself" in message:
         if "must not be scored" in message:
@@ -693,31 +715,19 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "recent build or environment failure such as a CUDA version mismatch, missing "
             "compiler, missing package, or extension-build error. "
         )
+    if "recorded no-patch compile diagnostic" in message:
+        return (
+            "Do not retry a no-edit compile of an already-recorded candidate source. If "
+            "you are compile-checking a code change, include candidate_transform with a "
+            "single operation and keep candidate_patch as ''. For an integer constant "
+            "change, use set_constexpr_int with path, name, and value. "
+        )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
-            "Do not retry scalar sizeof(__nv_bfloat16) async copies. A valid Ampere "
-            "async-copy patch must copy aligned 16-byte groups, which is 8 BF16 elements "
-            "per copy, and keep any scalar tail path separate after the pipeline wait. "
-            "Your corrected decision should avoid __pipeline_memcpy_async entirely unless "
-            "the diff contains real 16-byte-group dataflow, not wrapper/API proof code. "
-            "If you cannot express that cleanly as a small diff, choose a materially "
-            "different non-async candidate patch in this retry. "
-        )
-    if "repeats synchronous MMA K shared-memory staging" in message:
-        return (
-            "Do not retry static k_shared MMA K staging. It already passed correctness "
-            "and regressed throughput. A corrected K-staging decision must add real "
-            "async-copy or double-buffered overlap; otherwise choose a different "
-            "non-K-staging candidate patch. "
-        )
-    if (
-        "synchronous MMA V shared-memory staging" in message
-        or "synchronous double-buffered MMA V shared-memory staging" in message
-    ):
-        return (
-            "Do not retry static v_shared[2] MMA V staging. It already passed correctness "
-            "and regressed throughput. A corrected V-staging decision must add real "
-            "async-copy overlap; otherwise choose a different non-V-staging candidate patch. "
+            "A valid Ampere async-copy transform must copy aligned 16-byte groups in real "
+            "kernel dataflow, with scalar tails outside the async path. If that cannot be "
+            "expressed as one small candidate_transform, choose a different transform "
+            "family. "
         )
     return ""
 
@@ -816,6 +826,29 @@ def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
     return dict(value)
 
 
+def _infer_candidate_transform_from_edit(candidate_edit: str) -> dict[str, Any] | None:
+    path_match = re.search(
+        r"\b(?P<path>candidates/[A-Za-z0-9_./-]+\.(?:cu|cuh|cpp|h|hpp))\b",
+        candidate_edit,
+    )
+    if path_match is None:
+        return None
+    value_match = re.search(
+        r"\b(?:change|set)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+        r"(?:\s+from\s+[-+]?\d+)?\s+to\s+(?P<value>[-+]?\d+)\b",
+        candidate_edit,
+        flags=re.IGNORECASE,
+    )
+    if value_match is None:
+        return None
+    return {
+        "op": "set_constexpr_int",
+        "path": path_match.group("path"),
+        "name": value_match.group("name"),
+        "value": int(value_match.group("value")),
+    }
+
+
 def _validate_candidate_transform_path(raw_path: str) -> None:
     if "\x00" in raw_path or "\\" in raw_path:
         raise ValueError("candidate_transform path contains unsupported characters")
@@ -858,7 +891,8 @@ def _validate_candidate_edit_matches_patch(candidate_edit: str, candidate_patch:
     if candidate_patch.strip() or not _candidate_edit_requires_patch(candidate_edit):
         return
     raise ValueError(
-        "candidate_patch must be non-empty when candidate_edit describes a code change; "
+        "candidate_transform or candidate_patch must be provided when candidate_edit "
+        "describes a code change; "
         f"candidate_edit was {_validation_excerpt(candidate_edit)!r}"
     )
 
@@ -884,197 +918,44 @@ def _validate_candidate_patch_not_self_rejected(
 
 
 def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
+    validate_candidate_patch_structural_preflight(
+        candidate_patch,
+        allow_cuda_source_edits=False,
+    )
+
+
+def validate_candidate_patch_structural_preflight(
+    candidate_patch: str,
+    *,
+    allow_cuda_source_edits: bool,
+) -> None:
     if not candidate_patch.strip():
         return
-    for added_line in _candidate_patch_added_lines(candidate_patch):
+    inspection = _inspect_candidate_patch(candidate_patch)
+    for added_line in inspection.added_lines:
         if added_line.rstrip(" \t") != added_line:
             raise ValueError("candidate_patch added lines must not contain trailing whitespace")
-    if _candidate_patch_adds_only_unroll_pragmas(candidate_patch):
-        raise ValueError(
-            "candidate_patch is a pragma-only performance patch; recorded warp-row "
-            "unroll scoring regressed throughput, so include a substantive code change"
-        )
-    meaningful_added_lines = [
-        line.strip() for line in _candidate_patch_added_lines(candidate_patch) if line.strip()
-    ]
-    if (
-        len(meaningful_added_lines) == 1
-        and "can_stage_shared" in meaningful_added_lines[0]
-        and "head_dim <= 128" in meaningful_added_lines[0]
-    ):
-        raise ValueError(
-            "candidate_patch directly enables the warp-row shared path for head_dim 128; "
-            "the recorded threshold-only change triggered CUDA misaligned-address failures"
-        )
-    if _candidate_patch_repeats_stale_tiled_rescale_fix(candidate_patch):
-        raise ValueError(
-            "candidate_patch repeats a stale tiled output-rescale fix; the current "
-            "tiled kernel already uses output_acc * old_scale + tile_acc * tile_scale"
-        )
-    if _candidate_patch_repeats_tiled_reduction_guard_fix(candidate_patch):
-        raise ValueError(
-            "candidate_patch repeats the tiled reduction-bound guard fix; the recorded "
-            "seq128/head_dim128 score still failed correctness"
-        )
-    if _candidate_patch_repeats_partial_mma_head_dim128_extension(candidate_patch):
-        raise ValueError(
-            "candidate_patch repeats the partial MMA head_dim128 extension; changing "
-            "kHeadDim/SMOKE_HEAD_DIM to 128 while leaving four 16-wide chunks covers "
-            "only 64 dimensions"
-        )
-    added_text = "\n".join(_candidate_patch_added_lines(candidate_patch))
-    if "__pipeline_wait_prior<" in added_text:
-        raise ValueError(
-            "candidate_patch uses templated __pipeline_wait_prior; the public CUDA "
-            "pipeline primitive is __pipeline_wait_prior(prior)"
-        )
-    if "__pipeline_memcpy_async" in added_text and "sizeof(__nv_bfloat16)" in added_text:
-        raise ValueError(
-            "candidate_patch uses scalar BF16 __pipeline_memcpy_async copies; use "
-            "16-byte aligned groups for Ampere async copy patches"
-        )
-    if (
-        "extern __shared__" in added_text
-        and "k_tiles" in added_text
-        and "v_tiles" in added_text
-        and "memcpy_async" not in added_text
-        and "cp.async" not in added_text
-    ):
-        raise ValueError(
-            "candidate_patch is a standalone dynamic shared-memory K/V migration; "
-            "the recorded version preserved correctness but regressed throughput, "
-            "so include real async-copy or double-buffering logic"
-        )
-    if _candidate_patch_converts_warp_score_tiles_to_bf16(added_text):
-        raise ValueError(
-            "candidate_patch repeats the regressed warp-row BF16 score_tiles conversion; "
-            "the recorded score preserved correctness but reduced geomean throughput"
-        )
-    if _candidate_patch_uses_unsupported_mma_score_k32(added_text):
-        raise ValueError(
-            "candidate_patch uses unsupported WMMA accumulator shape 16x16x32; "
-            "keep the score fragment K at 16 and accumulate two 16-wide chunks "
-            "into a 16x16 accumulator"
-        )
-    if _candidate_patch_uses_unsupported_mma_m32_fragment(added_text):
-        raise ValueError(
-            "candidate_patch uses unsupported WMMA M=32 fragment shapes; "
-            "Ampere WMMA BF16 paths in this kernel must stay on 16x16x16 fragments"
-        )
-    if _candidate_patch_uses_generic_scalar_wmma_fragments(added_text):
-        raise ValueError(
-            "candidate_patch uses scalar_t as a WMMA matrix fragment element; "
-            "generic PyTorch kernels instantiate float/c10 scalar types that WMMA "
-            "does not support, so use explicit CUDA WMMA element types in "
-            "dtype-specific code"
-        )
-    if _candidate_patch_uses_missing_wmma_matrix_element_type(added_text):
-        raise ValueError(
-            "candidate_patch declares a WMMA matrix fragment without an element type; "
-            "matrix_a/matrix_b fragments must include __nv_bfloat16 or another "
-            "supported CUDA WMMA element type before the layout"
-        )
-    if _candidate_patch_leaves_orphan_mma_k_fragment(added_text):
-        raise ValueError(
-            "candidate_patch leaves an orphan post-QK WMMA k_frag block after "
-            "storing scores; remove old single-chunk QK fragment declarations "
-            "completely"
-        )
-    if _candidate_patch_uses_thread_local_mma_row_state_for_cross_thread_rows(added_text):
-        raise ValueError(
-            "candidate_patch moves MMA row softmax state into per-thread registers but "
-            "later uses row / blockDim.x from other threads; the recorded score failed "
-            "correctness with non-finite outputs"
-        )
-    if _candidate_patch_repeats_mma_qk_fragment_preload_chain(added_text):
-        raise ValueError(
-            "candidate_patch repeats the MMA QK k_frag_next preload chain; "
-            "the recorded score preserved correctness but regressed geomean throughput"
-        )
-    if _candidate_patch_repeats_mma_q_fragment_preload_chain(added_text):
-        raise ValueError(
-            "candidate_patch repeats the MMA QK q_frag_next preload chain; "
-            "the recorded score preserved correctness but regressed geomean throughput"
-        )
-    if _candidate_patch_adds_unused_mma_preload_fragment(added_text):
-        raise ValueError(
-            "candidate_patch adds an MMA preload fragment that is loaded but never consumed; "
-            "compile-only unused preload skeletons do not affect correctness or throughput"
-        )
-    if _candidate_patch_adds_unused_wmma_compile_skeleton(added_text):
-        raise ValueError(
-            "candidate_patch adds a WMMA compile skeleton without any MMA or online-softmax "
-            "dataflow; compile-only WMMA skeletons do not affect correctness or throughput"
-        )
-    if _candidate_patch_adds_stray_mma_probability_fragment_statement(added_text):
-        raise ValueError(
-            "candidate_patch adds a stray probability_frag statement in a PV preload patch; "
-            "remove duplicate fragment declaration lines before compile-checking"
-        )
-    if _candidate_patch_uses_global_offset_for_shared_k_tile(added_text):
-        raise ValueError(
-            "candidate_patch stages an MMA K tile in shared memory but loads it "
-            "with the global key_start offset; use tile-local k_shared + "
-            "chunk_offset addressing with kHeadDim as the leading dimension"
-        )
-    if _candidate_patch_repeats_sync_mma_q_staging(added_text):
-        raise ValueError(
-            "candidate_patch repeats synchronous MMA Q shared-memory staging; "
-            "the recorded score preserved correctness but regressed throughput, "
-            "so add real overlap or a materially different dataflow before revisiting"
-        )
-    if _candidate_patch_repeats_sync_mma_k_staging(added_text):
-        raise ValueError(
-            "candidate_patch repeats synchronous MMA K shared-memory staging; "
-            "the recorded score preserved correctness but regressed throughput, "
-            "so add real async-copy or double-buffered overlap before revisiting"
-        )
-    if _candidate_patch_repeats_sync_mma_v_staging(added_text):
-        raise ValueError(
-            "candidate_patch repeats synchronous MMA V shared-memory staging; "
-            "the recorded score preserved correctness but regressed throughput, "
-            "so add real async-copy overlap before revisiting"
-        )
-    if _candidate_patch_uses_invalid_mma_probability_ldm(added_text):
-        raise ValueError(
-            "candidate_patch uses kTile + 1 as a WMMA probability leading dimension; "
-            "load_matrix_sync requires a 16-byte-aligned stride for half-type multiplicands"
-        )
-    if _candidate_patch_repeats_mma_probability_stride_skew(added_text):
-        raise ValueError(
-            "candidate_patch repeats the stride-24 MMA probability-buffer skew; "
-            "the recorded score preserved correctness but regressed geomean throughput"
-        )
-    if _candidate_patch_repeats_mma_probability_stride20_skew(added_text):
-        raise ValueError(
-            "candidate_patch repeats the stride-20 MMA probability-buffer skew; "
-            "the recorded score preserved correctness but regressed geomean throughput"
-        )
-    if _candidate_patch_uses_2d_probability_index_without_2d_declaration(added_text):
-        raise ValueError(
-            "candidate_patch uses probabilities[row][key] but does not declare "
-            "probabilities as a 2D shared-memory tile"
-        )
-    if _candidate_patch_repeats_mma_score_stride_skew(added_text):
-        raise ValueError(
-            "candidate_patch repeats the MMA score-tile stride-24 skew; "
-            "the recorded score preserved correctness but regressed geomean throughput"
-        )
-    if _candidate_patch_adds_unused_async_copy_helpers(added_text):
-        raise ValueError(
-            "candidate_patch adds async-copy helper wrappers without using them; "
-            "the API availability smoke is already recorded, so include real dataflow"
-        )
-    if _candidate_patch_inserts_async_helper_inside_mma_signature(added_text):
-        raise ValueError(
-            "candidate_patch inserts async helper definitions inside the MMA kernel "
-            "signature and duplicates the kernel declaration"
-        )
-    if _candidate_patch_edits_cuda_source(candidate_patch):
+    for track in CUDA_STRUCTURAL_PREFLIGHT_TRACKS:
+        if track.detector(inspection):
+            raise ValueError(
+                f"structural preflight track {track.name} classified as "
+                f"{track.failure_class}: {track.message}"
+            )
+    if inspection.edits_cuda_source and not allow_cuda_source_edits:
         raise ValueError(
             "candidate_patch must not edit CUDA source files directly; use "
             "candidate_transform for .cu/.cuh kernel edits"
         )
+
+
+def _inspect_candidate_patch(candidate_patch: str) -> CandidatePatchInspection:
+    added_lines = tuple(_candidate_patch_added_lines(candidate_patch))
+    return CandidatePatchInspection(
+        patch_text=candidate_patch,
+        added_lines=added_lines,
+        added_text="\n".join(added_lines),
+        changed_paths=frozenset(_candidate_patch_changed_paths(candidate_patch)),
+    )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -1410,6 +1291,151 @@ def _candidate_patch_inserts_async_helper_inside_mma_signature(added_text: str) 
         and "__device__ __forceinline__" in added_text
         and "__global__ void mma_attention_kernel" in added_text
     )
+
+
+CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
+    CandidatePatchPreflightTrack(
+        name="no_effect_pragma_only",
+        failure_class="no_effect_or_skeleton",
+        message=(
+            "pragma-only edits do not change dataflow; pair unroll directives with a "
+            "substantive transform before compiling or scoring"
+        ),
+        detector=lambda inspection: _candidate_patch_adds_only_unroll_pragmas(
+            inspection.patch_text
+        ),
+    ),
+    CandidatePatchPreflightTrack(
+        name="incomplete_shape_graduation",
+        failure_class="incomplete_or_malformed_edit",
+        message=(
+            "shape-cap changes must update all loop/chunk structure that covers the new "
+            "head dimension"
+        ),
+        detector=lambda inspection: _candidate_patch_repeats_partial_mma_head_dim128_extension(
+            inspection.patch_text
+        ),
+    ),
+    CandidatePatchPreflightTrack(
+        name="cuda_pipeline_api_shape",
+        failure_class="cuda_syntax_error",
+        message=(
+            "CUDA pipeline waits use the runtime argument form, not a templated "
+            "__pipeline_wait_prior<N> call"
+        ),
+        detector=lambda inspection: "__pipeline_wait_prior<" in inspection.added_text,
+    ),
+    CandidatePatchPreflightTrack(
+        name="async_copy_granularity",
+        failure_class="cuda_syntax_error",
+        message=(
+            "Ampere async-copy transforms must move 16-byte aligned groups in real "
+            "dataflow, not scalar BF16 elements"
+        ),
+        detector=lambda inspection: "__pipeline_memcpy_async" in inspection.added_text
+        and "sizeof(__nv_bfloat16)" in inspection.added_text,
+    ),
+    CandidatePatchPreflightTrack(
+        name="wmma_fragment_shape",
+        failure_class="unsupported_wmma_shape",
+        message="Ampere BF16 WMMA fragments in this kernel must use supported 16x16x16 shapes",
+        detector=lambda inspection: _candidate_patch_uses_unsupported_mma_score_k32(
+            inspection.added_text
+        )
+        or _candidate_patch_uses_unsupported_mma_m32_fragment(inspection.added_text),
+    ),
+    CandidatePatchPreflightTrack(
+        name="wmma_fragment_element_type",
+        failure_class="unsupported_wmma_shape",
+        message=(
+            "WMMA matrix fragments need explicit CUDA element types such as "
+            "__nv_bfloat16, not generic scalar_t or missing element-type parameters"
+        ),
+        detector=lambda inspection: _candidate_patch_uses_generic_scalar_wmma_fragments(
+            inspection.added_text
+        )
+        or _candidate_patch_uses_missing_wmma_matrix_element_type(inspection.added_text),
+    ),
+    CandidatePatchPreflightTrack(
+        name="symbol_lifecycle",
+        failure_class="stale_or_undefined_symbol",
+        message=(
+            "fragment/probability-tile edits must remove stale declarations and declare "
+            "the data structure shape used by later indexes"
+        ),
+        detector=lambda inspection: _candidate_patch_leaves_orphan_mma_k_fragment(
+            inspection.added_text
+        )
+        or _candidate_patch_adds_stray_mma_probability_fragment_statement(
+            inspection.added_text
+        )
+        or _candidate_patch_uses_2d_probability_index_without_2d_declaration(
+            inspection.added_text
+        ),
+    ),
+    CandidatePatchPreflightTrack(
+        name="shared_tile_scope",
+        failure_class="correctness_failed",
+        message=(
+            "shared-memory tiles are tile-local after staging; loads must not reapply the "
+            "global key_start offset"
+        ),
+        detector=lambda inspection: _candidate_patch_uses_global_offset_for_shared_k_tile(
+            inspection.added_text
+        ),
+    ),
+    CandidatePatchPreflightTrack(
+        name="wmma_load_alignment",
+        failure_class="unsupported_wmma_shape",
+        message="WMMA load_matrix_sync leading dimensions for half-type inputs must be aligned",
+        detector=lambda inspection: _candidate_patch_uses_invalid_mma_probability_ldm(
+            inspection.added_text
+        ),
+    ),
+    CandidatePatchPreflightTrack(
+        name="cross_thread_row_state",
+        failure_class="correctness_failed",
+        message=(
+            "row softmax state cannot move to per-thread registers when later rows are "
+            "owned by other threads"
+        ),
+        detector=(
+            lambda inspection: (
+                _candidate_patch_uses_thread_local_mma_row_state_for_cross_thread_rows(
+                    inspection.added_text
+                )
+            )
+        ),
+    ),
+    CandidatePatchPreflightTrack(
+        name="no_effect_wmma_skeleton",
+        failure_class="no_effect_or_skeleton",
+        message=(
+            "WMMA/preload fragments and shared buffers must feed MMA and online-softmax "
+            "dataflow before a compile or score step is useful"
+        ),
+        detector=lambda inspection: _candidate_patch_adds_unused_mma_preload_fragment(
+            inspection.added_text
+        )
+        or _candidate_patch_adds_unused_wmma_compile_skeleton(inspection.added_text),
+    ),
+    CandidatePatchPreflightTrack(
+        name="no_effect_async_helpers",
+        failure_class="no_effect_or_skeleton",
+        message="async-copy helper wrappers must be called by real dataflow in the same edit",
+        detector=lambda inspection: _candidate_patch_adds_unused_async_copy_helpers(
+            inspection.added_text
+        ),
+    ),
+    CandidatePatchPreflightTrack(
+        name="cuda_helper_placement",
+        failure_class="cuda_syntax_error",
+        message="helper definitions must not be inserted inside the CUDA kernel signature",
+        detector=lambda inspection: _candidate_patch_inserts_async_helper_inside_mma_signature(
+            inspection.added_text
+        ),
+    ),
+)
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:
@@ -1818,7 +1844,7 @@ def _validate_compile_command_context(
         return
     raise ValueError(
         "next_command avo compile is only for CUDA build/compilation diagnostics "
-        "or checking a candidate_patch, not source-file inspection"
+        "or checking candidate_transform/candidate_patch, not source-file inspection"
     )
 
 
@@ -1926,28 +1952,32 @@ def _preferred_candidate_score_command(candidates: list[str]) -> str:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_mma_attention_seed.py "
-            "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128 "
+            "--seq-lens 4096,8192,16384 --total-tokens 32768 --num-heads 16 "
+            "--head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
     if "candidates/cuda_warp_rows_attention_seed.py" in candidates:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_warp_rows_attention_seed.py "
-            "--seq-lens 16 --total-tokens 16 --num-heads 1 --head-dim 16 "
+            "--seq-lens 4096,8192,16384 --total-tokens 32768 --num-heads 16 "
+            "--head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
     if "candidates/cuda_tiled_attention_seed.py" in candidates:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_tiled_attention_seed.py "
-            "--seq-lens 16 --total-tokens 16 --num-heads 1 --head-dim 16 "
+            "--seq-lens 4096,8192,16384 --total-tokens 32768 --num-heads 16 "
+            "--head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
     if "candidates/cuda_naive_attention_seed.py" in candidates:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_naive_attention_seed.py "
-            "--seq-lens 16 --total-tokens 16 --num-heads 1 --head-dim 16 "
+            "--seq-lens 4096,8192,16384 --total-tokens 32768 --num-heads 16 "
+            "--head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
     if "candidates/cuda_identity_seed.py" in candidates:

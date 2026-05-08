@@ -967,3 +967,30 @@ source files.
   `candidate_patch` edits to `.cu`/`.cuh` files; CUDA kernel edits must use
   `candidate_transform`. Raw diffs remain available only for non-CUDA candidate
   files such as wrappers.
+  A follow-up loop correctly avoided raw CUDA patch execution but still failed
+  planning because the decision described a CUDA code change while providing no
+  edit payload. The validation error now says `candidate_transform or
+  candidate_patch must be provided` so retries are not steered back to the raw
+  patch-only interface.
+  The next reliability pass replaced the remaining long inline CUDA
+  domain-sanity block with named structural preflight tracks. The hard checks
+  now describe classes such as edit-channel integrity, WMMA fragment shape/type,
+  async-copy granularity/API shape, tile-local shared-memory addressing, symbol
+  lifecycle, complete shape graduation, and no-effect skeletons. Materialized
+  `candidate_transform` patches run those preflights before compile/score, so
+  transforms get the same structural scrutiny that raw diffs used to receive.
+  The evolve loop now persists recurring promotable failure classes in
+  `attempts/preflight_tracks.json` and feeds active hard tracks back into
+  attempt history and command execution. Prompt context also distinguishes
+  smoke-only seed caps from the actual target: long-sequence BF16 attention
+  around seq 4096/8192/16384/32768, total_tokens 32768, num_heads 16, head_dim
+  128, and both causal modes.
+  Live-loop validation then showed the planner could describe an integer
+  constant transform in prose while omitting the `candidate_transform` object.
+  The parser now recovers explicit tiny constant transforms of the form
+  "change NAME from OLD to NEW in candidates/.../*.cu" into `set_constexpr_int`.
+  Planning validation failures are also classified into durable classes such as
+  `planning_missing_edit_payload`, `planning_no_patch_compile`, and
+  `planning_edit_channel` instead of falling into `unknown`, so recurring
+  planner-interface failures can be promoted and summarized like execution
+  failures.

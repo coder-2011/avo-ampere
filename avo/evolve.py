@@ -12,7 +12,7 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .agent import VariationDecision
+from .agent import VariationDecision, validate_candidate_patch_structural_preflight
 from .isolation import RESULT_PREFIX
 from .lineage import GateDecision, commit_score
 
@@ -24,6 +24,23 @@ CANDIDATE_SOURCE_SUFFIXES = frozenset({".cpp", ".cu", ".cuh", ".h", ".hpp", ".py
 SKIPPED_SOURCE_PARTS = frozenset({"__pycache__"})
 SUPERVISOR_REPEAT_THRESHOLD = 3
 SUPERVISOR_EXHAUSTION_THRESHOLD = 5
+PROMOTED_PREFLIGHT_TRACKS_FILENAME = "preflight_tracks.json"
+PROMOTABLE_FAILURE_CLASS_TRACKS = {
+    "planning_edit_channel": "edit_channel_consistency",
+    "planning_missing_edit_payload": "edit_channel_consistency",
+    "planning_no_patch_compile": "compile_diagnostic_repetition",
+    "planning_transform_preflight": "transform_materialization",
+    "planning_validation": "planning_validation",
+    "raw_diff_preflight": "edit_channel_integrity",
+    "structured_transform_preflight": "transform_materialization",
+    "patch_safety_preflight": "patch_safety",
+    "no_effect_or_skeleton": "no_effect_skeleton",
+    "incomplete_or_malformed_edit": "incomplete_edit",
+    "unsupported_wmma_shape": "wmma_fragment_shape",
+    "cuda_syntax_error": "cuda_text_shape",
+    "stale_or_undefined_symbol": "symbol_lifecycle",
+    "correctness_failed": "correctness_preflight",
+}
 REJECTED_PATCH_MARKERS = frozenset(
     {
         "Binary files ",
@@ -331,10 +348,15 @@ def run_decision_command(
     timeout_s: int,
     env: dict[str, str] | None = None,
     allowed_subcommands: frozenset[str] = DEFAULT_ALLOWED_SUBCOMMANDS,
+    promoted_preflight_classes: frozenset[str] | None = None,
 ) -> VariationAttempt:
     command = command_from_decision(decision, allowed_subcommands=allowed_subcommands)
     started_at = _utc_now()
-    patch_result, effective_decision = _maybe_apply_candidate_edit(decision, cwd=cwd)
+    patch_result, effective_decision = _maybe_apply_candidate_edit(
+        decision,
+        cwd=cwd,
+        promoted_preflight_classes=promoted_preflight_classes or frozenset(),
+    )
     if patch_result is not None and not patch_result.ok:
         return VariationAttempt(
             decision=effective_decision,
@@ -486,28 +508,126 @@ def summarize_attempt_history(
 ) -> str:
     if directory is None or limit <= 0 or not directory.exists():
         return ""
-    paths = []
-    for path in sorted(path for path in directory.glob("*.json") if path.is_file()):
-        try:
-            payload = json.loads(path.read_text(encoding="utf-8"))
-        except (OSError, json.JSONDecodeError):
-            continue
-        if isinstance(payload, dict) and _is_step_payload(payload):
-            paths.append((path, payload))
+    paths = _load_step_payloads(directory)
     records = []
     payloads = []
     for path, payload in paths[-limit:]:
         payloads.append(payload)
         records.append(_summarize_step_payload(path.name, payload))
     if not records:
-        return ""
+        return _summarize_promoted_preflight_tracks(directory)
     summary = "Recent attempts, oldest to newest:\n" + "\n".join(
         f"- {record}" for record in records
     )
     supervisor_signal = _summarize_supervisor_signal(payloads)
     if supervisor_signal:
         summary = f"{summary}\n{supervisor_signal}"
+    promoted_summary = _summarize_promoted_preflight_tracks(directory)
+    if promoted_summary:
+        summary = f"{summary}\n{promoted_summary}"
     return summary
+
+
+def update_promoted_preflight_tracks(
+    directory: Path | None,
+    *,
+    threshold: int = SUPERVISOR_REPEAT_THRESHOLD,
+) -> dict[str, Any]:
+    state = _load_promoted_preflight_state(directory)
+    if directory is None or threshold <= 0:
+        return state
+    payloads = [payload for _, payload in _load_step_payloads(directory)]
+    repeated_class = _repeated_unaccepted_failure_class(payloads, threshold=threshold)
+    if repeated_class not in PROMOTABLE_FAILURE_CLASS_TRACKS:
+        return state
+    tracks = _state_tracks(state)
+    existing = tracks.get(repeated_class)
+    entry = {
+        "active": True,
+        "failure_class": repeated_class,
+        "track": PROMOTABLE_FAILURE_CLASS_TRACKS[repeated_class],
+        "threshold": threshold,
+        "recent_count": threshold,
+        "updated_at": _utc_now(),
+    }
+    if isinstance(existing, dict):
+        entry["promoted_at"] = existing.get("promoted_at") or entry["updated_at"]
+    else:
+        entry["promoted_at"] = entry["updated_at"]
+    tracks[repeated_class] = entry
+    state = {"version": 1, "tracks": tracks}
+    _write_promoted_preflight_state(directory, state)
+    return state
+
+
+def load_promoted_preflight_classes(directory: Path | None) -> frozenset[str]:
+    state = _load_promoted_preflight_state(directory)
+    return frozenset(
+        failure_class
+        for failure_class, entry in _state_tracks(state).items()
+        if isinstance(entry, dict) and entry.get("active") is True
+    )
+
+
+def _load_step_payloads(directory: Path) -> list[tuple[Path, dict[str, Any]]]:
+    payloads = []
+    for path in sorted(path for path in directory.glob("*.json") if path.is_file()):
+        if path.name == PROMOTED_PREFLIGHT_TRACKS_FILENAME:
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict) and _is_step_payload(payload):
+            payloads.append((path, payload))
+    return payloads
+
+
+def _promoted_preflight_state_path(directory: Path | None) -> Path | None:
+    if directory is None:
+        return None
+    return directory / PROMOTED_PREFLIGHT_TRACKS_FILENAME
+
+
+def _load_promoted_preflight_state(directory: Path | None) -> dict[str, Any]:
+    path = _promoted_preflight_state_path(directory)
+    if path is None or not path.exists():
+        return {"version": 1, "tracks": {}}
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return {"version": 1, "tracks": {}}
+    if not isinstance(payload, dict):
+        return {"version": 1, "tracks": {}}
+    return {"version": 1, "tracks": _state_tracks(payload)}
+
+
+def _write_promoted_preflight_state(directory: Path, state: dict[str, Any]) -> None:
+    directory.mkdir(parents=True, exist_ok=True)
+    path = directory / PROMOTED_PREFLIGHT_TRACKS_FILENAME
+    path.write_text(json.dumps(state, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+
+
+def _state_tracks(state: dict[str, Any]) -> dict[str, Any]:
+    tracks = state.get("tracks")
+    return dict(tracks) if isinstance(tracks, dict) else {}
+
+
+def _summarize_promoted_preflight_tracks(directory: Path | None) -> str:
+    state = _load_promoted_preflight_state(directory)
+    entries = [
+        entry
+        for entry in _state_tracks(state).values()
+        if isinstance(entry, dict) and entry.get("active") is True
+    ]
+    if not entries:
+        return ""
+    lines = ["Active hard preflight tracks:"]
+    for entry in sorted(entries, key=lambda item: str(item.get("failure_class") or "")):
+        failure_class = str(entry.get("failure_class") or "unknown")
+        track = str(entry.get("track") or "unknown")
+        lines.append(f"- class={failure_class}; track={track}; promoted from recurring attempts")
+    return "\n".join(lines)
 
 
 def _is_step_payload(payload: dict[str, Any]) -> bool:
@@ -690,10 +810,16 @@ def _maybe_apply_candidate_edit(
     decision: VariationDecision,
     *,
     cwd: Path,
+    promoted_preflight_classes: frozenset[str],
 ) -> tuple[PatchResult | None, VariationDecision]:
     if decision.candidate_transform is not None:
         try:
             patch_text = materialize_candidate_transform(decision.candidate_transform, cwd=cwd)
+            _preflight_materialized_candidate_patch(
+                patch_text,
+                allow_cuda_source_edits=True,
+                promoted_preflight_classes=promoted_preflight_classes,
+            )
         except ValueError as exc:
             return (
                 PatchResult(
@@ -710,7 +836,44 @@ def _maybe_apply_candidate_edit(
         return apply_candidate_patch(patch_text, cwd=cwd), effective_decision
     if not decision.candidate_patch.strip():
         return None, decision
+    try:
+        _preflight_materialized_candidate_patch(
+            decision.candidate_patch,
+            allow_cuda_source_edits=False,
+            promoted_preflight_classes=promoted_preflight_classes,
+        )
+    except ValueError as exc:
+        return (
+            PatchResult(
+                ok=False,
+                patch_paths=[],
+                returncode=None,
+                stdout_tail="",
+                stderr_tail="",
+                rejected_reason=f"candidate structural preflight rejected: {exc}",
+            ),
+            decision,
+        )
     return apply_candidate_patch(decision.candidate_patch, cwd=cwd), decision
+
+
+def _preflight_materialized_candidate_patch(
+    patch_text: str,
+    *,
+    allow_cuda_source_edits: bool,
+    promoted_preflight_classes: frozenset[str],
+) -> None:
+    try:
+        validate_candidate_patch_structural_preflight(
+            patch_text,
+            allow_cuda_source_edits=allow_cuda_source_edits,
+        )
+    except ValueError as exc:
+        promoted = ""
+        match = re.search(r"classified as ([a-z_]+)", str(exc))
+        if match and match.group(1) in promoted_preflight_classes:
+            promoted = " promoted"
+        raise ValueError(f"candidate structural{promoted} preflight rejected: {exc}") from exc
 
 
 def materialize_candidate_transform(transform: dict[str, Any], *, cwd: Path) -> str:
@@ -1136,6 +1299,9 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
     score_payload = attempt.get("score_payload")
     if isinstance(patch_result, dict) and patch_result.get("ok") is False:
         return _classify_patch_failure(patch_result)
+    planning_detail = _result_detail(command_result).lower()
+    if "agent planning failed validation" in planning_detail:
+        return _classify_planning_failure(planning_detail)
     if command_result.get("timed_out"):
         return "timeout"
     returncode = command_result.get("returncode")
@@ -1162,10 +1328,25 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
     return "unknown"
 
 
+def _classify_planning_failure(detail: str) -> str:
+    if "candidate_patch and candidate_transform are mutually exclusive" in detail:
+        return "planning_edit_channel"
+    if "candidate_transform or candidate_patch" in detail:
+        return "planning_missing_edit_payload"
+    if "recorded no-patch compile diagnostic" in detail:
+        return "planning_no_patch_compile"
+    if "candidate_transform" in detail:
+        return "planning_transform_preflight"
+    return "planning_validation"
+
+
 def _classify_patch_failure(patch_result: dict[str, Any]) -> str:
     detail = _result_detail(patch_result).lower()
     reason = str(patch_result.get("rejected_reason") or "").lower()
     combined = f"{reason} {detail}"
+    structural_class = _classified_structural_preflight_failure(combined)
+    if structural_class:
+        return structural_class
     if "candidate transform rejected" in combined:
         return "structured_transform_preflight"
     if "git apply" in combined or "corrupt patch" in combined or "hunk" in combined:
@@ -1173,6 +1354,13 @@ def _classify_patch_failure(patch_result: dict[str, Any]) -> str:
     if "path" in combined or "symlink" in combined or "binary" in combined:
         return "patch_safety_preflight"
     return "patch_preflight"
+
+
+def _classified_structural_preflight_failure(text: str) -> str | None:
+    if "structural preflight track" not in text:
+        return None
+    match = re.search(r"classified as ([a-z_]+)", text)
+    return match.group(1) if match else "patch_preflight"
 
 
 def _classify_compile_failure(detail: str) -> str:
