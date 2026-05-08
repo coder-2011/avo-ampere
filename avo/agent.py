@@ -284,6 +284,11 @@ class VariationDecision:
         expected_effect = _require_string(normalized_payload, "expected_effect")
         risk = _require_string(normalized_payload, "risk")
         edit_payload = candidate_patch or ("<structured-transform>" if candidate_transform else "")
+        _validate_candidate_edit_channel_consistency(
+            candidate_edit,
+            candidate_patch=candidate_patch,
+            candidate_transform=candidate_transform,
+        )
         _validate_candidate_edit_matches_patch(candidate_edit, edit_payload)
         planning_text = "\n".join((hypothesis, candidate_edit, expected_effect, risk))
         _validate_candidate_patch_not_self_rejected(edit_payload, planning_text)
@@ -767,6 +772,7 @@ def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
         raise ValueError(f"candidate_transform op must be one of: {allowed}")
     if not isinstance(path, str) or not path.strip():
         raise ValueError("candidate_transform path must be a non-empty string")
+    _validate_candidate_transform_path(path)
     extra = set(value) - set(TRANSFORM_SCHEMA["properties"])
     if extra:
         raise ValueError(
@@ -785,11 +791,42 @@ def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
     return dict(value)
 
 
+def _validate_candidate_transform_path(raw_path: str) -> None:
+    if "\x00" in raw_path or "\\" in raw_path:
+        raise ValueError("candidate_transform path contains unsupported characters")
+    if any(char.isspace() for char in raw_path):
+        raise ValueError("candidate_transform path must not contain whitespace")
+    path = PurePosixPath(raw_path)
+    if path.is_absolute() or any(part in {"", ".", ".."} for part in path.parts):
+        raise ValueError("candidate_transform path must be repo-relative")
+    normalized = path.as_posix()
+    if not normalized.startswith("candidates/"):
+        raise ValueError("candidate_transform path must be under candidates/")
+    if path.suffix not in (".cpp", ".cu", ".cuh", ".h", ".hpp", ".py"):
+        raise ValueError("candidate_transform path must reference a candidate source file")
+
+
 def _require_transform_string(payload: dict[str, Any], key: str) -> str:
     value = payload.get(key)
     if not isinstance(value, str) or not value:
         raise ValueError(f"candidate_transform {key} must be a non-empty string")
     return value
+
+
+def _validate_candidate_edit_channel_consistency(
+    candidate_edit: str,
+    *,
+    candidate_patch: str,
+    candidate_transform: dict[str, Any] | None,
+) -> None:
+    normalized = " ".join(candidate_edit.lower().replace("-", " ").split())
+    if not any(phrase in normalized for phrase in NO_EDIT_PHRASES):
+        return
+    if candidate_patch.strip() or candidate_transform is not None:
+        raise ValueError(
+            "candidate_edit starts in no-edit mode but includes an edit payload; "
+            "remove candidate_transform/candidate_patch or describe the edit instead"
+        )
 
 
 def _validate_candidate_edit_matches_patch(candidate_edit: str, candidate_patch: str) -> None:

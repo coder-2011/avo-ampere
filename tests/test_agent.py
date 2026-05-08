@@ -102,6 +102,34 @@ def test_parse_variation_decision_rejects_invalid_transform() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_malformed_transform_path() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Set the MMA tile constant through a structured transform."
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates / cud a_w arp _ rows _ attention _kernel . cu",
+        "name": "INVALID",
+        "value": 0,
+    }
+
+    with pytest.raises(ValueError, match="candidate_transform path must not contain whitespace"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_no_edit_with_transform() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "No edit; score the existing candidate."
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kTile",
+        "value": 16,
+    }
+
+    with pytest.raises(ValueError, match="no-edit mode but includes an edit payload"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_malformed_json() -> None:
     with pytest.raises(ValueError, match="malformed JSON"):
         parse_decision_text("{not-json")

@@ -943,3 +943,10 @@ source files.
   or undefined symbol, correctness failure, and throughput regression. Repeated
   classes should be promoted to hard preflight tracks or cause a transform-family
   change; do not add one-off phrase bans for every malformed attempt.
+  A live loop after the transform redesign showed a planner-mode inconsistency:
+  the decision text started with `No edit;` but also supplied a malformed
+  `candidate_transform` path (`candidates / ...`). Runtime validation now
+  rejects transform paths with whitespace, non-candidate roots, invalid suffixes,
+  absolute paths, traversal, or backslashes during planning parse. It also
+  rejects any `No edit;` decision that includes `candidate_transform` or a raw
+  `candidate_patch`, so diagnostics cannot silently carry edit payloads.
