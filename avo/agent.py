@@ -375,6 +375,10 @@ def build_repo_context(root: Path) -> str:
         "Available bounded commands: avo env; avo compile --source SOURCE.cu --out-dir DIR; "
         "avo score --backend BACKEND ...",
         "Use avo env only for CUDA/build environment diagnostics, not source-file inspection.",
+        "The current CUDA/build environment is already recorded as stable "
+        "(torch CUDA 13.0, nvcc CUDA 13.0, RTX A6000 sm_86, Anthropic key present); "
+        "do not run no-edit avo env merely to confirm stability unless a recent "
+        "build/environment failure gives a concrete reason.",
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
         "candidate_patch, not source-file inspection.",
         "Standalone pragma-only performance patches are already recorded as regressed noise; "
@@ -572,6 +576,13 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "recorded seq256/head_dim128 workload. That diagnostic already passed "
             "correctness and was gate-rejected for throughput. Use edit mode with a "
             "candidate_patch raw diff before scoring that workload again. "
+        )
+    if "recorded environment stability diagnostic" in message:
+        return (
+            "Do not spend a loop step on avo env just to reconfirm the already-recorded "
+            "CUDA/build environment. Use avo env only when the decision cites a concrete "
+            "recent build or environment failure such as a CUDA version mismatch, missing "
+            "compiler, missing package, or extension-build error. "
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
@@ -1513,11 +1524,45 @@ def _validate_patched_mma_score_is_compile_checked_first(
 
 def _validate_env_command_context(planning_text: str) -> None:
     normalized = " ".join(planning_text.lower().replace("_", " ").replace("-", " ").split())
+    if _env_command_repeats_recorded_stability_check(normalized):
+        raise ValueError(
+            "next_command repeats a recorded environment stability diagnostic; use avo env "
+            "only after a concrete CUDA/build environment failure"
+        )
     if any(keyword in normalized for keyword in ENV_COMMAND_KEYWORDS):
         return
     raise ValueError(
         "next_command avo env is only for CUDA/build environment diagnostics, "
         "not source-file inspection"
+    )
+
+
+def _env_command_repeats_recorded_stability_check(normalized_planning_text: str) -> bool:
+    stability_claims = (
+        "confirm cuda build setup",
+        "confirm cuda build toolchain stability",
+        "confirm toolchain stability",
+        "environment is stable",
+        "environment stability",
+        "remains valid",
+        "toolchain stability",
+    )
+    concrete_failure_terms = (
+        "build failed",
+        "build failure",
+        "compile failed",
+        "compile failure",
+        "error",
+        "failed",
+        "failure",
+        "mismatch",
+        "misconfigured",
+        "missing",
+        "not found",
+        "unavailable",
+    )
+    return any(claim in normalized_planning_text for claim in stability_claims) and not any(
+        term in normalized_planning_text for term in concrete_failure_terms
     )
 
 

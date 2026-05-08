@@ -912,3 +912,9 @@ source files.
   feedback now explicitly says not to submit another compile-only skeleton with
   that language; a compile-check patch must be complete enough to score after a
   successful build, or the planner must choose a different no-edit diagnostic.
+  A later no-edit `avo env` diagnostic reconfirmed the current environment:
+  Anthropic SDK installed with API key present, PyTorch `2.11.0+cu130`, torch
+  CUDA `13.0`, nvcc CUDA `13.0`, CUDA paths under the local cu13 package, and
+  RTX A6000 target `compute_86/sm_86`. Do not spend loop steps on another
+  generic environment-stability check unless a concrete build or CUDA
+  environment failure occurs.

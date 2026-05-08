@@ -117,6 +117,31 @@ def test_parse_variation_decision_allows_env_for_cuda_environment_check() -> Non
     assert decision.next_command == "avo env"
 
 
+def test_parse_variation_decision_rejects_recorded_env_stability_check() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = "Confirm CUDA build toolchain stability after recent attempts."
+    payload["candidate_edit"] = "No edit; run environment diagnostic."
+    payload["expected_effect"] = "Confirm CUDA build setup remains valid."
+    payload["risk"] = "No source risk."
+    payload["next_command"] = "avo env"
+
+    with pytest.raises(ValueError, match="recorded environment stability diagnostic"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_env_for_concrete_build_failure() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = "The last extension build failed with a missing compiler error."
+    payload["candidate_edit"] = "No edit; run environment diagnostic."
+    payload["expected_effect"] = "Confirm whether nvcc is missing or CUDA paths are misconfigured."
+    payload["risk"] = "No source risk."
+    payload["next_command"] = "avo env"
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command == "avo env"
+
+
 def test_parse_variation_decision_rejects_compile_candidate_option() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Compile the CUDA source to validate the build."
@@ -2014,6 +2039,23 @@ def test_decision_feedback_explains_compile_out_dir_error() -> None:
     content = updated["messages"][0]["content"]
     assert "--out-dir to a repo-relative build subdirectory" in content
     assert "Do not write compiler outputs under candidates/" in content
+
+
+def test_decision_feedback_explains_recorded_env_stability_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command repeats a recorded environment stability diagnostic; use avo env "
+            "only after a concrete CUDA/build environment failure"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "already-recorded CUDA/build environment" in content
+    assert "concrete recent build or environment failure" in content
+    assert "CUDA version mismatch" in content
 
 
 def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
