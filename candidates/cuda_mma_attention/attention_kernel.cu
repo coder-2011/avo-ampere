@@ -14,8 +14,9 @@ using namespace nvcuda;
 
 constexpr int kTile = 16;
 constexpr int kMaxSeqLen = 32;
-constexpr int kHeadDim = 16;
-constexpr int kTileElements = kTile * kTile;
+constexpr int kHeadDim = 32;
+constexpr int kScoreElements = kTile * kTile;
+constexpr int kOutputElements = kTile * kHeadDim;
 constexpr int kThreads = 256;
 
 __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
@@ -26,10 +27,10 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
                                      int seq_len,
                                      bool causal,
                                      float scale) {
-  __shared__ float scores[kTileElements];
-  __shared__ __nv_bfloat16 probabilities[kTileElements];
-  __shared__ float pv_tile[kTileElements];
-  __shared__ float output_acc[kTileElements];
+  __shared__ float scores[kScoreElements];
+  __shared__ __nv_bfloat16 probabilities[kScoreElements];
+  __shared__ float pv_tile[kOutputElements];
+  __shared__ float output_acc[kOutputElements];
   __shared__ float row_max[kTile];
   __shared__ float row_sum[kTile];
   __shared__ float old_scale[kTile];
@@ -43,7 +44,7 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
   const int query_start = query_tile * kTile;
   const int base = bh * seq_len * kHeadDim;
 
-  for (int linear = threadIdx.x; linear < kTileElements; linear += blockDim.x) {
+  for (int linear = threadIdx.x; linear < kOutputElements; linear += blockDim.x) {
     output_acc[linear] = 0.0f;
   }
   for (int row = threadIdx.x; row < kTile; row += blockDim.x) {
@@ -55,26 +56,30 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
 
   for (int key_start = 0; key_start < seq_len; key_start += kTile) {
     if (threadIdx.x < warpSize) {
-      wmma::fragment<wmma::matrix_a,
-                     kTile,
-                     kTile,
-                     kHeadDim,
-                     __nv_bfloat16,
-                     wmma::row_major>
-          q_frag;
-      wmma::fragment<wmma::matrix_b,
-                     kTile,
-                     kTile,
-                     kHeadDim,
-                     __nv_bfloat16,
-                     wmma::col_major>
-          k_frag;
-      wmma::fragment<wmma::accumulator, kTile, kTile, kHeadDim, float> score_frag;
-
+      wmma::fragment<wmma::accumulator, kTile, kTile, 16, float> score_frag;
       wmma::fill_fragment(score_frag, 0.0f);
-      wmma::load_matrix_sync(q_frag, q + base + query_start * kHeadDim, kHeadDim);
-      wmma::load_matrix_sync(k_frag, k + base + key_start * kHeadDim, kHeadDim);
-      wmma::mma_sync(score_frag, q_frag, k_frag, score_frag);
+
+      for (int chunk = 0; chunk < 2; ++chunk) {
+        wmma::fragment<wmma::matrix_a,
+                       kTile,
+                       kTile,
+                       16,
+                       __nv_bfloat16,
+                       wmma::row_major>
+            q_frag;
+        wmma::fragment<wmma::matrix_b,
+                       kTile,
+                       kTile,
+                       16,
+                       __nv_bfloat16,
+                       wmma::col_major>
+            k_frag;
+        const int chunk_offset = chunk * 16;
+        wmma::load_matrix_sync(q_frag, q + base + query_start * kHeadDim + chunk_offset, kHeadDim);
+        wmma::load_matrix_sync(k_frag, k + base + key_start * kHeadDim + chunk_offset, kHeadDim);
+        wmma::mma_sync(score_frag, q_frag, k_frag, score_frag);
+      }
+
       wmma::store_matrix_sync(scores, score_frag, kTile, wmma::mem_row_major);
     }
     __syncthreads();
@@ -116,44 +121,47 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
     }
     __syncthreads();
 
-    for (int linear = threadIdx.x; linear < kTileElements; linear += blockDim.x) {
+    for (int linear = threadIdx.x; linear < kOutputElements; linear += blockDim.x) {
       const int row = linear / kHeadDim;
       output_acc[linear] *= old_scale[row];
     }
     __syncthreads();
 
     if (threadIdx.x < warpSize) {
-      wmma::fragment<wmma::matrix_a,
-                     kTile,
-                     kHeadDim,
-                     kTile,
-                     __nv_bfloat16,
-                     wmma::row_major>
-          probability_frag;
-      wmma::fragment<wmma::matrix_b,
-                     kTile,
-                     kHeadDim,
-                     kTile,
-                     __nv_bfloat16,
-                     wmma::row_major>
-          v_frag;
-      wmma::fragment<wmma::accumulator, kTile, kHeadDim, kTile, float> output_frag;
+      for (int chunk = 0; chunk < 2; ++chunk) {
+        wmma::fragment<wmma::matrix_a,
+                       kTile,
+                       16,
+                       kTile,
+                       __nv_bfloat16,
+                       wmma::row_major>
+            probability_frag;
+        wmma::fragment<wmma::matrix_b,
+                       kTile,
+                       16,
+                       kTile,
+                       __nv_bfloat16,
+                       wmma::row_major>
+            v_frag;
+        wmma::fragment<wmma::accumulator, kTile, 16, kTile, float> output_frag;
 
-      wmma::fill_fragment(output_frag, 0.0f);
-      wmma::load_matrix_sync(probability_frag, probabilities, kTile);
-      wmma::load_matrix_sync(v_frag, v + base + key_start * kHeadDim, kHeadDim);
-      wmma::mma_sync(output_frag, probability_frag, v_frag, output_frag);
-      wmma::store_matrix_sync(pv_tile, output_frag, kHeadDim, wmma::mem_row_major);
+        wmma::fill_fragment(output_frag, 0.0f);
+        wmma::load_matrix_sync(probability_frag, probabilities, kTile);
+        const int chunk_offset = chunk * 16;
+        wmma::load_matrix_sync(v_frag, v + base + key_start * kHeadDim + chunk_offset, kHeadDim);
+        wmma::mma_sync(output_frag, probability_frag, v_frag, output_frag);
+        wmma::store_matrix_sync(&pv_tile[chunk_offset], output_frag, kHeadDim, wmma::mem_row_major);
+      }
     }
     __syncthreads();
 
-    for (int linear = threadIdx.x; linear < kTileElements; linear += blockDim.x) {
+    for (int linear = threadIdx.x; linear < kOutputElements; linear += blockDim.x) {
       output_acc[linear] += pv_tile[linear];
     }
     __syncthreads();
   }
 
-  for (int linear = threadIdx.x; linear < kTileElements; linear += blockDim.x) {
+  for (int linear = threadIdx.x; linear < kOutputElements; linear += blockDim.x) {
     const int row = linear / kHeadDim;
     output[base + (query_start * kHeadDim) + linear] =
         __float2bfloat16(output_acc[linear] / row_sum[row]);
@@ -171,7 +179,7 @@ torch::Tensor attention_cuda(torch::Tensor q,
   TORCH_CHECK(v.scalar_type() == at::ScalarType::BFloat16, "v must be bf16");
   const int seq_len = static_cast<int>(q.size(2));
   TORCH_CHECK(seq_len == kTile || seq_len == kMaxSeqLen, "seq_len must be 16 or 32");
-  TORCH_CHECK(q.size(3) == kHeadDim, "head_dim must be 16");
+  TORCH_CHECK(q.size(3) == kHeadDim, "head_dim must be 32");
 
   auto output = torch::empty_like(q);
   const int batch_heads = static_cast<int>(q.size(0) * q.size(1));

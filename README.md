@@ -175,7 +175,7 @@ uv run --extra cuda python -m avo score \
   --seq-lens 32 \
   --total-tokens 32 \
   --num-heads 1 \
-  --head-dim 16 \
+  --head-dim 32 \
   --dtype bf16 \
   --causal both \
   --repeats 1 \
