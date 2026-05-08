@@ -39,8 +39,19 @@ def test_baseline_build_env_targets_flash_attn_ampere() -> None:
     updated = _baseline_build_env(env)
 
     assert updated["FLASH_ATTN_CUDA_ARCHS"] == "80"
+    assert updated["MAX_JOBS"] == "1"
+    assert updated["NVCC_THREADS"] == "1"
     assert updated["OTHER"] == "keep-me"
     assert updated["PATH"] == "/bin"
+
+
+def test_baseline_build_env_preserves_explicit_parallelism_limits() -> None:
+    env = {"MAX_JOBS": "2", "NVCC_THREADS": "2"}
+    updated = _baseline_build_env(env)
+
+    assert updated["FLASH_ATTN_CUDA_ARCHS"] == "80"
+    assert updated["MAX_JOBS"] == "2"
+    assert updated["NVCC_THREADS"] == "2"
 
 
 def test_score_command_forwards_trial_count(monkeypatch) -> None:

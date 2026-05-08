@@ -193,7 +193,7 @@ properties so accepted lineage commits can be audited later.
 Seed a FlashAttention-2 baseline lineage:
 
 ```bash
-FLASH_ATTN_CUDA_ARCHS=80 MAX_JOBS=2 \
+FLASH_ATTN_CUDA_ARCHS=80 MAX_JOBS=1 NVCC_THREADS=1 \
   uv run --extra baseline python -m pip install flash-attn --no-build-isolation
 
 uv run --extra cuda --extra baseline python -m avo seed-baseline ./lineage \

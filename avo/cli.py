@@ -463,4 +463,8 @@ def _baseline_build_env(env: dict[str, str]) -> dict[str, str]:
     # The upstream setup script does not expose a 86-specific token; `80` maps to
     # the Ampere family path used by the project for sm80+ targets.
     env["FLASH_ATTN_CUDA_ARCHS"] = "80"
+    # This A6000 pod has limited host RAM. Keep CUDA compilation conservative by
+    # default while still allowing an explicit caller override.
+    env.setdefault("MAX_JOBS", "1")
+    env.setdefault("NVCC_THREADS", "1")
     return env
