@@ -142,6 +142,7 @@ uv run python -m avo evolve-once --lineage ./lineage --knowledge knowledge/amper
 `run-decision` intentionally accepts only selected `avo env`, `avo compile`, and `avo score` commands. It does not run arbitrary shell, git, file-editing, or destructive commands.
 
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the existing lineage gate.
+Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
 
 ## What is still missing
 

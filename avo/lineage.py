@@ -25,7 +25,8 @@ class GateDecision:
 
 def init_lineage_repo(path: Path) -> None:
     path.mkdir(parents=True, exist_ok=True)
-    _git(path, "init", "-b", "main")
+    if not (path / ".git").exists():
+        _git(path, "init", "-b", "main")
     _ensure_git_identity(path)
     (path / "scores").mkdir(exist_ok=True)
     readme = path / "README.md"
@@ -136,7 +137,7 @@ def _git(path: Path, *args: str) -> None:
 
 
 def _git_capture(path: Path, *args: str) -> str:
-    return subprocess.check_output(["git", *args], cwd=path, text=True)
+    return subprocess.check_output(["git", *args], cwd=path, text=True, stderr=subprocess.DEVNULL)
 
 
 def _ensure_git_identity(path: Path) -> None:

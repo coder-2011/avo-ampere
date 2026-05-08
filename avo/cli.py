@@ -5,7 +5,13 @@ import json
 import os
 from pathlib import Path
 
-from .agent import DEFAULT_AGENT_MODEL, VariationDecision, load_env_file, request_variation_decision
+from .agent import (
+    DEFAULT_AGENT_MODEL,
+    VariationDecision,
+    build_repo_context,
+    load_env_file,
+    request_variation_decision,
+)
 from .benchmark import score_backend, sleep_score
 from .compile import compile_cuda_source
 from .config import AMPERE_A6000, cases_from_cli
@@ -54,6 +60,7 @@ def main(argv: list[str] | None = None) -> int:
     agent_parser = subparsers.add_parser("agent-plan")
     agent_parser.add_argument("--lineage", type=Path, required=True)
     agent_parser.add_argument("--knowledge", type=Path, required=True)
+    agent_parser.add_argument("--cwd", type=Path, default=Path.cwd())
     agent_parser.add_argument("--env-file", type=Path, default=None)
     agent_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
 
@@ -234,6 +241,7 @@ def _agent_plan(args: argparse.Namespace) -> int:
     decision = request_variation_decision(
         lineage_summary=lineage_summary,
         knowledge=knowledge,
+        repo_context=build_repo_context(args.cwd),
         model=args.model,
     )
     print(json.dumps(decision.as_dict(), indent=2, sort_keys=True))
@@ -264,6 +272,7 @@ def _evolve_once(args: argparse.Namespace) -> int:
     decision = request_variation_decision(
         lineage_summary=_lineage_summary(args.lineage),
         knowledge=knowledge,
+        repo_context=build_repo_context(args.cwd),
         model=args.model,
     )
     attempt = run_decision_command(

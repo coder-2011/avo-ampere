@@ -1,4 +1,5 @@
 import json
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -8,6 +9,8 @@ from avo.agent import (
     DEFAULT_AGENT_MODEL,
     VariationDecision,
     _request_decision_response,
+    build_repo_context,
+    build_variation_prompt,
     decision_tool,
     parse_decision_response,
     parse_decision_text,
@@ -88,6 +91,29 @@ def test_decision_tool_uses_strict_schema() -> None:
 
 def test_default_agent_model_supports_structured_outputs_family() -> None:
     assert DEFAULT_AGENT_MODEL == "claude-sonnet-4-5-20250929"
+
+
+def test_build_repo_context_lists_local_candidates() -> None:
+    context = build_repo_context(Path.cwd())
+
+    assert "candidates/cuda_identity_seed.py" in context
+    assert "candidates/torch_sdpa_seed.py" in context
+    assert "candidates/cuda_identity/identity_kernel.cu" in context
+    assert "avo score --backend candidate" in context
+    assert "csrc/flash_attn" not in context
+
+
+def test_build_variation_prompt_includes_repo_context() -> None:
+    prompt = build_variation_prompt(
+        knowledge="Ampere only.",
+        lineage_summary="No accepted candidates yet.",
+        repo_context="Candidate modules:\n- candidates/cuda_identity_seed.py",
+    )
+
+    assert "Knowledge:\nAmpere only." in prompt
+    assert "Lineage:\nNo accepted candidates yet." in prompt
+    assert "Local repo context:" in prompt
+    assert "candidates/cuda_identity_seed.py" in prompt
 
 
 def test_parse_variation_decision_response_prefers_tool_use() -> None:

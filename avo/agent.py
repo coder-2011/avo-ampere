@@ -150,6 +150,7 @@ def request_variation_decision(
     *,
     lineage_summary: str,
     knowledge: str,
+    repo_context: str = "",
     model: str = DEFAULT_AGENT_MODEL,
 ) -> VariationDecision:
     try:
@@ -164,13 +165,10 @@ def request_variation_decision(
         raise RuntimeError("ANTHROPIC_API_KEY is required for agent planning")
 
     client = anthropic.Anthropic(api_key=api_key)
-    prompt = (
-        "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
-        "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
-        "Return exactly one decision. The next_command must be a single bounded command that "
-        "starts with 'avo' and uses only one of: env, compile, score. Do not use shell pipes, "
-        "redirection, command chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
-        f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}\n"
+    prompt = build_variation_prompt(
+        knowledge=knowledge,
+        lineage_summary=lineage_summary,
+        repo_context=repo_context,
     )
 
     kwargs: dict[str, Any] = {
@@ -180,6 +178,51 @@ def request_variation_decision(
     }
     response = _request_decision_response(client, kwargs)
     return parse_decision_response(response)
+
+
+def build_variation_prompt(
+    *,
+    knowledge: str,
+    lineage_summary: str,
+    repo_context: str = "",
+) -> str:
+    context_section = f"\n\nLocal repo context:\n{repo_context}" if repo_context.strip() else ""
+    return (
+        "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
+        "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
+        "Return exactly one decision. The next_command must be a single bounded command that "
+        "starts with 'avo' and uses only one of: env, compile, score. Do not use shell pipes, "
+        "redirection, command chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
+        f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}{context_section}\n"
+    )
+
+
+def build_repo_context(root: Path) -> str:
+    candidates = _relative_files(root, "candidates", suffix=".py")
+    cuda_sources = sorted(
+        [
+            *(_relative_files(root, "candidates", suffix=".cu")),
+            *(_relative_files(root, "candidates", suffix=".cpp")),
+        ]
+    )
+    lines = [
+        "Use only files that exist in this repository.",
+        "Do not propose upstream FlashAttention csrc paths unless they are present locally.",
+        "Available bounded commands: avo env, avo compile, avo score.",
+        "Candidate interface: module defines attention(q, k, v, causal: bool).",
+    ]
+    if candidates:
+        lines.append("Candidate modules:")
+        lines.extend(f"- {candidate}" for candidate in candidates)
+    if cuda_sources:
+        lines.append("CUDA candidate sources:")
+        lines.extend(f"- {source}" for source in cuda_sources)
+    lines.append(
+        "Preferred first local candidate score command: "
+        "avo score --backend candidate --candidate candidates/cuda_identity_seed.py "
+        "--seq-lens 4096 --causal false --repeats 1 --warmup 1 --timeout-s 300"
+    )
+    return "\n".join(lines)
 
 
 def _request_decision_response(client: Any, kwargs: dict[str, Any]) -> Any:
@@ -254,6 +297,17 @@ def _recover_json_object(text: str) -> dict[str, Any] | None:
         if isinstance(payload, dict):
             return payload
     return None
+
+
+def _relative_files(root: Path, dirname: str, *, suffix: str) -> list[str]:
+    base = root / dirname
+    if not base.exists():
+        return []
+    return sorted(
+        str(path.relative_to(root))
+        for path in base.rglob(f"*{suffix}")
+        if "__pycache__" not in path.parts
+    )
 
 
 def _strict_tools_unsupported(exc: Exception) -> bool:
