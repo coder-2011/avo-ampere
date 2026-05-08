@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import shlex
 import subprocess
@@ -19,6 +20,8 @@ DEFAULT_ATTEMPT_HISTORY_LIMIT = 5
 DEFAULT_PATCH_ROOTS = ("candidates/",)
 CANDIDATE_SOURCE_SUFFIXES = frozenset({".cpp", ".cu", ".cuh", ".h", ".hpp", ".py"})
 SKIPPED_SOURCE_PARTS = frozenset({"__pycache__"})
+SUPERVISOR_REPEAT_THRESHOLD = 3
+SUPERVISOR_EXHAUSTION_THRESHOLD = 5
 REJECTED_PATCH_MARKERS = frozenset(
     {
         "Binary files ",
@@ -451,16 +454,24 @@ def summarize_attempt_history(
         return ""
     paths = sorted(path for path in directory.glob("*.json") if path.is_file())
     records = []
+    payloads = []
     for path in paths[-limit:]:
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
         if isinstance(payload, dict):
+            payloads.append(payload)
             records.append(_summarize_step_payload(path.name, payload))
     if not records:
         return ""
-    return "Recent attempts, oldest to newest:\n" + "\n".join(f"- {record}" for record in records)
+    summary = "Recent attempts, oldest to newest:\n" + "\n".join(
+        f"- {record}" for record in records
+    )
+    supervisor_signal = _summarize_supervisor_signal(payloads)
+    if supervisor_signal:
+        summary = f"{summary}\n{supervisor_signal}"
+    return summary
 
 
 def _extract_score_payload(stdout: str) -> dict[str, Any] | None:
@@ -494,6 +505,75 @@ def _looks_like_score_payload(payload: dict[str, Any]) -> bool:
         and "geomean_tflops" in payload
         and isinstance(payload.get("cases"), list)
     )
+
+
+def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
+    repeated = _repeated_unaccepted_fingerprint(payloads, threshold=SUPERVISOR_REPEAT_THRESHOLD)
+    if repeated is not None:
+        return (
+            "Supervisor signal: the last "
+            f"{SUPERVISOR_REPEAT_THRESHOLD} attempts share command/edit fingerprint "
+            f"{repeated} and were not accepted. Choose a materially different optimization "
+            "direction or diagnostic before repeating it."
+        )
+    if _unaccepted_tail_count(payloads) >= SUPERVISOR_EXHAUSTION_THRESHOLD:
+        return (
+            "Supervisor signal: the last "
+            f"{SUPERVISOR_EXHAUSTION_THRESHOLD} attempts produced no accepted candidate. "
+            "Review the lineage and recent failures, then reset strategy toward a different "
+            "Ampere optimization direction."
+        )
+    return ""
+
+
+def _repeated_unaccepted_fingerprint(
+    payloads: list[dict[str, Any]],
+    *,
+    threshold: int,
+) -> str | None:
+    if len(payloads) < threshold:
+        return None
+    window = payloads[-threshold:]
+    if any(_step_payload_accepted(payload) for payload in window):
+        return None
+    fingerprints = {_step_payload_fingerprint(payload) for payload in window}
+    if len(fingerprints) == 1:
+        return next(iter(fingerprints))
+    return None
+
+
+def _unaccepted_tail_count(payloads: list[dict[str, Any]]) -> int:
+    count = 0
+    for payload in reversed(payloads):
+        if _step_payload_accepted(payload):
+            break
+        count += 1
+    return count
+
+
+def _step_payload_accepted(payload: dict[str, Any]) -> bool:
+    gate = payload.get("gate_decision")
+    return isinstance(gate, dict) and gate.get("accepted") is True
+
+
+def _step_payload_fingerprint(payload: dict[str, Any]) -> str:
+    attempt = payload.get("attempt")
+    decision = attempt.get("decision") if isinstance(attempt, dict) else None
+    if not isinstance(decision, dict):
+        decision = {}
+    components = {
+        "candidate_patch": str(decision.get("candidate_patch") or "").strip(),
+        "files_to_inspect": _string_list(decision.get("files_to_inspect")),
+        "next_command": str(decision.get("next_command") or "").strip(),
+    }
+    encoded = json.dumps(components, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:12]
+
+
+def _string_list(value: object) -> list[str]:
+    if not isinstance(value, list):
+        return []
+    return sorted(str(item) for item in value)
 
 
 def _maybe_apply_candidate_patch(decision: VariationDecision, *, cwd: Path) -> PatchResult | None:

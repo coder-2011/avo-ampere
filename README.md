@@ -253,13 +253,13 @@ uv run python -m avo evolve-loop \
   --loop-json attempts/latest-loop.json
 ```
 
-`evolve-loop` requires `--attempts-dir` so cross-step memory is always available. It stops when a step is accepted, when rejected-patch cleanup fails, or when `--max-steps` is exhausted. Command failures and gate rejections are recorded, summarized into the next prompt, and allowed to continue until one of those stop conditions is reached.
+`evolve-loop` requires `--attempts-dir` so cross-step memory is always available. It stops when a step is accepted, when rejected-patch cleanup fails, or when `--max-steps` is exhausted. Command failures and gate rejections are recorded, summarized into the next prompt, and allowed to continue until one of those stop conditions is reached. Attempt summaries also append a supervisor signal when the recent history shows repeated unaccepted command/edit fingerprints or five unaccepted attempts in a row; the signal asks the agent to reset strategy but does not bypass the bounded command or lineage gate.
 
 ## What is still missing
 
 - Scaling the tiny WMMA QK/PV seed beyond its 16/32-token smoke shapes.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
-- Longer-running autonomous supervision beyond the minimal capped `evolve-loop`, including no-progress detection and richer stop policies.
+- Longer-running autonomous supervision beyond the minimal capped `evolve-loop`, including active intervention and richer stop policies.
 - Broader dependency manifests for accepted candidates that import files outside the scored module and companion source directory.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.

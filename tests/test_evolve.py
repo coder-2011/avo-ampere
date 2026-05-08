@@ -614,6 +614,56 @@ def test_summarize_attempt_history_reports_recent_steps(tmp_path: Path) -> None:
     assert "bad.json" not in summary
 
 
+def test_summarize_attempt_history_flags_repeated_unaccepted_attempts(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    for index in range(3):
+        attempt = VariationAttempt(
+            decision=decision("avo score --backend candidate"),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "score"],
+                returncode=2,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="failed",
+            ),
+            started_at=f"2026-05-08T00:00:0{index}+00:00",
+            completed_at=f"2026-05-08T00:00:0{index + 1}+00:00",
+        )
+        write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "Supervisor signal" in summary
+    assert "share command/edit fingerprint" in summary
+    assert "materially different optimization direction" in summary
+
+
+def test_summarize_attempt_history_flags_unaccepted_exhaustion(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    for index in range(5):
+        attempt = VariationAttempt(
+            decision=decision(
+                f"avo score --backend candidate --candidate candidates/seed_{index}.py"
+            ),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "score"],
+                returncode=2,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="failed",
+            ),
+            started_at=f"2026-05-08T00:00:0{index}+00:00",
+            completed_at=f"2026-05-08T00:00:0{index + 1}+00:00",
+        )
+        write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "Supervisor signal" in summary
+    assert "last 5 attempts produced no accepted candidate" in summary
+    assert "reset strategy" in summary
+
+
 def write_seed_candidate(root: Path) -> Path:
     candidate_dir = root / "candidates"
     candidate_dir.mkdir()

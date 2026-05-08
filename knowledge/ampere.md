@@ -54,7 +54,10 @@ variation steps.
   unit, requires an attempts directory for cross-step memory, stops on accepted
   candidates, rejected-patch cleanup failure, or max-step exhaustion, and lets
   command failures or gate rejections inform the next prompt instead of becoming
-  committed lineage.
+  committed lineage. Attempt-history summaries include a supervisor signal after
+  repeated unaccepted command/edit fingerprints or five unaccepted attempts in a
+  row; treat that as a prompt to change strategy, not as permission to expand the
+  command allowlist or bypass the gate.
 - Candidate source patching now has a bounded manual substrate:
   `avo apply-patch PATCH --dry-run` accepts only ordinary unified diffs under
   `candidates/`, rejects path traversal, symlink-mode patches, binary patches,
