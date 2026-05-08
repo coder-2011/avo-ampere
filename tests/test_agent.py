@@ -163,6 +163,21 @@ def test_parse_variation_decision_allows_compile_source_out_dir() -> None:
     assert decision.next_command == payload["next_command"]
 
 
+def test_parse_variation_decision_rejects_recorded_no_patch_compile_baseline() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = "The warp-row ptxas baseline may show a new opportunity."
+    payload["candidate_edit"] = "Compile the CUDA source to inspect ptxas diagnostics."
+    payload["expected_effect"] = "Review already-recorded register and shared-memory usage."
+    payload["risk"] = "This repeats a known baseline without changing code."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/warp_diag"
+    )
+
+    with pytest.raises(ValueError, match="recorded no-patch compile diagnostic"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_compile_python_source() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Compile the CUDA source to validate the build."
@@ -178,16 +193,16 @@ def test_parse_variation_decision_allows_patched_compile_build_check() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Fix kernel include usage and compile the patched source."
     payload["candidate_patch"] = (
-        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
-        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
-        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
-        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
         "@@ -1 +1 @@\n"
-        "-#include <cuda_bf16.h>\n"
-        "+#include <cuda_bf16.h>\n"
+        "-#include <ATen/cuda/CUDAContext.h>\n"
+        "+#include <ATen/cuda/CUDAContext.h>\n"
     )
     payload["next_command"] = (
-        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
         "--out-dir build/smoke"
     )
 
@@ -436,6 +451,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "cuda_tiled_attention_seed.py is only validated at seq_lens 16" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
+    assert "No-patch compile diagnostics are already recorded" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
     assert "candidate_patch as a raw unified diff" in context

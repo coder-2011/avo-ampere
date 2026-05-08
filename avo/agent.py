@@ -25,6 +25,12 @@ MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
 MMA_SEED = "candidates/cuda_mma_attention_seed.py"
 TILED_SEED = "candidates/cuda_tiled_attention_seed.py"
+RECORDED_NO_PATCH_COMPILE_SOURCES = frozenset(
+    {
+        "candidates/cuda_tiled_attention/attention_kernel.cu",
+        "candidates/cuda_warp_rows_attention/attention_kernel.cu",
+    }
+)
 ENV_COMMAND_KEYWORDS = (
     "baseline",
     "build",
@@ -334,6 +340,10 @@ def build_repo_context(root: Path) -> str:
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
         "or empty.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
+        "No-patch compile diagnostics are already recorded for "
+        "candidates/cuda_warp_rows_attention/attention_kernel.cu and "
+        "candidates/cuda_tiled_attention/attention_kernel.cu; compile those sources only "
+        "when build-checking a candidate_patch.",
         "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
         "seq_lens 16 or 32 with head_dim 16, total_tokens <= 32, and num_heads 1; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 128 and "
@@ -581,6 +591,10 @@ def _validate_subcommand_arguments(
                 allowed_roots=("candidates/",),
                 suffixes=(".cu",),
             )
+            _validate_compile_source_not_recorded_baseline(
+                source,
+                candidate_patch=candidate_patch,
+            )
         if out_dir is not None:
             _validate_command_path(out_dir, "--out-dir")
     elif subcommand == "score":
@@ -665,6 +679,19 @@ def _validate_command_path(
     if suffixes is not None and path.suffix not in suffixes:
         allowed = ", ".join(suffixes)
         raise ValueError(f"next_command {option} must reference a {allowed} file")
+
+
+def _validate_compile_source_not_recorded_baseline(
+    source: str,
+    *,
+    candidate_patch: str,
+) -> None:
+    if candidate_patch.strip() or source not in RECORDED_NO_PATCH_COMPILE_SOURCES:
+        return
+    raise ValueError(
+        "next_command repeats a recorded no-patch compile diagnostic; include "
+        "candidate_patch to build-check a change or run a bounded score instead"
+    )
 
 
 def _validate_known_candidate_score_shape(
