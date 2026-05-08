@@ -86,40 +86,91 @@ NO_EDIT_PHRASES = (
     "without editing",
     "without any edit",
 )
-SELF_REJECTING_PATCH_PHRASES = (
-    "cannot affect correctness or throughput",
-    "cannot improve throughput",
-    "does not affect correctness or throughput",
-    "not ready to apply",
-    "not yet called",
-    "stub is empty",
-    "compile-only structural probe",
-    "does not yet consume",
-    "unused in this patch",
-    "must not be scored",
-    "must be updated before scoring",
-    "unused doubled buffers",
-    "diff is incomplete",
-    "diff structure error",
-    "duplicate store line",
-    "do not apply this patch",
-    "would break correctness",
-    "will cause a compile error",
-    "will cause nvcc compile failure",
-    "will cause nvcc to fail",
-    "will fail compile",
-    "will fail compilation",
-    "will break correctness",
-    "will fail correctness",
-    "will compute the wrong shared memory address",
-    "likely segfault or produce incorrect results",
-    "must define koutputelements before using it",
-    "would fail compilation",
-    "do not score this patch",
-    "do not use this diff",
-    "reject this direction",
-    "should be rejected",
+STRUCTURED_TRANSFORM_OPS = frozenset(
+    {
+        "replace_once",
+        "insert_before_once",
+        "insert_after_once",
+        "set_constexpr_int",
+    }
 )
+PLANNING_RISK_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
+    (
+        "no_effect_or_skeleton",
+        (
+            r"\b(?:cannot|does not|do not)\s+(?:affect|improve)\s+"
+            r"(?:correctness(?:\s+or\s+throughput)?|throughput)",
+            r"\bcompile\s+only\s+structural\s+probe\b",
+            r"\b(?:stub is empty|not yet called|does not yet consume|unused in this patch)",
+            r"\b(?:must not|do not)\s+be\s+scored\b",
+            r"\bunused\s+(?:doubled buffers|preload|skeleton)",
+        ),
+    ),
+    (
+        "incomplete_or_malformed_edit",
+        (
+            r"\b(?:diff is incomplete|diff structure error|duplicate store line)\b",
+            r"\b(?:not ready|must be updated before scoring)\b",
+            r"\bdo not (?:apply this patch|use this diff)\b",
+            r"\b(?:reject this direction|should be rejected)\b",
+            r"\bstale\b.*\b(?:must remove|undeclared)\b",
+            r"\bincomplete removal\b.*\bshould be completely removed\b",
+            r"\bmust define\b.*\bbefore using it\b",
+        ),
+    ),
+    (
+        "predicted_compile_failure",
+        (
+            r"\b(?:will|would|likely)\s+(?:cause\s+)?(?:nvcc\s+)?(?:compile|compilation)\s+failure\b",
+            r"\b(?:will|would)\s+(?:cause\s+)?(?:a\s+)?compile error\b",
+            r"\b(?:will|would)\s+(?:fail|break)\s+(?:compile|compilation)\b",
+            r"\bwill cause nvcc to fail\b",
+        ),
+    ),
+    (
+        "predicted_correctness_failure",
+        (
+            r"\b(?:will|would)\s+break correctness\b",
+            r"\b(?:will|would)\s+fail correctness\b",
+            r"\bwill compute the wrong\b",
+            r"\blikely\s+(?:segfault|.*produce incorrect results)\b",
+        ),
+    ),
+)
+TRANSFORM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        "op": {
+            "type": "string",
+            "enum": sorted(STRUCTURED_TRANSFORM_OPS),
+            "description": "Small structured edit operation materialized by the orchestrator.",
+        },
+        "path": {
+            "type": "string",
+            "description": "Repo-relative candidate source path under candidates/.",
+        },
+        "find": {"type": "string", "description": "Exact text to replace for replace_once."},
+        "replace": {"type": "string", "description": "Replacement text for replace_once."},
+        "anchor": {
+            "type": "string",
+            "description": "Exact text anchor for insert_before_once or insert_after_once.",
+        },
+        "text": {
+            "type": "string",
+            "description": "Inserted text for insert_before_once or insert_after_once.",
+        },
+        "name": {
+            "type": "string",
+            "description": "constexpr integer name for set_constexpr_int.",
+        },
+        "value": {
+            "type": "integer",
+            "description": "constexpr integer value for set_constexpr_int.",
+        },
+    },
+    "required": ["op", "path"],
+    "additionalProperties": False,
+}
 
 DECISION_SCHEMA: dict[str, Any] = {
     "type": "object",
@@ -143,10 +194,18 @@ DECISION_SCHEMA: dict[str, Any] = {
         "candidate_patch": {
             "type": "string",
             "description": (
-                "Raw git-style unified diff for one small candidate edit under candidates/, "
-                "starting with 'diff --git', or empty string when the next step is inspection/"
-                "scoring only. Use exact file context and whitespace-clean hunks. Do not use "
+                "Legacy raw git-style unified diff for one small candidate edit under "
+                "candidates/, starting with 'diff --git', or empty string. Prefer "
+                "candidate_transform for CUDA edits so the orchestrator materializes and "
+                "preflights the patch instead of trusting generated hunks. Do not use "
                 "markdown fences."
+            ),
+        },
+        "candidate_transform": {
+            **TRANSFORM_SCHEMA,
+            "description": (
+                "Preferred edit channel for CUDA/kernel evolution. Use exactly one tiny "
+                "structured transform, or omit this field for no-edit/legacy patch mode."
             ),
         },
         "expected_effect": {
@@ -200,6 +259,7 @@ class VariationDecision:
     risk: str
     next_command: str
     candidate_patch: str = ""
+    candidate_transform: dict[str, Any] | None = None
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> VariationDecision:
@@ -213,15 +273,24 @@ class VariationDecision:
         hypothesis = _require_string(normalized_payload, "hypothesis")
         candidate_edit = _require_string(normalized_payload, "candidate_edit")
         candidate_patch = _validate_candidate_patch(normalized_payload, "candidate_patch")
+        candidate_transform = _validate_candidate_transform(
+            normalized_payload.get("candidate_transform")
+        )
+        if candidate_patch.strip() and candidate_transform is not None:
+            raise ValueError(
+                "candidate_patch and candidate_transform are mutually exclusive; "
+                "use one edit channel"
+            )
         expected_effect = _require_string(normalized_payload, "expected_effect")
         risk = _require_string(normalized_payload, "risk")
-        _validate_candidate_edit_matches_patch(candidate_edit, candidate_patch)
+        edit_payload = candidate_patch or ("<structured-transform>" if candidate_transform else "")
+        _validate_candidate_edit_matches_patch(candidate_edit, edit_payload)
         planning_text = "\n".join((hypothesis, candidate_edit, expected_effect, risk))
-        _validate_candidate_patch_not_self_rejected(candidate_patch, planning_text)
+        _validate_candidate_patch_not_self_rejected(edit_payload, planning_text)
         _validate_candidate_patch_domain_sanity(candidate_patch)
         next_command = _validate_next_command(
             _require_string(normalized_payload, "next_command"),
-            candidate_patch=candidate_patch,
+            candidate_patch=edit_payload,
             planning_text=planning_text,
         )
         return cls(
@@ -232,6 +301,7 @@ class VariationDecision:
             expected_effect=expected_effect,
             risk=risk,
             next_command=next_command,
+            candidate_transform=candidate_transform,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -243,6 +313,7 @@ class VariationDecision:
             "expected_effect": self.expected_effect,
             "risk": self.risk,
             "next_command": self.next_command,
+            "candidate_transform": self.candidate_transform,
         }
 
 
@@ -339,25 +410,26 @@ def build_variation_prompt(
     return (
         "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
-        "Use one of exactly two edit modes. Edit mode: candidate_patch is one small raw "
-        "git-style unified diff under candidates/ starting with 'diff --git', and "
-        "candidate_edit summarizes that diff. The diff must apply cleanly with git apply: "
-        "use exact current file context, keep hunk structure valid, and avoid trailing "
-        "whitespace-only added lines. Prefer a smaller compile-checkable patch when the "
-        "full change is uncertain. No-edit mode: candidate_patch is exactly the "
+        "Use one of exactly three modes. Preferred edit mode: candidate_transform is one "
+        "tiny structured operation under candidates/ and candidate_patch is empty. "
+        "Supported ops are replace_once, insert_before_once, insert_after_once, and "
+        "set_constexpr_int; the orchestrator materializes and preflights the patch. "
+        "Legacy edit mode: candidate_patch is one small raw git-style unified diff under "
+        "candidates/ starting with 'diff --git'. Use this only when no structured "
+        "transform can express the edit. No-edit mode: candidate_patch is exactly the "
         "empty string \"\", candidate_edit starts with \"No edit; \", and next_command is only "
         "a bounded score, compile, or environment diagnostic for existing files. Do not include "
         "markdown fences or commentary in candidate_patch. Do not describe extending, updating, "
-        "modifying, fixing, or implementing code unless candidate_patch contains the raw diff "
-        "for that change.\n"
+        "modifying, fixing, or implementing code unless candidate_transform or candidate_patch "
+        "contains that change.\n"
         "Return exactly one decision. The next_command must be a single bounded command that "
         "starts with 'avo' and uses only one of: env, compile, score. Use valid CLI flags: "
         "compile requires --source SOURCE.cu and --out-dir DIR; candidate score requires "
         "--backend candidate and --candidate. Use env only for CUDA/build environment "
         "diagnostics, not for source-file inspection. Use compile only for CUDA build/"
-        "compilation diagnostics or to build-check a candidate_patch, not for source-file "
-        "inspection. Do not use shell pipes, redirection, command chaining, cat, head, "
-        "git, rm, or arbitrary shell commands.\n\n"
+        "compilation diagnostics or to build-check a candidate_transform/candidate_patch, "
+        "not for source-file inspection. Do not use shell pipes, redirection, command "
+        "chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
         f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}"
         f"{attempt_section}{context_section}\n"
     )
@@ -382,20 +454,21 @@ def build_repo_context(root: Path) -> str:
         "do not run no-edit avo env merely to confirm stability unless a recent "
         "build/environment failure gives a concrete reason.",
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
-        "candidate_patch, not source-file inspection.",
+        "candidate_transform/candidate_patch, not source-file inspection.",
         "Standalone pragma-only performance patches are already recorded as regressed noise; "
         "if using unroll, pair it with a substantive code change and run a bounded score.",
         "WMMA matrix fragments in generic PyTorch kernels must use explicit CUDA element "
         "types, not scalar_t, because dispatch instantiates unsupported float/c10 types.",
-        "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
-        "or empty. Patch hunks must use exact current file context, apply cleanly, and avoid "
-        "trailing whitespace.",
+        "Preferred edit channel: candidate_transform, a single tiny structured operation "
+        "under candidates/. Supported ops: replace_once, insert_before_once, "
+        "insert_after_once, set_constexpr_int. Legacy candidate_patch raw diffs are allowed "
+        "only when a transform cannot express the change.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compile diagnostics are already recorded for "
         "candidates/cuda_mma_attention/attention_kernel.cu, "
         "candidates/cuda_warp_rows_attention/attention_kernel.cu, and "
         "candidates/cuda_tiled_attention/attention_kernel.cu; compile those sources only "
-        "when build-checking a candidate_patch.",
+        "when build-checking a candidate_transform/candidate_patch.",
         "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
         "seq_lens 16, 32, 64, 128, or 256 with head_dim 128, total_tokens <= 1024, "
         "and num_heads <= 4; "
@@ -404,7 +477,7 @@ def build_repo_context(root: Path) -> str:
         "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
         "head_dim 16, total_tokens <= 16, and num_heads 1, but that no-patch smoke is "
         "already recorded and should not be repeated. Larger seed scores need "
-        "candidate_patch to update the wrapper/kernel.",
+        "candidate_transform/candidate_patch to update the wrapper/kernel.",
         "For tiled scores outside the tiny validated smoke shape, changing only "
         "candidates/cuda_tiled_attention_seed.py wrapper caps is not a fix; include a "
         "kernel change for the known larger-shape correctness failure.",
@@ -536,10 +609,12 @@ def _validation_feedback_hint(error: ValueError) -> str:
         )
     if "candidate_patch must be non-empty" in message:
         return (
-            "Choose exactly one valid mode. Edit mode: candidate_patch must be a raw "
-            "git-style unified diff under candidates/ starting with 'diff --git'. No-edit "
-            "mode: candidate_patch must be exactly '' and candidate_edit must start with "
-            "'No edit;' followed only by the bounded score/compile/env diagnostic to run. "
+            "Choose exactly one valid mode. Preferred edit mode: candidate_transform is "
+            "one structured operation and candidate_patch is ''. Legacy edit mode: "
+            "candidate_patch must be a raw git-style unified diff under candidates/ "
+            "starting with 'diff --git'. No-edit mode: candidate_patch must be exactly "
+            "'' and candidate_edit must start with 'No edit;' followed only by the "
+            "bounded score/compile/env diagnostic to run. "
             "Do not mention fixing, extending, updating, modifying, or implementing code in "
             "no-edit mode. "
         )
@@ -548,15 +623,17 @@ def _validation_feedback_hint(error: ValueError) -> str:
             return (
                 "The previous patch described itself as 'must not be scored', so do not "
                 "retry another compile-only skeleton. Choose exactly one valid mode: "
-                "edit mode with a raw diff that is complete enough to score after a "
-                "successful compile and whose risk text does not say it must not be "
-                "scored, or No edit; mode for a different already-bounded diagnostic. "
+                "edit mode with a structured candidate_transform or raw diff that is "
+                "complete enough to score after a successful compile and whose risk text "
+                "does not say it must not be scored, or No edit; mode for a different "
+                "already-bounded diagnostic. "
             )
         return (
-            "Do not retry a patch whose own hypothesis, expected_effect, or risk says it "
-            "will fail compile, break correctness, is unused, cannot improve throughput, "
-            "or is not ready. Submit a corrected raw diff that no longer has the "
-            "called-out flaw, or switch to No edit; mode for a bounded diagnostic. "
+            "Do not retry an edit whose own hypothesis, expected_effect, or risk puts it "
+            "in a failed planning-risk class such as predicted compile failure, predicted "
+            "correctness failure, no-effect skeleton, or incomplete edit. Prefer a "
+            "structured candidate_transform for the corrected change; otherwise switch to "
+            "No edit; mode for a bounded diagnostic. "
         )
     if "--out-dir must be under: build" in message:
         return (
@@ -678,6 +755,43 @@ def _validate_candidate_patch(payload: dict[str, Any], key: str) -> str:
     return value
 
 
+def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        raise ValueError("candidate_transform must be an object when provided")
+    op = value.get("op")
+    path = value.get("path")
+    if not isinstance(op, str) or op not in STRUCTURED_TRANSFORM_OPS:
+        allowed = ", ".join(sorted(STRUCTURED_TRANSFORM_OPS))
+        raise ValueError(f"candidate_transform op must be one of: {allowed}")
+    if not isinstance(path, str) or not path.strip():
+        raise ValueError("candidate_transform path must be a non-empty string")
+    extra = set(value) - set(TRANSFORM_SCHEMA["properties"])
+    if extra:
+        raise ValueError(
+            "candidate_transform contains unsupported keys: " + ", ".join(sorted(extra))
+        )
+    if op == "replace_once":
+        _require_transform_string(value, "find")
+        _require_transform_string(value, "replace")
+    elif op in {"insert_before_once", "insert_after_once"}:
+        _require_transform_string(value, "anchor")
+        _require_transform_string(value, "text")
+    elif op == "set_constexpr_int":
+        _require_transform_string(value, "name")
+        if not isinstance(value.get("value"), int):
+            raise ValueError("candidate_transform value must be an integer")
+    return dict(value)
+
+
+def _require_transform_string(payload: dict[str, Any], key: str) -> str:
+    value = payload.get(key)
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"candidate_transform {key} must be a non-empty string")
+    return value
+
+
 def _validate_candidate_edit_matches_patch(candidate_edit: str, candidate_patch: str) -> None:
     if candidate_patch.strip() or not _candidate_edit_requires_patch(candidate_edit):
         return
@@ -694,24 +808,17 @@ def _validate_candidate_patch_not_self_rejected(
     if not candidate_patch.strip():
         return
     normalized = " ".join(planning_text.lower().replace("-", " ").split())
-    for phrase in SELF_REJECTING_PATCH_PHRASES:
-        if phrase in normalized:
+    for risk_class, patterns in PLANNING_RISK_PATTERNS:
+        for pattern in patterns:
+            if not re.search(pattern, normalized):
+                continue
+            excerpt = re.search(pattern, normalized)
+            found = excerpt.group(0) if excerpt is not None else pattern
             raise ValueError(
                 "candidate_patch is described as known invalid by the decision itself; "
-                f"found phrase {phrase!r}. Return a corrected patch or choose no-edit mode."
+                f"planning risk class {risk_class!r} matched {found!r}. "
+                "Return a corrected transform/patch or choose no-edit mode."
             )
-    if "stale" in normalized and ("must remove" in normalized or "undeclared" in normalized):
-        raise ValueError(
-            "candidate_patch is described as known invalid by the decision itself; "
-            "stale code is called out as requiring removal. Return a corrected patch "
-            "or choose no-edit mode."
-        )
-    if "incomplete removal" in normalized and "should be completely removed" in normalized:
-        raise ValueError(
-            "candidate_patch is described as known invalid by the decision itself; "
-            "the risk calls out incomplete removal of old code. Return a corrected patch "
-            "or choose no-edit mode."
-        )
 
 
 def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:

@@ -48,6 +48,60 @@ def test_parse_variation_decision_defaults_missing_candidate_patch() -> None:
     assert decision.candidate_patch == ""
 
 
+def test_parse_variation_decision_accepts_structured_transform() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Set the MMA tile constant through a structured transform."
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kTile",
+        "value": 16,
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_transform"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
+def test_parse_variation_decision_rejects_patch_and_transform_together() -> None:
+    payload = decision_payload()
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/seed.py b/candidates/seed.py\n"
+        "--- a/candidates/seed.py\n"
+        "+++ b/candidates/seed.py\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/seed.py",
+        "find": "old",
+        "replace": "new",
+    }
+
+    with pytest.raises(ValueError, match="mutually exclusive"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_invalid_transform() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch the candidate through a structured transform."
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/seed.py",
+        "find": "old",
+    }
+
+    with pytest.raises(ValueError, match="candidate_transform replace"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_malformed_json() -> None:
     with pytest.raises(ValueError, match="malformed JSON"):
         parse_decision_text("{not-json")
@@ -1824,7 +1878,7 @@ def test_parse_variation_decision_rejects_stale_code_patch_warning() -> None:
         "--out-dir build/mma"
     )
 
-    with pytest.raises(ValueError, match="stale code"):
+    with pytest.raises(ValueError, match="incomplete_or_malformed_edit"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1865,6 +1919,10 @@ def test_decision_tool_uses_strict_schema() -> None:
     assert "starting with 'diff --git'" in tool["input_schema"]["properties"]["candidate_patch"][
         "description"
     ]
+    assert "candidate_transform" in tool["input_schema"]["properties"]
+    assert "replace_once" in tool["input_schema"]["properties"]["candidate_transform"][
+        "properties"
+    ]["op"]["enum"]
 
 
 def test_default_agent_model_supports_structured_outputs_family() -> None:
@@ -1898,7 +1956,8 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "WMMA matrix fragments in generic PyTorch kernels" in context
     assert "No-patch compile diagnostics are already recorded" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
-    assert "Patch hunks must use exact current file context" in context
+    assert "Preferred edit channel: candidate_transform" in context
+    assert "Legacy candidate_patch raw diffs are allowed" in context
     assert "The unpatched MMA seq64/head_dim128 score passed correctness" in context
     assert "The unpatched MMA seq128/head_dim128 score passed correctness" in context
     assert "The unpatched MMA seq256/head_dim128 score passed correctness" in context
@@ -1911,7 +1970,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "partial MMA head_dim128 extension" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 256" in context
-    assert "candidate_patch as a raw unified diff" in context
+    assert "candidate_transform" in context
     assert "avo score --backend candidate" in context
     assert "Candidate source excerpts for exact patch context:" in context
     assert "-- candidates/cuda_mma_attention_seed.py --" in context
@@ -1979,9 +2038,10 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "Lineage:\nNo accepted candidates yet." in prompt
     assert "Local repo context:" in prompt
     assert "candidate_patch" in prompt
+    assert "candidate_transform" in prompt
     assert "No-edit mode" in prompt
-    assert "The diff must apply cleanly with git apply" in prompt
-    assert "avoid trailing whitespace-only added lines" in prompt
+    assert "Supported ops are replace_once" in prompt
+    assert "Legacy edit mode" in prompt
     assert 'candidate_edit starts with "No edit; "' in prompt
     assert "candidates/cuda_identity_seed.py" in prompt
 
@@ -2076,9 +2136,9 @@ def test_decision_feedback_explains_self_invalid_patch_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "Do not retry a patch whose own hypothesis" in content
-    assert "cannot improve throughput" in content
-    assert "Submit a corrected raw diff" in content
+    assert "Do not retry an edit whose own hypothesis" in content
+    assert "planning-risk class" in content
+    assert "structured candidate_transform" in content
     assert "switch to No edit; mode" in content
 
 

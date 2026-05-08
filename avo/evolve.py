@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import difflib
 import hashlib
 import json
+import re
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -332,10 +334,10 @@ def run_decision_command(
 ) -> VariationAttempt:
     command = command_from_decision(decision, allowed_subcommands=allowed_subcommands)
     started_at = _utc_now()
-    patch_result = _maybe_apply_candidate_patch(decision, cwd=cwd)
+    patch_result, effective_decision = _maybe_apply_candidate_edit(decision, cwd=cwd)
     if patch_result is not None and not patch_result.ok:
         return VariationAttempt(
-            decision=decision,
+            decision=effective_decision,
             command_result=CommandResult(
                 command=command,
                 returncode=None,
@@ -377,7 +379,7 @@ def run_decision_command(
         )
         score_payload = None
     return VariationAttempt(
-        decision=decision,
+        decision=effective_decision,
         command_result=result,
         started_at=started_at,
         completed_at=_utc_now(),
@@ -554,11 +556,32 @@ def _looks_like_score_payload(payload: dict[str, Any]) -> bool:
 def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
     repeated = _repeated_unaccepted_fingerprint(payloads, threshold=SUPERVISOR_REPEAT_THRESHOLD)
     if repeated is not None:
-        return (
+        message = (
             "Supervisor signal: the last "
             f"{SUPERVISOR_REPEAT_THRESHOLD} attempts share command/edit fingerprint "
             f"{repeated} and were not accepted. Choose a materially different optimization "
             "direction or diagnostic before repeating it."
+        )
+        repeated_class = _repeated_unaccepted_failure_class(
+            payloads,
+            threshold=SUPERVISOR_REPEAT_THRESHOLD,
+        )
+        if repeated_class is not None:
+            message = (
+                f"{message} Failure class {repeated_class!r} also recurred; promote it "
+                "to a hard preflight track or choose a different transform family."
+            )
+        return message
+    repeated_class = _repeated_unaccepted_failure_class(
+        payloads,
+        threshold=SUPERVISOR_REPEAT_THRESHOLD,
+    )
+    if repeated_class is not None:
+        return (
+            "Supervisor signal: the last "
+            f"{SUPERVISOR_REPEAT_THRESHOLD} attempts share failure class "
+            f"{repeated_class!r}. Promote this class to a hard preflight track, "
+            "then choose a different structured transform family before repeating it."
         )
     if _unaccepted_tail_count(payloads) >= SUPERVISOR_EXHAUSTION_THRESHOLD:
         return (
@@ -568,6 +591,25 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
             "Ampere optimization direction."
         )
     return ""
+
+
+def _repeated_unaccepted_failure_class(
+    payloads: list[dict[str, Any]],
+    *,
+    threshold: int,
+) -> str | None:
+    if len(payloads) < threshold:
+        return None
+    window = payloads[-threshold:]
+    if any(_step_payload_accepted(payload) for payload in window):
+        return None
+    classes = {_step_failure_class(payload) for payload in window}
+    ignored = {"accepted", "unknown", "command_failed"}
+    if len(classes) == 1:
+        failure_class = next(iter(classes))
+        if failure_class not in ignored:
+            return failure_class
+    return None
 
 
 def _repeated_unaccepted_fingerprint(
@@ -607,6 +649,7 @@ def _step_payload_fingerprint(payload: dict[str, Any]) -> str:
         decision = {}
     components = {
         "candidate_patch": str(decision.get("candidate_patch") or "").strip(),
+        "candidate_transform": decision.get("candidate_transform") or {},
         "files_to_inspect": _string_list(decision.get("files_to_inspect")),
         "next_command": _fingerprint_next_command(str(decision.get("next_command") or "")),
     }
@@ -643,10 +686,125 @@ def _string_list(value: object) -> list[str]:
     return sorted(str(item) for item in value)
 
 
-def _maybe_apply_candidate_patch(decision: VariationDecision, *, cwd: Path) -> PatchResult | None:
+def _maybe_apply_candidate_edit(
+    decision: VariationDecision,
+    *,
+    cwd: Path,
+) -> tuple[PatchResult | None, VariationDecision]:
+    if decision.candidate_transform is not None:
+        try:
+            patch_text = materialize_candidate_transform(decision.candidate_transform, cwd=cwd)
+        except ValueError as exc:
+            return (
+                PatchResult(
+                    ok=False,
+                    patch_paths=[],
+                    returncode=None,
+                    stdout_tail="",
+                    stderr_tail="",
+                    rejected_reason=f"candidate transform rejected: {exc}",
+                ),
+                decision,
+            )
+        effective_decision = replace(decision, candidate_patch=patch_text)
+        return apply_candidate_patch(patch_text, cwd=cwd), effective_decision
     if not decision.candidate_patch.strip():
-        return None
-    return apply_candidate_patch(decision.candidate_patch, cwd=cwd)
+        return None, decision
+    return apply_candidate_patch(decision.candidate_patch, cwd=cwd), decision
+
+
+def materialize_candidate_transform(transform: dict[str, Any], *, cwd: Path) -> str:
+    op = str(transform["op"])
+    relative_path = _normalize_transform_path(transform["path"])
+    source = cwd / relative_path
+    if not source.is_file() or _has_symlink_component(cwd, source):
+        raise ValueError(f"transform path is not a regular candidate file: {relative_path}")
+    old = source.read_text(encoding="utf-8")
+    if op == "replace_once":
+        new = _transform_replace_once(
+            old,
+            find=str(transform["find"]),
+            replacement=str(transform["replace"]),
+        )
+    elif op == "insert_before_once":
+        new = _transform_insert_once(
+            old,
+            anchor=str(transform["anchor"]),
+            text=str(transform["text"]),
+            before=True,
+        )
+    elif op == "insert_after_once":
+        new = _transform_insert_once(
+            old,
+            anchor=str(transform["anchor"]),
+            text=str(transform["text"]),
+            before=False,
+        )
+    elif op == "set_constexpr_int":
+        new = _transform_set_constexpr_int(
+            old,
+            name=str(transform["name"]),
+            value=int(transform["value"]),
+        )
+    else:
+        raise ValueError(f"unsupported transform op: {op}")
+    if old == new:
+        raise ValueError("transform produced no source change")
+    return _unified_diff_for_content(relative_path, old, new)
+
+
+def _normalize_transform_path(raw_path: Any) -> str:
+    if not isinstance(raw_path, str):
+        raise ValueError("transform path must be a string")
+    normalized = _normalize_candidate_source_path(raw_path)
+    if normalized is None:
+        raise ValueError("transform path must be a repo-relative path under candidates/")
+    if Path(normalized).suffix not in CANDIDATE_SOURCE_SUFFIXES:
+        raise ValueError("transform path must reference a candidate source file")
+    return normalized
+
+
+def _transform_replace_once(content: str, *, find: str, replacement: str) -> str:
+    count = content.count(find)
+    if count != 1:
+        raise ValueError(f"replace_once expected exactly one match, found {count}")
+    return content.replace(find, replacement, 1)
+
+
+def _transform_insert_once(content: str, *, anchor: str, text: str, before: bool) -> str:
+    count = content.count(anchor)
+    if count != 1:
+        raise ValueError(f"insert transform expected exactly one anchor, found {count}")
+    index = content.index(anchor)
+    if not before:
+        index += len(anchor)
+    return f"{content[:index]}{text}{content[index:]}"
+
+
+def _transform_set_constexpr_int(content: str, *, name: str, value: int) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError("set_constexpr_int name must be a C++ identifier")
+    pattern = re.compile(
+        rf"(?P<prefix>\bconstexpr\s+int\s+{re.escape(name)}\s*=\s*)"
+        r"(?P<value>[-+]?\d+)(?P<suffix>\s*;)"
+    )
+    matches = list(pattern.finditer(content))
+    if len(matches) != 1:
+        raise ValueError(
+            f"set_constexpr_int expected exactly one constexpr int {name}, found {len(matches)}"
+        )
+    return pattern.sub(rf"\g<prefix>{value}\g<suffix>", content, count=1)
+
+
+def _unified_diff_for_content(relative_path: str, old: str, new: str) -> str:
+    diff_lines = difflib.unified_diff(
+        old.splitlines(),
+        new.splitlines(),
+        fromfile=f"a/{relative_path}",
+        tofile=f"b/{relative_path}",
+        lineterm="",
+    )
+    return f"diff --git a/{relative_path} b/{relative_path}\n" + "\n".join(diff_lines) + "\n"
 
 
 def _candidate_source_snapshot(
@@ -954,12 +1112,77 @@ def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
     cleanup = _patch_cleanup_status(patch_cleanup_result)
     gate = _gate_status(gate_decision)
     score = _score_status(score_payload)
+    failure_class = _step_failure_class(payload)
     command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
     hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
     return (
-        f"{name}: {status}; {patch}; {cleanup}; {gate}; {score}; "
+        f"{name}: class={failure_class}; {status}; {patch}; {cleanup}; {gate}; {score}; "
         f"command={command}; hypothesis={hypothesis}"
     )
+
+
+def _step_failure_class(payload: dict[str, Any]) -> str:
+    if _step_payload_accepted(payload):
+        return "accepted"
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    command_result = (
+        attempt.get("command_result") if isinstance(attempt.get("command_result"), dict) else {}
+    )
+    patch_result = (
+        attempt.get("patch_result") if isinstance(attempt.get("patch_result"), dict) else None
+    )
+    gate_decision = payload.get("gate_decision")
+    score_payload = attempt.get("score_payload")
+    if isinstance(patch_result, dict) and patch_result.get("ok") is False:
+        return _classify_patch_failure(patch_result)
+    if command_result.get("timed_out"):
+        return "timeout"
+    returncode = command_result.get("returncode")
+    next_command = str(decision.get("next_command") or "")
+    command_text = " ".join(str(item) for item in command_result.get("command") or [])
+    if returncode not in (0, None):
+        detail = _result_detail(command_result).lower()
+        if "compile" in next_command or " compile" in command_text:
+            return _classify_compile_failure(detail)
+        if "correctness" in detail or "max_abs_error" in detail:
+            return "correctness_failed"
+        return "command_failed"
+    if isinstance(score_payload, dict) and score_payload.get("all_correct") is False:
+        return "correctness_failed"
+    if isinstance(gate_decision, dict) and gate_decision.get("accepted") is False:
+        reason = str(gate_decision.get("reason") or "").lower()
+        if "correct" in reason or "error" in reason:
+            return "correctness_failed"
+        return "throughput_regression"
+    if returncode == 0 and "avo compile" in next_command and not isinstance(score_payload, dict):
+        return "compile_only_diagnostic"
+    if returncode == 0:
+        return "unaccepted_success"
+    return "unknown"
+
+
+def _classify_patch_failure(patch_result: dict[str, Any]) -> str:
+    detail = _result_detail(patch_result).lower()
+    reason = str(patch_result.get("rejected_reason") or "").lower()
+    combined = f"{reason} {detail}"
+    if "candidate transform rejected" in combined:
+        return "structured_transform_preflight"
+    if "git apply" in combined or "corrupt patch" in combined or "hunk" in combined:
+        return "raw_diff_preflight"
+    if "path" in combined or "symlink" in combined or "binary" in combined:
+        return "patch_safety_preflight"
+    return "patch_preflight"
+
+
+def _classify_compile_failure(detail: str) -> str:
+    if "wmma::fragment" in detail or "incomplete type" in detail or "fill_fragment" in detail:
+        return "unsupported_wmma_shape"
+    if "invalid specifier" in detail or "expected a" in detail or "syntax" in detail:
+        return "cuda_syntax_error"
+    if "identifier" in detail and "undefined" in detail:
+        return "stale_or_undefined_symbol"
+    return "compile_failed"
 
 
 def _command_status(command_result: dict[str, Any]) -> str:

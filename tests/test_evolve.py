@@ -18,6 +18,7 @@ from avo.evolve import (
     cleanup_rejected_candidate_patch,
     command_from_decision,
     finalize_attempt,
+    materialize_candidate_transform,
     paths_from_unified_diff,
     revert_candidate_patch,
     run_decision_command,
@@ -29,7 +30,12 @@ from avo.evolve import (
 from avo.lineage import best_geomean
 
 
-def decision(next_command: str, *, candidate_patch: str = "") -> VariationDecision:
+def decision(
+    next_command: str,
+    *,
+    candidate_patch: str = "",
+    candidate_transform: dict[str, object] | None = None,
+) -> VariationDecision:
     return VariationDecision(
         hypothesis="validate the execution substrate",
         files_to_inspect=["avo/evolve.py"],
@@ -38,6 +44,7 @@ def decision(next_command: str, *, candidate_patch: str = "") -> VariationDecisi
         risk="command may fail",
         next_command=next_command,
         candidate_patch=candidate_patch,
+        candidate_transform=candidate_transform,
     )
 
 
@@ -85,6 +92,40 @@ def test_apply_candidate_patch_updates_candidate_file(tmp_path: Path) -> None:
 
     assert result.ok
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
+def test_materialize_candidate_transform_generates_candidate_patch(tmp_path: Path) -> None:
+    write_seed_candidate(tmp_path)
+
+    patch = materialize_candidate_transform(
+        {
+            "op": "replace_once",
+            "path": "candidates/seed.py",
+            "find": "VALUE = 1",
+            "replace": "VALUE = 2",
+        },
+        cwd=tmp_path,
+    )
+
+    assert patch.startswith("diff --git a/candidates/seed.py b/candidates/seed.py")
+    assert "-VALUE = 1" in patch
+    assert "+VALUE = 2" in patch
+
+
+def test_materialize_candidate_transform_rejects_ambiguous_anchor(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    seed.write_text("VALUE = 1\nVALUE = 1\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="expected exactly one match"):
+        materialize_candidate_transform(
+            {
+                "op": "replace_once",
+                "path": "candidates/seed.py",
+                "find": "VALUE = 1",
+                "replace": "VALUE = 2",
+            },
+            cwd=tmp_path,
+        )
 
 
 def test_apply_candidate_patch_recounts_llm_hunk_lengths(tmp_path: Path) -> None:
@@ -286,6 +327,35 @@ def test_run_decision_command_applies_candidate_patch_before_command(tmp_path: P
     assert attempt.patch_result is not None
     assert attempt.patch_result.ok
     assert attempt.command_result.ok
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
+def test_run_decision_command_materializes_transform_before_command(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+
+    attempt = run_decision_command(
+        decision(
+            "avo worker-sleep --seconds 0",
+            candidate_transform={
+                "op": "replace_once",
+                "path": "candidates/seed.py",
+                "find": "VALUE = 1",
+                "replace": "VALUE = 2",
+            },
+        ),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+
+    assert attempt.patch_result is not None
+    assert attempt.patch_result.ok
+    assert attempt.command_result.ok
+    assert attempt.decision.candidate_transform is not None
+    assert attempt.decision.candidate_patch.startswith("diff --git")
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
@@ -745,6 +815,32 @@ def test_summarize_attempt_history_includes_patch_failure_detail(tmp_path: Path)
 
     assert "patch rejected reason=git apply --check failed" in summary
     assert "error: corrupt patch at line 53" in summary
+    assert "class=raw_diff_preflight" in summary
+
+
+def test_summarize_attempt_history_promotes_recurring_failure_class(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    for index in range(3):
+        attempt = VariationAttempt(
+            decision=decision(
+                f"avo compile --source candidates/kernel_{index}.cu --out-dir build/kernel_{index}"
+            ),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "compile"],
+                returncode=2,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="error: identifier old_scale is undefined\n",
+            ),
+            started_at=f"2026-05-08T00:00:0{index}+00:00",
+            completed_at=f"2026-05-08T00:00:0{index + 1}+00:00",
+        )
+        write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "share failure class 'stale_or_undefined_symbol'" in summary
+    assert "Promote this class to a hard preflight track" in summary
 
 
 def test_summarize_attempt_history_normalizes_compile_out_dir(tmp_path: Path) -> None:
