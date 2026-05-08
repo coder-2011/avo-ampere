@@ -683,6 +683,28 @@ def test_parse_variation_decision_rejects_direct_head_dim128_shared_threshold() 
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_stale_tiled_rescale_fix() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Fix tiled online softmax output rescaling."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_tiled_attention/attention_kernel.cu "
+        "b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-      output_acc = tile_acc * tile_scale;\n"
+        "+      output_acc = output_acc * old_scale + tile_acc * tile_scale;\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_tiled_attention_seed.py "
+        "--seq-lens 128 --total-tokens 512 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="stale tiled output-rescale"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_symbolic_mma_score_k32_fragment() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA head_dim32 two-chunk score path and compile it."
@@ -880,6 +902,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
         "changing only candidates/cuda_tiled_attention_seed.py wrapper caps is not a fix"
         in context
     )
+    assert "current tiled kernel already uses the online-softmax output recurrence" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "Standalone pragma-only performance patches" in context
