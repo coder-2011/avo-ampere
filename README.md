@@ -143,6 +143,23 @@ uv run --extra cuda python -m avo score \
   --timeout-s 300
 ```
 
+Score the tiny warp-row online-softmax smoke candidate on a tiny shape:
+
+```bash
+uv run --extra cuda python -m avo score \
+  --backend candidate \
+  --candidate candidates/cuda_warp_rows_attention_seed.py \
+  --seq-lens 16 \
+  --total-tokens 16 \
+  --num-heads 1 \
+  --head-dim 16 \
+  --dtype bf16 \
+  --causal both \
+  --repeats 1 \
+  --warmup 1 \
+  --timeout-s 300
+```
+
 Seed a FlashAttention-2 baseline lineage:
 
 ```bash
@@ -180,8 +197,8 @@ Agent prompts include a concise local repo context so decisions prefer existing 
 
 ## What is still missing
 
-- A tiled/performance-oriented CUDA attention candidate that can move beyond the naive seed.
-- Scaling the tiled attention seed beyond tiny correctness smokes.
+- A tensor-core CUDA attention candidate that can move beyond scalar dot-product seeds.
+- Scaling the warp-row attention seed beyond tiny correctness smokes.
 - A complete mutation loop that edits candidate code safely.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted and rejected candidates.

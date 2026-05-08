@@ -37,7 +37,8 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_tiled_attention_seed.py` for tiny correctness smoke scoring.
+  `candidates/cuda_warp_rows_attention_seed.py` for tiny correctness smoke
+  scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
   `cuda_naive_attention_seed.py` is the simpler one-thread-per-row attention
   reference. The older `cuda_identity_seed.py` is only an extension/build smoke
   because it delegates attention math to PyTorch SDPA before running a copy
@@ -51,10 +52,10 @@ variation steps.
 - Warp-level online softmax reductions.
 - Instruction scheduling around `mma.sync` latency.
 - Split-Q versus split-K work partitioning.
-- The current tiled seed uses one CTA per query row, 32-key score tiles, FP32
-  row max/sum/output accumulation, and online output rescaling. This is still
-  far from FA2: it does not use `mma.sync`, `cp.async`, shared K/V staging, or a
-  multi-row CTA tile.
+- The current warp-row seed uses four query rows per CTA, one warp per row,
+  32-key score tiles, warp-shuffle max/sum reductions, FP32 row state, and
+  online output rescaling. This is still far from FA2: it does not use
+  `mma.sync`, `cp.async`, or shared K/V staging.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
