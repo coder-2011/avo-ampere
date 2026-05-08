@@ -318,6 +318,13 @@ variation steps.
   runtime or constant 32-wide row stride, widen `pv_tile` and `output_acc` to
   16x32, and store each 16-column PV chunk at a column offset that stays inside
   the widened row-major tile before running a score.
+  A follow-up internal-32 compile patch widened `pv_tile` and `output_acc`, but
+  failed CUDA compilation because it left stale original QK code after the new
+  two-chunk loop: `score_frag`, `q_frag`, and `k_frag` were referenced after
+  their declarations had been replaced by scoped chunk-local fragments. When
+  rewriting the MMA QK block, remove the old single-fragment fill/load/mma lines
+  completely and store the accumulated two-chunk score fragment only after the
+  chunk loop.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
