@@ -8,6 +8,7 @@ from avo.agent import (
     DECISION_TOOL_NAME,
     DEFAULT_AGENT_MODEL,
     VariationDecision,
+    _decision_kwargs_with_feedback,
     _request_decision_response,
     _request_valid_decision,
     build_repo_context,
@@ -499,6 +500,27 @@ def test_build_variation_prompt_includes_attempt_history() -> None:
     assert "Recent attempt history:" in prompt
     assert "gate rejected" in prompt
     assert "avoid repeating failed or regressed directions" in prompt
+
+
+def test_decision_feedback_explains_empty_patch_validation_error() -> None:
+    kwargs = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Base prompt.",
+            }
+        ]
+    }
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("candidate_patch must be non-empty when candidate_edit describes a code change"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "candidate_patch must be a raw unified diff" in content
+    assert "No edit; ..." in content
+    assert "diff --git" in content
 
 
 def test_parse_variation_decision_response_prefers_tool_use() -> None:

@@ -397,10 +397,24 @@ def _decision_kwargs_with_feedback(
     messages[-1]["content"] = (
         f"{messages[-1]['content']}\n\n"
         "The previous decision was invalid and was not executed. "
-        f"Validation error: {last_error}. Return one corrected decision."
+        f"Validation error: {last_error}. "
+        f"{_validation_feedback_hint(last_error)}"
+        "Return one corrected decision."
     )
     updated["messages"] = messages
     return updated
+
+
+def _validation_feedback_hint(error: ValueError) -> str:
+    message = str(error)
+    if "candidate_patch must be non-empty" in message:
+        return (
+            "If the next step changes code, candidate_patch must be a raw unified diff "
+            "starting with 'diff --git'. If no code changes are needed, candidate_edit "
+            "must say 'No edit; ...' and describe only the bounded score/compile/env "
+            "diagnostic to run. "
+        )
+    return ""
 
 
 def _request_decision_response_once(client: Any, kwargs: dict[str, Any]) -> Any:
