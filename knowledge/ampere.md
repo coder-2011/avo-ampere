@@ -57,7 +57,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for 16/32-token, head-dim 16
+  `candidates/cuda_mma_attention_seed.py` for 16/32-token, head-dim 32
   BF16 tensor-core QK/PV smokes
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
@@ -448,7 +448,8 @@ variation steps.
   with `error: corrupt patch at line 120`. It also introduced undefined
   `head_dim` identifiers inside the CUDA kernel and still used unsupported
   WMMA fragment template shapes. The validator now rejects patched MMA scores
-  beyond head_dim 16 unless the next command is a compile build-check first.
+  beyond the current head_dim32 smoke unless the next command is a compile
+  build-check first.
   A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
   to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as
   `fragment<matrix_a, 16, 16, 32, ...>` and `fragment<accumulator, 16, 32, 16,
@@ -526,6 +527,23 @@ variation steps.
   planner now rejects this specific score-fragment shape; future two-chunk QK
   patches must keep each WMMA fragment K at 16 and accumulate the two chunks
   into a valid 16x16 score accumulator.
+  A manual head_dim32 two-chunk MMA seed extension was committed after those
+  guardrails. The current MMA seed keeps the score and probability tiles at
+  16x16, widens `pv_tile` and `output_acc` to 16x32, processes QK and PV as two
+  16-wide WMMA chunks with explicit `__nv_bfloat16` fragments, and stores each
+  PV chunk at the row-major column offset `&pv_tile[chunk * 16]` with leading
+  dimension 32. The wrapper now accepts only sequence lengths 16 or 32 with
+  head dimension 32, total tokens up to 32, and one head. The sm86 compile
+  check succeeded with no spills, 40 registers, 1 barrier, 5824 bytes shared
+  memory, 400 bytes `cmem[0]`, 224 bytes `cmem[4]`, and 28 bytes global memory.
+  A fresh tiny score at seq_len 32, total_tokens 32, num_heads 1, head_dim 32,
+  BF16, both causal modes passed correctness with max_abs_error 0.00390625 in
+  both modes and geomean `0.0001245601243057133` TFLOPS. Noncausal median was
+  0.74099200963974 ms / `0.00017688719756063954` TFLOPS; causal median was
+  0.7471680045127869 ms / `8.771253533900277e-05` TFLOPS. This is structural
+  correctness progress only: the workload signature differs from the current
+  seq256/head_dim128 warp-row best and must not be used as a lineage-speed
+  comparison.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
