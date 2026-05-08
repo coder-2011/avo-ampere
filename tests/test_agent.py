@@ -440,6 +440,10 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "--seq-lens 32" in context
     assert "candidate_patch as a raw unified diff" in context
     assert "avo score --backend candidate" in context
+    assert "Candidate source excerpts for exact patch context:" in context
+    assert "-- candidates/cuda_mma_attention_seed.py --" in context
+    assert "def attention(q, k, v, causal: bool):" in context
+    assert "-- candidates/cuda_mma_attention/attention_kernel.cu --" in context
     assert "csrc/flash_attn" not in context
 
 
@@ -447,13 +451,22 @@ def test_build_repo_context_falls_back_to_tiled_candidate(tmp_path: Path) -> Non
     candidates = tmp_path / "candidates"
     cuda_source = candidates / "cuda_tiled_attention"
     cuda_source.mkdir(parents=True)
-    (candidates / "cuda_tiled_attention_seed.py").write_text("", encoding="utf-8")
-    (cuda_source / "attention_kernel.cu").write_text("", encoding="utf-8")
+    (candidates / "cuda_tiled_attention_seed.py").write_text(
+        "def attention(q, k, v, causal):\n    return q\n",
+        encoding="utf-8",
+    )
+    (cuda_source / "attention_kernel.cu").write_text(
+        "__global__ void tiled_attention_kernel() {}\n",
+        encoding="utf-8",
+    )
 
     context = build_repo_context(tmp_path)
 
     assert "--candidate candidates/cuda_tiled_attention_seed.py" in context
     assert "--candidate candidates/cuda_warp_rows_attention_seed.py" not in context
+    assert "-- candidates/cuda_tiled_attention_seed.py --" in context
+    assert "def attention(q, k, v, causal):" in context
+    assert "__global__ void tiled_attention_kernel() {}" in context
 
 
 def test_build_repo_context_falls_back_to_naive_candidate(tmp_path: Path) -> None:

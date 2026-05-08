@@ -20,6 +20,8 @@ DEFAULT_SCORE_HEAD_DIM = 128
 DEFAULT_SCORE_NUM_HEADS = 16
 DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
 DEFAULT_SCORE_TOTAL_TOKENS = 32768
+MAX_REPO_CONTEXT_FILE_CHARS = 12_000
+MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
 MMA_SEED = "candidates/cuda_mma_attention_seed.py"
 TILED_SEED = "candidates/cuda_tiled_attention_seed.py"
@@ -349,6 +351,10 @@ def build_repo_context(root: Path) -> str:
     preferred_command = _preferred_candidate_score_command(candidates)
     if preferred_command:
         lines.append(f"Preferred first local candidate score command: {preferred_command}")
+    excerpts = _candidate_source_excerpts(root, [*candidates, *cuda_sources])
+    if excerpts:
+        lines.append("Candidate source excerpts for exact patch context:")
+        lines.extend(excerpts)
     return "\n".join(lines)
 
 
@@ -804,6 +810,44 @@ def _relative_files(root: Path, dirname: str, *, suffix: str) -> list[str]:
         for path in base.rglob(f"*{suffix}")
         if "__pycache__" not in path.parts
     )
+
+
+def _candidate_source_excerpts(
+    root: Path,
+    relative_paths: list[str],
+    *,
+    max_file_chars: int = MAX_REPO_CONTEXT_FILE_CHARS,
+    max_total_chars: int = MAX_REPO_CONTEXT_SOURCE_CHARS,
+) -> list[str]:
+    excerpts: list[str] = []
+    root = root.resolve()
+    total_chars = 0
+    for relative_path in relative_paths:
+        if total_chars >= max_total_chars:
+            break
+        path = (root / relative_path).resolve()
+        try:
+            path.relative_to(root)
+        except ValueError:
+            continue
+        if not path.is_file():
+            continue
+        available_chars = min(max_file_chars, max_total_chars - total_chars)
+        if available_chars <= 0:
+            break
+        content = path.read_text(encoding="utf-8", errors="replace")
+        excerpt = content[:available_chars].rstrip()
+        if len(content) > available_chars:
+            excerpt = f"{excerpt}\n... truncated {len(content) - available_chars} chars ..."
+        total_chars += len(excerpt)
+        excerpts.extend(
+            [
+                f"-- {relative_path} --",
+                excerpt,
+                f"-- end {relative_path} --",
+            ]
+        )
+    return excerpts
 
 
 def _preferred_candidate_score_command(candidates: list[str]) -> str:
