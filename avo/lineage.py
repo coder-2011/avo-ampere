@@ -73,7 +73,12 @@ def seed_baseline(
     return seeded
 
 
-def decide_gate(candidate: dict[str, Any], best_geomean: float) -> GateDecision:
+def decide_gate(
+    candidate: dict[str, Any],
+    best_geomean: float,
+    *,
+    best_payload: dict[str, Any] | None = None,
+) -> GateDecision:
     candidate_geomean = float(candidate.get("geomean_tflops") or 0.0)
     cases = candidate.get("cases")
     if not candidate.get("all_correct"):
@@ -84,6 +89,15 @@ def decide_gate(candidate: dict[str, Any], best_geomean: float) -> GateDecision:
         return GateDecision(
             False,
             "candidate has non-positive or non-finite geomean throughput",
+            candidate_geomean,
+            best_geomean,
+        )
+    if best_payload is not None and _benchmark_signature(candidate) != _benchmark_signature(
+        best_payload
+    ):
+        return GateDecision(
+            False,
+            "candidate benchmark cases differ from current best",
             candidate_geomean,
             best_geomean,
         )
@@ -111,8 +125,9 @@ def commit_score(
     candidate_patch: str | None = None,
 ) -> GateDecision:
     init_lineage_repo(path)
-    best = best_geomean(path)
-    decision = decide_gate(candidate, best)
+    best_payload = latest_score_payload(path)
+    best = _score_geomean(best_payload)
+    decision = decide_gate(candidate, best, best_payload=best_payload)
     if not decision.accepted:
         return decision
 
@@ -130,17 +145,41 @@ def commit_score(
 
 
 def best_geomean(path: Path) -> float:
+    return _score_geomean(latest_score_payload(path))
+
+
+def latest_score_payload(path: Path) -> dict[str, Any] | None:
     if not (path / ".git").exists() or not _has_commits(path):
-        return 0.0
+        return None
     try:
         raw = _git_capture(path, "show", "HEAD:scores/latest.json")
     except subprocess.CalledProcessError:
-        return 0.0
+        return None
     try:
         payload = json.loads(raw)
     except json.JSONDecodeError:
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+def _score_geomean(payload: dict[str, Any] | None) -> float:
+    if payload is None:
         return 0.0
     return float(payload.get("geomean_tflops") or 0.0)
+
+
+def _benchmark_signature(payload: dict[str, Any]) -> tuple[str, ...]:
+    cases = payload.get("cases")
+    if not isinstance(cases, list):
+        return ()
+    signature: list[str] = []
+    for case_payload in cases:
+        if not isinstance(case_payload, dict):
+            continue
+        case = case_payload.get("case")
+        if isinstance(case, dict):
+            signature.append(json.dumps(case, sort_keys=True, separators=(",", ":")))
+    return tuple(sorted(signature))
 
 
 def _has_commits(path: Path) -> bool:

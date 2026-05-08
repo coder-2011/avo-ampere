@@ -33,6 +33,16 @@ def test_gate_rejects_empty_cases() -> None:
     assert "no scored cases" in decision.reason
 
 
+def test_gate_rejects_benchmark_case_mismatch() -> None:
+    best = score_payload(seq_len=128, geomean=1.0)
+    candidate = score_payload(seq_len=256, geomean=2.0)
+
+    decision = decide_gate(candidate, 1.0, best_payload=best)
+
+    assert not decision.accepted
+    assert "benchmark cases differ" in decision.reason
+
+
 def test_gate_rejects_non_positive_or_non_finite_geomean() -> None:
     zero = decide_gate({"all_correct": True, "geomean_tflops": 0.0, "cases": [{}]}, 0.0)
     infinite = decide_gate(
@@ -59,6 +69,23 @@ def test_commit_score_records_payload(tmp_path) -> None:
         text=True,
     )
     assert '"geomean_tflops": 12.5' in latest
+
+
+def test_commit_score_rejects_changed_benchmark_shape(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    baseline = score_payload(seq_len=128, geomean=1.0)
+    changed_shape = score_payload(seq_len=256, geomean=2.0)
+    commit_score(repo, baseline)
+    head_before = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+
+    decision = commit_score(repo, changed_shape)
+
+    head_after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+    assert not decision.accepted
+    assert "benchmark cases differ" in decision.reason
+    assert head_after == head_before
+    assert best_geomean(repo) == 1.0
 
 
 def test_commit_score_records_accepted_source_artifacts(tmp_path) -> None:
@@ -124,3 +151,25 @@ def test_seed_baseline_records_json(tmp_path) -> None:
     baseline = json.loads((repo / "scores" / "baseline.json").read_text(encoding="utf-8"))
     latest = json.loads((repo / "scores" / "latest.json").read_text(encoding="utf-8"))
     assert baseline == latest
+
+
+def score_payload(*, seq_len: int, geomean: float) -> dict:
+    return {
+        "backend": "candidate",
+        "all_correct": True,
+        "geomean_tflops": geomean,
+        "cases": [
+            {
+                "case": {
+                    "causal": False,
+                    "dtype": "bf16",
+                    "head_dim": 128,
+                    "num_heads": 4,
+                    "seq_len": seq_len,
+                    "total_tokens": seq_len * 4,
+                },
+                "correct": True,
+                "tflops": geomean,
+            }
+        ],
+    }
