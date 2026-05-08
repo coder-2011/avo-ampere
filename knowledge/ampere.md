@@ -57,7 +57,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for the accepted seq8192 head-dim 128
+  `candidates/cuda_mma_attention_seed.py` for the accepted seq16384 head-dim 128
   BF16 tensor-core QK/PV lane
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
@@ -1126,6 +1126,16 @@ source files.
   source now carries `kMaxSeqLen=8192` and wrapper `SMOKE_SEQUENCES` includes
   8192. This is correctness and lane-establishment progress, not yet evidence
   of beating FA2.
+- The next bounded loop graduated to seq16384 with the same two-step cap
+  transform (`kMaxSeqLen=16384`, add `16384` to `SMOKE_SEQUENCES`). Compile
+  passed with no spills, 40 registers, 1 barrier, and 9920 bytes shared memory.
+  The follow-up score was accepted as nested lineage commit `47ddfcf`: seq_len
+  16384, total_tokens 32768, num_heads 16, head_dim 128, BF16, both causal
+  modes, three timing trials, geomean `7.14948482274555` TFLOPS, noncausal
+  `10.08547382076117` TFLOPS, causal `5.068193536474939` TFLOPS. Runtime
+  source now carries `kMaxSeqLen=16384` and wrapper `SMOKE_SEQUENCES` includes
+  16384. This establishes the seq16384 target lane but is still not evidence of
+  beating FA2.
 - Attempt-memory promotion should operate on recurring failure classes across the
   current unaccepted tail, not only exact back-to-back repeats. The loop now
   counts classified failures since the last accepted result, persists every
