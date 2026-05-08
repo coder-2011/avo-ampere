@@ -68,7 +68,15 @@ class AmpereTarget:
 AMPERE_A6000 = AmpereTarget()
 
 
-def cases_from_cli(seq_lens: str, causal: str) -> list[AttentionCase]:
+def cases_from_cli(
+    seq_lens: str,
+    causal: str,
+    *,
+    head_dim: int = 128,
+    num_heads: int = 16,
+    total_tokens: int = 32768,
+    dtype: str = "bf16",
+) -> list[AttentionCase]:
     lengths = [int(part) for part in seq_lens.split(",") if part.strip()]
     if not lengths:
         raise ValueError("at least one sequence length is required")
@@ -80,7 +88,14 @@ def cases_from_cli(seq_lens: str, causal: str) -> list[AttentionCase]:
     if causal_values is None:
         raise ValueError("causal must be one of: true, false, both")
     return [
-        AttentionCase(seq_len=seq_len, causal=is_causal)
+        AttentionCase(
+            seq_len=seq_len,
+            causal=is_causal,
+            head_dim=head_dim,
+            num_heads=num_heads,
+            total_tokens=total_tokens,
+            dtype=dtype,
+        )
         for seq_len in lengths
         for is_causal in causal_values
     ]

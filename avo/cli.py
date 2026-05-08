@@ -120,6 +120,10 @@ def add_score_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--candidate", type=Path, default=None)
     parser.add_argument("--seq-lens", default="4096,8192,16384,32768")
     parser.add_argument("--causal", choices=["true", "false", "both"], default="both")
+    parser.add_argument("--head-dim", type=int, default=128)
+    parser.add_argument("--num-heads", type=int, default=16)
+    parser.add_argument("--total-tokens", type=int, default=32768)
+    parser.add_argument("--dtype", choices=["bf16", "fp16", "fp32"], default="bf16")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--repeats", type=int, default=20)
 
@@ -173,6 +177,14 @@ def _score(args: argparse.Namespace) -> int:
         args.seq_lens,
         "--causal",
         args.causal,
+        "--head-dim",
+        str(args.head_dim),
+        "--num-heads",
+        str(args.num_heads),
+        "--total-tokens",
+        str(args.total_tokens),
+        "--dtype",
+        args.dtype,
         "--warmup",
         str(args.warmup),
         "--repeats",
@@ -199,6 +211,14 @@ def _seed_baseline(args: argparse.Namespace) -> int:
         args.seq_lens,
         "--causal",
         args.causal,
+        "--head-dim",
+        str(args.head_dim),
+        "--num-heads",
+        str(args.num_heads),
+        "--total-tokens",
+        str(args.total_tokens),
+        "--dtype",
+        args.dtype,
         "--warmup",
         str(args.warmup),
         "--repeats",
@@ -221,7 +241,14 @@ def _seed_baseline(args: argparse.Namespace) -> int:
 
 
 def _worker_score(args: argparse.Namespace) -> int:
-    cases = cases_from_cli(args.seq_lens, args.causal)
+    cases = cases_from_cli(
+        args.seq_lens,
+        args.causal,
+        head_dim=args.head_dim,
+        num_heads=args.num_heads,
+        total_tokens=args.total_tokens,
+        dtype=args.dtype,
+    )
     payload = score_backend(
         args.backend,
         cases,

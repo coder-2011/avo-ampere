@@ -25,3 +25,23 @@ def test_cases_from_cli() -> None:
         (8192, False),
         (8192, True),
     ]
+
+
+def test_cases_from_cli_accepts_smoke_shape_overrides() -> None:
+    cases = cases_from_cli(
+        "16",
+        "false",
+        head_dim=16,
+        num_heads=1,
+        total_tokens=16,
+        dtype="fp32",
+    )
+
+    assert len(cases) == 1
+    case = cases[0]
+    assert case.seq_len == 16
+    assert case.batch_size == 1
+    assert case.head_dim == 16
+    assert case.num_heads == 1
+    assert case.total_tokens == 16
+    assert case.dtype == "fp32"

@@ -113,7 +113,14 @@ def _require_torch():
 
 def _make_inputs(case: AttentionCase, seed: int):
     torch = _require_torch()
-    dtype = torch.bfloat16 if case.dtype == "bf16" else torch.float16
+    if case.dtype == "bf16":
+        dtype = torch.bfloat16
+    elif case.dtype == "fp16":
+        dtype = torch.float16
+    elif case.dtype == "fp32":
+        dtype = torch.float32
+    else:
+        raise ValueError("dtype must be one of: bf16, fp16, fp32")
     torch.manual_seed(seed)
     torch.cuda.manual_seed_all(seed)
     shape = (case.batch_size, case.num_heads, case.seq_len, case.head_dim)
