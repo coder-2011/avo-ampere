@@ -153,6 +153,7 @@ def request_variation_decision(
     *,
     lineage_summary: str,
     knowledge: str,
+    attempt_history: str = "",
     repo_context: str = "",
     model: str = DEFAULT_AGENT_MODEL,
 ) -> VariationDecision:
@@ -171,6 +172,7 @@ def request_variation_decision(
     prompt = build_variation_prompt(
         knowledge=knowledge,
         lineage_summary=lineage_summary,
+        attempt_history=attempt_history,
         repo_context=repo_context,
     )
 
@@ -187,16 +189,25 @@ def build_variation_prompt(
     *,
     knowledge: str,
     lineage_summary: str,
+    attempt_history: str = "",
     repo_context: str = "",
 ) -> str:
     context_section = f"\n\nLocal repo context:\n{repo_context}" if repo_context.strip() else ""
+    attempt_section = (
+        "\n\nRecent attempt history:\n"
+        f"{attempt_history}\n"
+        "Use this to avoid repeating failed or regressed directions."
+        if attempt_history.strip()
+        else ""
+    )
     return (
         "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
         "Return exactly one decision. The next_command must be a single bounded command that "
         "starts with 'avo' and uses only one of: env, compile, score. Do not use shell pipes, "
         "redirection, command chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
-        f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}{context_section}\n"
+        f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}"
+        f"{attempt_section}{context_section}\n"
     )
 
 

@@ -15,7 +15,15 @@ from .agent import (
 from .benchmark import score_backend, sleep_score
 from .compile import compile_cuda_source
 from .config import AMPERE_A6000, cases_from_cli
-from .evolve import finalize_attempt, run_decision_command, write_attempt, write_step
+from .evolve import (
+    DEFAULT_ATTEMPT_HISTORY_LIMIT,
+    finalize_attempt,
+    run_decision_command,
+    summarize_attempt_history,
+    write_attempt,
+    write_step,
+    write_step_record,
+)
 from .isolation import module_worker_args, print_result, run_json_worker
 from .lineage import commit_score, init_lineage_repo, seed_baseline
 
@@ -63,6 +71,7 @@ def main(argv: list[str] | None = None) -> int:
     agent_parser.add_argument("--cwd", type=Path, default=Path.cwd())
     agent_parser.add_argument("--env-file", type=Path, default=None)
     agent_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
+    add_attempt_history_args(agent_parser)
 
     run_decision_parser = subparsers.add_parser("run-decision")
     run_decision_parser.add_argument("decision_json", type=Path)
@@ -78,6 +87,7 @@ def main(argv: list[str] | None = None) -> int:
     evolve_parser.add_argument("--step-json", type=Path, default=None)
     evolve_parser.add_argument("--env-file", type=Path, default=None)
     evolve_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
+    add_attempt_history_args(evolve_parser)
 
     args = parser.parse_args(argv)
 
@@ -127,6 +137,11 @@ def add_score_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--repeats", type=int, default=20)
     parser.add_argument("--trials", type=int, default=1)
+
+
+def add_attempt_history_args(parser: argparse.ArgumentParser) -> None:
+    parser.add_argument("--attempts-dir", type=Path, default=None)
+    parser.add_argument("--attempt-limit", type=int, default=DEFAULT_ATTEMPT_HISTORY_LIMIT)
 
 
 def _env() -> int:
@@ -274,6 +289,7 @@ def _agent_plan(args: argparse.Namespace) -> int:
     decision = request_variation_decision(
         lineage_summary=lineage_summary,
         knowledge=knowledge,
+        attempt_history=summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit),
         repo_context=build_repo_context(args.cwd),
         model=args.model,
     )
@@ -305,6 +321,7 @@ def _evolve_once(args: argparse.Namespace) -> int:
     decision = request_variation_decision(
         lineage_summary=_lineage_summary(args.lineage),
         knowledge=knowledge,
+        attempt_history=summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit),
         repo_context=build_repo_context(args.cwd),
         model=args.model,
     )
@@ -317,6 +334,8 @@ def _evolve_once(args: argparse.Namespace) -> int:
     step = finalize_attempt(args.lineage, attempt)
     if args.step_json:
         write_step(args.step_json, step)
+    if args.attempts_dir:
+        write_step_record(args.attempts_dir, step)
     print(json.dumps(step.as_dict(), indent=2, sort_keys=True))
     if not attempt.command_result.ok:
         return 2

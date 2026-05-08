@@ -160,6 +160,18 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "candidates/cuda_identity_seed.py" in prompt
 
 
+def test_build_variation_prompt_includes_attempt_history() -> None:
+    prompt = build_variation_prompt(
+        knowledge="Ampere only.",
+        lineage_summary="No accepted candidates yet.",
+        attempt_history="Recent attempts, oldest to newest:\n- command ok; gate rejected",
+    )
+
+    assert "Recent attempt history:" in prompt
+    assert "gate rejected" in prompt
+    assert "avoid repeating failed or regressed directions" in prompt
+
+
 def test_parse_variation_decision_response_prefers_tool_use() -> None:
     payload = decision_payload()
     response = SimpleNamespace(

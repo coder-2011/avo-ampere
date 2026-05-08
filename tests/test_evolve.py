@@ -7,13 +7,16 @@ import pytest
 from avo.agent import VariationDecision
 from avo.evolve import (
     CommandResult,
+    EvolutionStep,
     VariationAttempt,
     _extract_score_payload,
     command_from_decision,
     finalize_attempt,
     run_decision_command,
+    summarize_attempt_history,
     write_attempt,
     write_step,
+    write_step_record,
 )
 from avo.lineage import best_geomean
 
@@ -155,3 +158,70 @@ def test_write_step_records_gate_decision(tmp_path: Path) -> None:
 
     payload = json.loads(path.read_text(encoding="utf-8"))
     assert payload["gate_decision"]["accepted"] is True
+
+
+def test_write_step_record_uses_timestamped_file(tmp_path: Path) -> None:
+    attempt = VariationAttempt(
+        decision=decision("avo env"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "env"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    step = EvolutionStep(attempt=attempt, gate_decision=None)
+
+    first = write_step_record(tmp_path / "attempts", step)
+    second = write_step_record(tmp_path / "attempts", step)
+
+    assert first.exists()
+    assert second.exists()
+    assert first != second
+    assert first.name.startswith("2026-05-08T00-00-01-00-00")
+
+
+def test_summarize_attempt_history_reports_recent_steps(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    accepted_score = {"backend": "mock", "all_correct": True, "geomean_tflops": 3.0, "cases": [{}]}
+    accepted_attempt = VariationAttempt(
+        decision=decision("avo score --backend torch-sdpa"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        score_payload=accepted_score,
+    )
+    rejected_attempt = VariationAttempt(
+        decision=decision("avo score --backend candidate"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=2,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="failed",
+        ),
+        started_at="2026-05-08T00:00:02+00:00",
+        completed_at="2026-05-08T00:00:03+00:00",
+    )
+
+    write_step_record(attempts, finalize_attempt(tmp_path / "lineage", accepted_attempt))
+    write_step_record(attempts, EvolutionStep(attempt=rejected_attempt, gate_decision=None))
+    (attempts / "bad.json").write_text("{not-json", encoding="utf-8")
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "Recent attempts" in summary
+    assert "avo score --backend torch-sdpa" in summary
+    assert "gate accepted=True" in summary
+    assert "geomean_tflops=3.0" in summary
+    assert "command returncode=2" in summary
+    assert "bad.json" not in summary

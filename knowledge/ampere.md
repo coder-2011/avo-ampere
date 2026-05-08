@@ -47,6 +47,9 @@ variation steps.
   reference. The older `cuda_identity_seed.py` is only an extension/build smoke
   because it delegates attention math to PyTorch SDPA before running a copy
   kernel.
+- Use `evolve-once --attempts-dir ./attempts` during autonomous runs so rejected
+  score attempts, command failures, and gate decisions remain available as recent
+  prompt context without becoming committed lineage.
 
 ## Search Space
 
@@ -89,4 +92,5 @@ A candidate enters lineage only when it passes correctness and matches or
 improves the current best aggregate score. The score payload must also contain
 at least one scored case and a finite positive geomean, so malformed empty score
 records cannot become lineage commits. Failed attempts remain in the agent run
-log, not the committed lineage.
+log, not the committed lineage. Persist them in an attempts directory when they
+should inform future variation decisions.

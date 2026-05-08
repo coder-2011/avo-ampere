@@ -15,6 +15,7 @@ from .lineage import GateDecision, commit_score
 
 DEFAULT_ALLOWED_SUBCOMMANDS = frozenset({"env", "compile", "score"})
 SHELL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
+DEFAULT_ATTEMPT_HISTORY_LIMIT = 5
 
 
 @dataclass(frozen=True)
@@ -167,6 +168,39 @@ def write_step(path: Path, step: EvolutionStep) -> None:
     path.write_text(payload, encoding="utf-8")
 
 
+def write_step_record(directory: Path, step: EvolutionStep) -> Path:
+    directory.mkdir(parents=True, exist_ok=True)
+    stem = _filename_safe_timestamp(step.attempt.completed_at)
+    path = directory / f"{stem}.json"
+    suffix = 1
+    while path.exists():
+        path = directory / f"{stem}-{suffix}.json"
+        suffix += 1
+    write_step(path, step)
+    return path
+
+
+def summarize_attempt_history(
+    directory: Path | None,
+    *,
+    limit: int = DEFAULT_ATTEMPT_HISTORY_LIMIT,
+) -> str:
+    if directory is None or limit <= 0 or not directory.exists():
+        return ""
+    paths = sorted(path for path in directory.glob("*.json") if path.is_file())
+    records = []
+    for path in paths[-limit:]:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if isinstance(payload, dict):
+            records.append(_summarize_step_payload(path.name, payload))
+    if not records:
+        return ""
+    return "Recent attempts, oldest to newest:\n" + "\n".join(f"- {record}" for record in records)
+
+
 def _extract_score_payload(stdout: str) -> dict[str, Any] | None:
     stripped = stdout.strip()
     if stripped:
@@ -202,6 +236,63 @@ def _looks_like_score_payload(payload: dict[str, Any]) -> bool:
 
 def _utc_now() -> str:
     return datetime.now(UTC).isoformat(timespec="seconds")
+
+
+def _filename_safe_timestamp(value: str) -> str:
+    cleaned = "".join(char if char.isalnum() else "-" for char in value)
+    return cleaned.strip("-") or _utc_now().replace(":", "-")
+
+
+def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    command_result = (
+        attempt.get("command_result") if isinstance(attempt.get("command_result"), dict) else {}
+    )
+    score_payload = attempt.get("score_payload")
+    gate_decision = payload.get("gate_decision")
+
+    status = _command_status(command_result)
+    gate = _gate_status(gate_decision)
+    score = _score_status(score_payload)
+    command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
+    hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
+    return (
+        f"{name}: {status}; {gate}; {score}; "
+        f"command={command}; hypothesis={hypothesis}"
+    )
+
+
+def _command_status(command_result: dict[str, Any]) -> str:
+    if command_result.get("timed_out"):
+        return "command timed out"
+    returncode = command_result.get("returncode")
+    if returncode == 0:
+        return "command ok"
+    return f"command returncode={returncode}"
+
+
+def _gate_status(gate_decision: Any) -> str:
+    if not isinstance(gate_decision, dict):
+        return "no gate decision"
+    accepted = gate_decision.get("accepted")
+    reason = _shorten(str(gate_decision.get("reason") or "<missing reason>"), 120)
+    return f"gate accepted={accepted} reason={reason}"
+
+
+def _score_status(score_payload: Any) -> str:
+    if not isinstance(score_payload, dict):
+        return "no score payload"
+    geomean = score_payload.get("geomean_tflops")
+    correct = score_payload.get("all_correct")
+    return f"score all_correct={correct} geomean_tflops={geomean}"
+
+
+def _shorten(text: str, limit: int) -> str:
+    normalized = " ".join(text.split())
+    if len(normalized) <= limit:
+        return normalized
+    return normalized[: limit - 3] + "..."
 
 
 def _tail(text: str, limit: int = 4000) -> str:
