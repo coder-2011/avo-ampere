@@ -105,6 +105,15 @@ variation steps.
   overlap. Any new cp.async patch must use vector-aligned 16-byte groups, preserve zero-fill or
   guarded shared-memory state for partial tiles, and introduce a real overlapped pipeline rather
   than a single-stage copy/wait replacement.
+- A later double-buffered cp.async warp-row patch applied but failed compile on this NVCC/header
+  path because `__pipeline_commit` and `__pipeline_wait_prior` were undefined. Do not use those
+  intrinsics here unless the necessary CUDA pipeline API/include contract is first proven by a tiny
+  compile smoke. Prefer a known-good inline PTX `cp.async` helper or the standard CUDA pipeline API
+  with the exact required includes. That patch also treated a BF16 16-byte copy as if it covered
+  16 elements; 16 bytes is 8 BF16 elements, so vector groups should be aligned on 8-element
+  boundaries. Do not mix scalar fallback stores into the same shared-memory range while an async
+  vector copy to that range is pending; handle full 16-byte groups and scalar tails as disjoint
+  regions after the wait/commit protocol is correct.
 - Shared-memory layouts and bank-conflict reduction.
 - Register pressure and spill avoidance.
 - Warp-level online softmax reductions.
