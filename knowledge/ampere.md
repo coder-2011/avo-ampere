@@ -114,6 +114,12 @@ variation steps.
   boundaries. Do not mix scalar fallback stores into the same shared-memory range while an async
   vector copy to that range is pending; handle full 16-byte groups and scalar tails as disjoint
   regions after the wait/commit protocol is correct.
+- Local CUDA 13 headers expose the failed `__pipeline_memcpy_async`, `__pipeline_commit`, and
+  `__pipeline_wait_prior` names through `cuda_pipeline_primitives.h`, not through the default
+  candidate includes. That header routes 16-byte copies to `cp.async.cg.shared.global`, supports a
+  source-size/zero-fill argument for partial copies, and asserts shared/global address spaces plus
+  4/8/16-byte alignment. A future cp.async attempt can first add `#include <cuda_pipeline_primitives.h>`
+  and compile a tiny candidate-local smoke before restructuring the warp-row loop.
 - Shared-memory layouts and bank-conflict reduction.
 - Register pressure and spill avoidance.
 - Warp-level online softmax reductions.
