@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
@@ -72,8 +73,18 @@ def seed_baseline(
 
 def decide_gate(candidate: dict[str, Any], best_geomean: float) -> GateDecision:
     candidate_geomean = float(candidate.get("geomean_tflops") or 0.0)
+    cases = candidate.get("cases")
     if not candidate.get("all_correct"):
         return GateDecision(False, "candidate failed correctness", candidate_geomean, best_geomean)
+    if not isinstance(cases, list) or not cases:
+        return GateDecision(False, "candidate has no scored cases", candidate_geomean, best_geomean)
+    if not math.isfinite(candidate_geomean) or candidate_geomean <= 0.0:
+        return GateDecision(
+            False,
+            "candidate has non-positive or non-finite geomean throughput",
+            candidate_geomean,
+            best_geomean,
+        )
     if candidate_geomean + 1e-9 < best_geomean:
         return GateDecision(
             False,

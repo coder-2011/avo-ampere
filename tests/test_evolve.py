@@ -92,7 +92,7 @@ def test_extract_score_payload_from_worker_result_line() -> None:
 
 
 def test_finalize_attempt_commits_score_payload(tmp_path: Path) -> None:
-    score = {"backend": "mock", "all_correct": True, "geomean_tflops": 3.0, "cases": []}
+    score = {"backend": "mock", "all_correct": True, "geomean_tflops": 3.0, "cases": [{}]}
     attempt = VariationAttempt(
         decision=decision("avo score --backend torch-sdpa"),
         command_result=CommandResult(
@@ -134,7 +134,7 @@ def test_finalize_attempt_without_score_payload_does_not_commit(tmp_path: Path) 
 
 
 def test_write_step_records_gate_decision(tmp_path: Path) -> None:
-    score = {"backend": "mock", "all_correct": True, "geomean_tflops": 3.0, "cases": []}
+    score = {"backend": "mock", "all_correct": True, "geomean_tflops": 3.0, "cases": [{}]}
     attempt = VariationAttempt(
         decision=decision("avo score --backend torch-sdpa"),
         command_result=CommandResult(

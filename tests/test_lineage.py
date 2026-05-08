@@ -1,4 +1,5 @@
 import json
+import math
 import subprocess
 
 from avo.lineage import (
@@ -17,15 +18,38 @@ def test_gate_rejects_incorrect_candidate() -> None:
 
 
 def test_gate_rejects_regression() -> None:
-    decision = decide_gate({"all_correct": True, "geomean_tflops": 0.5}, best_geomean=1.0)
+    decision = decide_gate(
+        {"all_correct": True, "geomean_tflops": 0.5, "cases": [{}]},
+        best_geomean=1.0,
+    )
     assert not decision.accepted
     assert "regressed" in decision.reason
+
+
+def test_gate_rejects_empty_cases() -> None:
+    decision = decide_gate({"all_correct": True, "geomean_tflops": 1.0, "cases": []}, 0.0)
+
+    assert not decision.accepted
+    assert "no scored cases" in decision.reason
+
+
+def test_gate_rejects_non_positive_or_non_finite_geomean() -> None:
+    zero = decide_gate({"all_correct": True, "geomean_tflops": 0.0, "cases": [{}]}, 0.0)
+    infinite = decide_gate(
+        {"all_correct": True, "geomean_tflops": math.inf, "cases": [{}]},
+        0.0,
+    )
+
+    assert not zero.accepted
+    assert "non-positive" in zero.reason
+    assert not infinite.accepted
+    assert "non-positive" in infinite.reason
 
 
 def test_commit_score_records_payload(tmp_path) -> None:
     repo = tmp_path / "lineage"
     init_lineage_repo(repo)
-    candidate = {"backend": "mock", "all_correct": True, "geomean_tflops": 12.5, "cases": []}
+    candidate = {"backend": "mock", "all_correct": True, "geomean_tflops": 12.5, "cases": [{}]}
     decision = commit_score(repo, candidate)
     assert decision.accepted
     assert best_geomean(repo) == 12.5
@@ -44,7 +68,7 @@ def test_seed_baseline_records_json(tmp_path) -> None:
         "backend": "flash-attn",
         "all_correct": True,
         "geomean_tflops": 25.0,
-        "cases": [],
+        "cases": [{}],
     }
     seeded = seed_baseline(repo, payload, force=True)
     assert seeded["role"] == "baseline"

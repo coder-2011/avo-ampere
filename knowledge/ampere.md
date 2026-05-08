@@ -86,5 +86,7 @@ variation steps.
 ## Gate
 
 A candidate enters lineage only when it passes correctness and matches or
-improves the current best aggregate score. Failed attempts remain in the agent
-run log, not the committed lineage.
+improves the current best aggregate score. The score payload must also contain
+at least one scored case and a finite positive geomean, so malformed empty score
+records cannot become lineage commits. Failed attempts remain in the agent run
+log, not the committed lineage.
