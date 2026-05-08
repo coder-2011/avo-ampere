@@ -716,6 +716,10 @@ variation steps.
   confirms that fresh-baseline no-patch scores waste loop budget and can look
   worse under noise; the planner now rejects unpatched MMA seed scores and
   requires a structural `candidate_patch` before scoring that source again.
+  A later loop after Q-staging rejection again failed planning validation on scalar BF16
+  `__pipeline_memcpy_async` after three attempts. The base repo context now treats cp.async as a
+  cooled-down direction unless the diff is a complete 16-byte-group dataflow change with exact
+  current context and no scalar async calls.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.

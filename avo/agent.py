@@ -415,6 +415,9 @@ def build_repo_context(root: Path) -> str:
         "Scalar BF16 async-copy patches are invalid: do not use __pipeline_memcpy_async "
         "with sizeof(__nv_bfloat16) or per-element BF16 loops. Use async copy only for "
         "real aligned 16-byte groups in dataflow; otherwise choose a non-async patch.",
+        "Scalar async-copy validation has failed repeatedly in recent loops. Treat cp.async/"
+        "__pipeline_memcpy_async as a cooled-down direction unless the diff is a complete "
+        "16-byte-group dataflow change with exact current context and no scalar async calls.",
         "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
         "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "

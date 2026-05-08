@@ -1294,6 +1294,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "synchronous full-K MMA staging path preserved correctness but regressed" in context
     assert "synchronous double-buffered MMA V staging path preserved correctness" in context
     assert "MMA probability-buffer skew" in context
+    assert "Scalar async-copy validation has failed repeatedly" in context
     assert "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke" in context
     assert "partial MMA head_dim128 extension" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
