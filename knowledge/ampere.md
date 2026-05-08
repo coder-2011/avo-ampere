@@ -56,8 +56,9 @@ variation steps.
   32-key score tiles, warp-shuffle max/sum reductions, FP32 row state, and
   online output rescaling. Its dot-product path uses a 4-wide packed load when
   head dimension is divisible by 4, with a scalar fallback for odd smoke shapes.
-  This is still far from FA2: it does not use `mma.sync`, `cp.async`, or shared
-  K/V staging.
+  It stages K/V tiles in shared memory only for head dimensions up to 64 and
+  same-head CTAs; head dimension 128 and boundary CTAs use the global packed path.
+  This is still far from FA2: it does not use `mma.sync` or `cp.async`.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.

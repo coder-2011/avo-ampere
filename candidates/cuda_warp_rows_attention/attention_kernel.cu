@@ -74,14 +74,15 @@ __global__ void warp_rows_attention_kernel(const scalar_t* __restrict__ q,
                                            bool causal,
                                            float scale) {
   __shared__ float score_tiles[kRowsPerBlock][kTileKeys];
+  __shared__ scalar_t k_tiles[kTileKeys][kMaxHeadDim];
+  __shared__ scalar_t v_tiles[kTileKeys][kMaxHeadDim];
 
   const int tid = threadIdx.x;
   const int warp_id = tid / kWarpSize;
   const int lane = tid % kWarpSize;
-  const int row = blockIdx.x * kRowsPerBlock + warp_id;
-  if (row >= rows) {
-    return;
-  }
+  const int block_row = blockIdx.x * kRowsPerBlock;
+  const int row = block_row + warp_id;
+  const bool row_valid = row < rows;
 
   const int query = row % seq_len;
   const int head = (row / seq_len) % heads;
@@ -91,6 +92,13 @@ __global__ void warp_rows_attention_kernel(const scalar_t* __restrict__ q,
   const int key_limit = causal ? query + 1 : seq_len;
   float* scores = score_tiles[warp_id];
 
+  const int block_query = block_row % seq_len;
+  const int block_head = (block_row / seq_len) % heads;
+  const int block_batch = block_row / (seq_len * heads);
+  const int block_base = ((block_batch * heads + block_head) * seq_len) * head_dim;
+  const bool can_stage_shared = head_dim <= 64 && block_query + kRowsPerBlock <= seq_len;
+  const int block_key_limit = causal ? min(seq_len, block_query + kRowsPerBlock) : seq_len;
+
   float row_max = -std::numeric_limits<float>::infinity();
   float row_sum = 0.0f;
   float output_acc[kMaxLaneDims];
@@ -99,48 +107,98 @@ __global__ void warp_rows_attention_kernel(const scalar_t* __restrict__ q,
     output_acc[slot] = 0.0f;
   }
 
-  for (int tile_start = 0; tile_start < key_limit; tile_start += kTileKeys) {
-    const int tile_keys = min(kTileKeys, key_limit - tile_start);
-    float score = -std::numeric_limits<float>::infinity();
-    if (lane < tile_keys) {
-      const int key = tile_start + lane;
-      const int k_offset = base + key * head_dim;
-      score = dot_product(q + q_offset, k + k_offset, head_dim) * scale;
-    }
+  if (can_stage_shared) {
+    for (int tile_start = 0; tile_start < block_key_limit; tile_start += kTileKeys) {
+      const int staged_tile_keys = min(kTileKeys, block_key_limit - tile_start);
+      for (int linear = tid; linear < kTileKeys * head_dim; linear += kThreads) {
+        const int key_inner = linear / head_dim;
+        const int dim = linear % head_dim;
+        const bool in_tile = key_inner < staged_tile_keys;
+        const int key = tile_start + key_inner;
+        const int offset = block_base + key * head_dim + dim;
+        k_tiles[key_inner][dim] = in_tile ? k[offset] : scalar_t{};
+        v_tiles[key_inner][dim] = in_tile ? v[offset] : scalar_t{};
+      }
+      __syncthreads();
 
-    const float tile_max = warp_reduce_max(score);
-    const float shifted = lane < tile_keys ? expf(score - tile_max) : 0.0f;
-    scores[lane] = shifted;
-    const float tile_sum = warp_reduce_sum(shifted);
-    __syncwarp();
+      const int tile_keys = row_valid ? max(0, min(kTileKeys, key_limit - tile_start)) : 0;
+      float score = -std::numeric_limits<float>::infinity();
+      if (lane < tile_keys) {
+        score = dot_product(q + q_offset, &k_tiles[lane][0], head_dim) * scale;
+      }
 
-    const float new_row_max = fmaxf(row_max, tile_max);
-    const float old_scale = row_sum == 0.0f ? 0.0f : expf(row_max - new_row_max);
-    const float tile_scale = expf(tile_max - new_row_max);
+      const float tile_max = warp_reduce_max(score);
+      const float shifted = lane < tile_keys ? expf(score - tile_max) : 0.0f;
+      scores[lane] = shifted;
+      const float tile_sum = warp_reduce_sum(shifted);
+      __syncwarp();
+
+      if (tile_keys > 0) {
+        const float new_row_max = fmaxf(row_max, tile_max);
+        const float old_scale = row_sum == 0.0f ? 0.0f : expf(row_max - new_row_max);
+        const float tile_scale = expf(tile_max - new_row_max);
 
 #pragma unroll
-    for (int slot = 0; slot < kMaxLaneDims; ++slot) {
-      const int dim = lane + slot * kWarpSize;
-      if (dim < head_dim) {
-        float tile_acc = 0.0f;
-        for (int key_inner = 0; key_inner < tile_keys; ++key_inner) {
-          const int key = tile_start + key_inner;
-          const int v_offset = base + key * head_dim;
-          tile_acc += scores[key_inner] * static_cast<float>(v[v_offset + dim]);
+        for (int slot = 0; slot < kMaxLaneDims; ++slot) {
+          const int dim = lane + slot * kWarpSize;
+          if (dim < head_dim) {
+            float tile_acc = 0.0f;
+            for (int key_inner = 0; key_inner < tile_keys; ++key_inner) {
+              tile_acc += scores[key_inner] * static_cast<float>(v_tiles[key_inner][dim]);
+            }
+            output_acc[slot] = output_acc[slot] * old_scale + tile_acc * tile_scale;
+          }
         }
-        output_acc[slot] = output_acc[slot] * old_scale + tile_acc * tile_scale;
-      }
-    }
 
-    row_sum = row_sum * old_scale + tile_sum * tile_scale;
-    row_max = new_row_max;
-    __syncwarp();
+        row_sum = row_sum * old_scale + tile_sum * tile_scale;
+        row_max = new_row_max;
+      }
+      __syncthreads();
+    }
+  } else if (row_valid) {
+    for (int tile_start = 0; tile_start < key_limit; tile_start += kTileKeys) {
+      const int tile_keys = min(kTileKeys, key_limit - tile_start);
+      float score = -std::numeric_limits<float>::infinity();
+      if (lane < tile_keys) {
+        const int key = tile_start + lane;
+        const int k_offset = base + key * head_dim;
+        score = dot_product(q + q_offset, k + k_offset, head_dim) * scale;
+      }
+
+      const float tile_max = warp_reduce_max(score);
+      const float shifted = lane < tile_keys ? expf(score - tile_max) : 0.0f;
+      scores[lane] = shifted;
+      const float tile_sum = warp_reduce_sum(shifted);
+      __syncwarp();
+
+      const float new_row_max = fmaxf(row_max, tile_max);
+      const float old_scale = row_sum == 0.0f ? 0.0f : expf(row_max - new_row_max);
+      const float tile_scale = expf(tile_max - new_row_max);
+
+#pragma unroll
+      for (int slot = 0; slot < kMaxLaneDims; ++slot) {
+        const int dim = lane + slot * kWarpSize;
+        if (dim < head_dim) {
+          float tile_acc = 0.0f;
+          for (int key_inner = 0; key_inner < tile_keys; ++key_inner) {
+            const int key = tile_start + key_inner;
+            const int v_offset = base + key * head_dim;
+            tile_acc += scores[key_inner] * static_cast<float>(v[v_offset + dim]);
+          }
+          output_acc[slot] = output_acc[slot] * old_scale + tile_acc * tile_scale;
+        }
+      }
+
+      row_sum = row_sum * old_scale + tile_sum * tile_scale;
+      row_max = new_row_max;
+      __syncwarp();
+    }
   }
 
 #pragma unroll
   for (int slot = 0; slot < kMaxLaneDims; ++slot) {
     const int dim = lane + slot * kWarpSize;
-    if (dim < head_dim) {
+    if (row_valid && dim < head_dim) {
       output[q_offset + dim] = static_cast<scalar_t>(output_acc[slot] / row_sum);
     }
   }
@@ -165,25 +223,52 @@ torch::Tensor attention_cuda(torch::Tensor q,
   const int blocks = (rows + kRowsPerBlock - 1) / kRowsPerBlock;
   const float scale = rsqrtf(static_cast<float>(head_dim));
   const cudaStream_t stream = at::cuda::getCurrentCUDAStream();
-  AT_DISPATCH_FLOATING_TYPES_AND2(
-      at::ScalarType::Half,
-      at::ScalarType::BFloat16,
-      q.scalar_type(),
-      "warp_rows_attention_cuda",
-      [&] {
-        warp_rows_attention_kernel<scalar_t><<<blocks, kThreads, 0, stream>>>(
-            q.data_ptr<scalar_t>(),
-            k.data_ptr<scalar_t>(),
-            v.data_ptr<scalar_t>(),
-            output.data_ptr<scalar_t>(),
-            batch,
-            heads,
-            seq_len,
-            head_dim,
-            rows,
-            causal,
-            scale);
-      });
+  switch (q.scalar_type()) {
+    case at::ScalarType::Float:
+      warp_rows_attention_kernel<float><<<blocks, kThreads, 0, stream>>>(
+          q.data_ptr<float>(),
+          k.data_ptr<float>(),
+          v.data_ptr<float>(),
+          output.data_ptr<float>(),
+          batch,
+          heads,
+          seq_len,
+          head_dim,
+          rows,
+          causal,
+          scale);
+      break;
+    case at::ScalarType::Half:
+      warp_rows_attention_kernel<at::Half><<<blocks, kThreads, 0, stream>>>(
+          q.data_ptr<at::Half>(),
+          k.data_ptr<at::Half>(),
+          v.data_ptr<at::Half>(),
+          output.data_ptr<at::Half>(),
+          batch,
+          heads,
+          seq_len,
+          head_dim,
+          rows,
+          causal,
+          scale);
+      break;
+    case at::ScalarType::BFloat16:
+      warp_rows_attention_kernel<at::BFloat16><<<blocks, kThreads, 0, stream>>>(
+          q.data_ptr<at::BFloat16>(),
+          k.data_ptr<at::BFloat16>(),
+          v.data_ptr<at::BFloat16>(),
+          output.data_ptr<at::BFloat16>(),
+          batch,
+          heads,
+          seq_len,
+          head_dim,
+          rows,
+          causal,
+          scale);
+      break;
+    default:
+      TORCH_CHECK(false, "warp-row attention supports only fp32, fp16, and bf16");
+  }
   C10_CUDA_KERNEL_LAUNCH_CHECK();
   return output;
 }
