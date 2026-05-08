@@ -274,15 +274,12 @@ def test_parse_variation_decision_rejects_compile_out_dir_under_candidates() -> 
     payload = decision_payload()
     payload["hypothesis"] = "Compile the patched CUDA source."
     payload["candidate_edit"] = "Compile the CUDA source to verify nvcc accepts it."
-    payload["candidate_patch"] = (
-        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
-        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
-        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
-        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
-        "@@ -1 +1 @@\n"
-        "-old\n"
-        "+new\n"
-    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": "#include <ATen/cuda/CUDAContext.h>",
+        "replace": "#include <ATen/cuda/CUDAContext.h>",
+    }
     payload["expected_effect"] = "Confirm the translation unit still builds."
     payload["risk"] = "Compilation may expose syntax or include-path issues."
     payload["next_command"] = (
@@ -338,15 +335,12 @@ def test_parse_variation_decision_rejects_compile_python_source() -> None:
 def test_parse_variation_decision_allows_patched_compile_build_check() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Fix kernel include usage and compile the patched source."
-    payload["candidate_patch"] = (
-        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
-        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
-        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
-        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
-        "@@ -1 +1 @@\n"
-        "-#include <ATen/cuda/CUDAContext.h>\n"
-        "+#include <ATen/cuda/CUDAContext.h>\n"
-    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/cuda_warp_rows_attention/attention_kernel.cu",
+        "find": "#include <ATen/cuda/CUDAContext.h>",
+        "replace": "#include <ATen/cuda/CUDAContext.h>",
+    }
     payload["next_command"] = (
         "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
         "--out-dir build/smoke"
@@ -355,6 +349,27 @@ def test_parse_variation_decision_allows_patched_compile_build_check() -> None:
     decision = parse_decision_text(json.dumps(payload))
 
     assert decision.next_command == payload["next_command"]
+
+
+def test_parse_variation_decision_rejects_raw_cuda_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch CUDA source with a raw diff."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/smoke"
+    )
+
+    with pytest.raises(ValueError, match="must not edit CUDA source files directly"):
+        parse_decision_text(json.dumps(payload))
 
 
 def test_parse_variation_decision_rejects_pragma_only_compile_check() -> None:
@@ -576,15 +591,12 @@ def test_parse_variation_decision_rejects_recorded_unpatched_tiled_smoke() -> No
 def test_parse_variation_decision_allows_patched_tiled_score_outside_cap() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Fix the tiled kernel online softmax and score seq 128."
-    payload["candidate_patch"] = (
-        "diff --git a/candidates/cuda_tiled_attention/attention_kernel.cu "
-        "b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
-        "--- a/candidates/cuda_tiled_attention/attention_kernel.cu\n"
-        "+++ b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
-        "@@ -1 +1 @@\n"
-        "-#include <ATen/cuda/CUDAContext.h>\n"
-        "+#include <ATen/cuda/CUDAContext.h>\n"
-    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/cuda_tiled_attention/attention_kernel.cu",
+        "find": "#include <ATen/cuda/CUDAContext.h>",
+        "replace": "#include <ATen/cuda/CUDAContext.h>",
+    }
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_tiled_attention_seed.py "
@@ -1985,7 +1997,8 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "No-patch compile diagnostics are already recorded" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
     assert "Preferred edit channel: candidate_transform" in context
-    assert "Legacy candidate_patch raw diffs are allowed" in context
+    assert "Legacy candidate_patch raw diffs are allowed only for non-CUDA" in context
+    assert ".cu/.cuh kernel edits must use candidate_transform" in context
     assert "The unpatched MMA seq64/head_dim128 score passed correctness" in context
     assert "The unpatched MMA seq128/head_dim128 score passed correctness" in context
     assert "The unpatched MMA seq256/head_dim128 score passed correctness" in context
@@ -2070,6 +2083,7 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "No-edit mode" in prompt
     assert "Supported ops are replace_once" in prompt
     assert "Legacy edit mode" in prompt
+    assert "must not edit .cu/.cuh kernel sources directly" in prompt
     assert 'candidate_edit starts with "No edit; "' in prompt
     assert "candidates/cuda_identity_seed.py" in prompt
 
@@ -2134,6 +2148,20 @@ def test_decision_feedback_explains_no_edit_with_payload_error() -> None:
     content = updated["messages"][0]["content"]
     assert "No-edit mode cannot include candidate_transform or candidate_patch" in content
     assert "remove the 'No edit;' prefix" in content
+
+
+def test_decision_feedback_explains_raw_cuda_patch_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("candidate_patch must not edit CUDA source files directly"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not use raw candidate_patch for .cu or .cuh files" in content
+    assert "Express the CUDA edit as one candidate_transform operation" in content
+    assert "Raw candidate_patch is only for non-CUDA candidate files" in content
 
 
 def test_decision_feedback_explains_missing_required_keys_error() -> None:

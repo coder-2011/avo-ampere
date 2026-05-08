@@ -959,3 +959,11 @@ source files.
   unpatched MMA seed score because older retry text still said only
   `candidate_patch`. Score-repeat errors and feedback now consistently say
   `candidate_transform/candidate_patch`, with `candidate_transform` preferred.
+  A later live loop still used a legacy raw CUDA diff and scored a warp-row
+  direct-global-V patch. It removed `v_tiles` and loaded V directly from global
+  memory inside the PV accumulation loop. The score passed correctness but
+  regressed geomean to `0.40530677363112055` TFLOPS versus the accepted MMA
+  direct-accumulation `0.5772885607891738`. Runtime validation now rejects raw
+  `candidate_patch` edits to `.cu`/`.cuh` files; CUDA kernel edits must use
+  `candidate_transform`. Raw diffs remain available only for non-CUDA candidate
+  files such as wrappers.

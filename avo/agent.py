@@ -295,7 +295,8 @@ class VariationDecision:
         _validate_candidate_patch_domain_sanity(candidate_patch)
         next_command = _validate_next_command(
             _require_string(normalized_payload, "next_command"),
-            candidate_patch=edit_payload,
+            candidate_patch=candidate_patch,
+            candidate_transform=candidate_transform,
             planning_text=planning_text,
         )
         return cls(
@@ -421,8 +422,9 @@ def build_variation_prompt(
         "Supported ops are replace_once, insert_before_once, insert_after_once, and "
         "set_constexpr_int; the orchestrator materializes and preflights the patch. "
         "Legacy edit mode: candidate_patch is one small raw git-style unified diff under "
-        "candidates/ starting with 'diff --git'. Use this only when no structured "
-        "transform can express the edit. No-edit mode: candidate_patch is exactly the "
+        "candidates/ starting with 'diff --git'. It may edit wrappers or other non-CUDA "
+        "candidate files, but it must not edit .cu/.cuh kernel sources directly. No-edit "
+        "mode: candidate_patch is exactly the "
         "empty string \"\", candidate_edit starts with \"No edit; \", and next_command is only "
         "a bounded score, compile, or environment diagnostic for existing files. Do not include "
         "markdown fences or commentary in candidate_patch. Do not describe extending, updating, "
@@ -468,7 +470,7 @@ def build_repo_context(root: Path) -> str:
         "Preferred edit channel: candidate_transform, a single tiny structured operation "
         "under candidates/. Supported ops: replace_once, insert_before_once, "
         "insert_after_once, set_constexpr_int. Legacy candidate_patch raw diffs are allowed "
-        "only when a transform cannot express the change.",
+        "only for non-CUDA candidate files; .cu/.cuh kernel edits must use candidate_transform.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compile diagnostics are already recorded for "
         "candidates/cuda_mma_attention/attention_kernel.cu, "
@@ -636,6 +638,13 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "No-edit mode cannot include candidate_transform or candidate_patch. Either "
             "remove the edit payload and run only the bounded diagnostic, or remove the "
             "'No edit;' prefix and describe the structured transform/raw diff as the edit. "
+        )
+    if "must not edit CUDA source files directly" in message:
+        return (
+            "Do not use raw candidate_patch for .cu or .cuh files. Express the CUDA edit "
+            "as one candidate_transform operation, or choose a smaller CUDA transform that "
+            "can be represented by replace_once, insert_before_once, insert_after_once, or "
+            "set_constexpr_int. Raw candidate_patch is only for non-CUDA candidate files. "
         )
     if "known invalid by the decision itself" in message:
         if "must not be scored" in message:
@@ -1061,6 +1070,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch inserts async helper definitions inside the MMA kernel "
             "signature and duplicates the kernel declaration"
         )
+    if _candidate_patch_edits_cuda_source(candidate_patch):
+        raise ValueError(
+            "candidate_patch must not edit CUDA source files directly; use "
+            "candidate_transform for .cu/.cuh kernel edits"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -1081,6 +1095,29 @@ def _candidate_patch_changed_paths(candidate_patch: str) -> set[str]:
             if raw_path.startswith(("a/", "b/")):
                 paths.add(raw_path[2:])
     return paths
+
+
+def _candidate_edit_present(
+    candidate_patch: str,
+    candidate_transform: dict[str, Any] | None,
+) -> bool:
+    return bool(candidate_patch.strip() or candidate_transform is not None)
+
+
+def _candidate_edit_changed_paths(
+    candidate_patch: str,
+    candidate_transform: dict[str, Any] | None,
+) -> set[str]:
+    if candidate_transform is not None and isinstance(candidate_transform.get("path"), str):
+        return {candidate_transform["path"]}
+    return _candidate_patch_changed_paths(candidate_patch)
+
+
+def _candidate_patch_edits_cuda_source(candidate_patch: str) -> bool:
+    return any(
+        path.endswith((".cu", ".cuh"))
+        for path in _candidate_patch_changed_paths(candidate_patch)
+    )
 
 
 def _candidate_patch_adds_only_unroll_pragmas(candidate_patch: str) -> bool:
@@ -1394,6 +1431,7 @@ def _validate_next_command(
     command: str,
     *,
     candidate_patch: str = "",
+    candidate_transform: dict[str, Any] | None = None,
     planning_text: str = "",
 ) -> str:
     try:
@@ -1413,6 +1451,7 @@ def _validate_next_command(
     _validate_subcommand_arguments(
         parts,
         candidate_patch=candidate_patch,
+        candidate_transform=candidate_transform,
         planning_text=planning_text,
     )
     return command
@@ -1422,6 +1461,7 @@ def _validate_subcommand_arguments(
     parts: list[str],
     *,
     candidate_patch: str = "",
+    candidate_transform: dict[str, Any] | None = None,
     planning_text: str = "",
 ) -> None:
     subcommand = parts[1]
@@ -1430,7 +1470,8 @@ def _validate_subcommand_arguments(
     elif subcommand == "compile":
         _validate_compile_command_context(
             planning_text,
-            candidate_patch=candidate_patch,
+            candidate_patch=candidate_patch
+            or ("<structured-transform>" if candidate_transform is not None else ""),
         )
         if _candidate_patch_adds_only_unroll_pragmas(candidate_patch):
             raise ValueError(
@@ -1460,6 +1501,7 @@ def _validate_subcommand_arguments(
             _validate_compile_source_not_recorded_baseline(
                 source,
                 candidate_patch=candidate_patch,
+                candidate_transform=candidate_transform,
             )
         if out_dir is not None:
             _validate_command_path(out_dir, "--out-dir", allowed_roots=("build/",))
@@ -1483,11 +1525,13 @@ def _validate_subcommand_arguments(
                 parts,
                 candidate=candidate,
                 candidate_patch=candidate_patch,
+                candidate_transform=candidate_transform,
             )
             _validate_known_candidate_score_shape(
                 parts,
                 candidate=candidate,
                 candidate_patch=candidate_patch,
+                candidate_transform=candidate_transform,
             )
 
 
@@ -1556,8 +1600,12 @@ def _validate_compile_source_not_recorded_baseline(
     source: str,
     *,
     candidate_patch: str,
+    candidate_transform: dict[str, Any] | None = None,
 ) -> None:
-    if candidate_patch.strip() or source not in RECORDED_NO_PATCH_COMPILE_SOURCES:
+    if (
+        _candidate_edit_present(candidate_patch, candidate_transform)
+        or source not in RECORDED_NO_PATCH_COMPILE_SOURCES
+    ):
         return
     raise ValueError(
         "next_command repeats a recorded no-patch compile diagnostic; include "
@@ -1571,6 +1619,7 @@ def _validate_known_candidate_score_shape(
     *,
     candidate: str,
     candidate_patch: str,
+    candidate_transform: dict[str, Any] | None = None,
 ) -> None:
     seq_lens = _score_seq_lens(parts)
     head_dim = _score_head_dim(parts)
@@ -1584,7 +1633,8 @@ def _validate_known_candidate_score_shape(
         "--num-heads",
         default=DEFAULT_SCORE_NUM_HEADS,
     )
-    if candidate_patch.strip():
+    if _candidate_edit_present(candidate_patch, candidate_transform):
+        changed_paths = _candidate_edit_changed_paths(candidate_patch, candidate_transform)
         if (
             candidate == TILED_SEED
             and _is_outside_tiled_validated_cap(
@@ -1593,7 +1643,7 @@ def _validate_known_candidate_score_shape(
                 total_tokens=total_tokens,
                 num_heads=num_heads,
             )
-            and _candidate_patch_changed_paths(candidate_patch) <= {TILED_SEED}
+            and changed_paths <= {TILED_SEED}
         ):
             raise ValueError(
                 "next_command scores tiled outside the validated smoke shape after only "
@@ -1681,8 +1731,9 @@ def _validate_patched_mma_score_is_compile_checked_first(
     *,
     candidate: str,
     candidate_patch: str,
+    candidate_transform: dict[str, Any] | None = None,
 ) -> None:
-    if not candidate_patch.strip() or candidate != MMA_SEED:
+    if not _candidate_edit_present(candidate_patch, candidate_transform) or candidate != MMA_SEED:
         return
     seq_lens = _score_seq_lens(parts)
     head_dim = _score_head_dim(parts)
