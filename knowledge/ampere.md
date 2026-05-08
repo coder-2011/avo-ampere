@@ -109,7 +109,10 @@ variation steps.
   same-head CTAs; head dimension 128 and boundary CTAs use the global packed path.
   The wrapper currently caps smoke scoring at sequence length 128 and head
   dimension 128. This is still far from FA2: it does not use `mma.sync` or
-  `cp.async`.
+  `cp.async`. With `--ptxas-options=-v`, the current warp-row kernel reports no
+  spills; BF16/Half entry points use 48 registers, 1 barrier, and 16896 bytes
+  shared memory, while the FP32 entry point uses 56 registers, 1 barrier, and
+  33280 bytes shared memory.
 - NVIDIA's CUTLASS CuTeDSL Ampere FlashAttention v2 example is useful search
   evidence for the direction from the warp-row seed toward FA2-like structure:
   it combines 128-bit `cp.async` Q/K/V global-to-shared copies, Ampere BF16/FP16
