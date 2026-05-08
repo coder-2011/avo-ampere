@@ -220,6 +220,11 @@ variation steps.
   double buffering or `cp.async`, rerun that flat dynamic K/V migration as a
   bounded score on the current seq256/head_dim128 BF16 suite to prove correctness
   and throughput.
+  The scored standalone dynamic-shared K/V migration preserved correctness but
+  regressed the current best: geomean 0.32420366797036887 TFLOPS, noncausal
+  0.42179242571503833 TFLOPS, causal 0.24919370741961078 TFLOPS. Do not repeat
+  dynamic-shared K/V migration by itself; only revisit dynamic shared memory when
+  adding real async-copy or double-buffering logic that can offset the overhead.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
