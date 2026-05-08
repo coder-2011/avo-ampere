@@ -14,7 +14,7 @@ using namespace nvcuda;
 
 constexpr int kTile = 16;
 constexpr int kMaxSeqLen = 32;
-constexpr int kHeadDim = 32;
+constexpr int kHeadDim = 64;
 constexpr int kScoreElements = kTile * kTile;
 constexpr int kOutputElements = kTile * kHeadDim;
 constexpr int kThreads = 256;
@@ -59,7 +59,7 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
       wmma::fragment<wmma::accumulator, kTile, kTile, 16, float> score_frag;
       wmma::fill_fragment(score_frag, 0.0f);
 
-      for (int chunk = 0; chunk < 2; ++chunk) {
+      for (int chunk = 0; chunk < 4; ++chunk) {
         wmma::fragment<wmma::matrix_a,
                        kTile,
                        kTile,
@@ -128,7 +128,7 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
     __syncthreads();
 
     if (threadIdx.x < warpSize) {
-      for (int chunk = 0; chunk < 2; ++chunk) {
+      for (int chunk = 0; chunk < 4; ++chunk) {
         wmma::fragment<wmma::matrix_a,
                        kTile,
                        16,
@@ -179,7 +179,7 @@ torch::Tensor attention_cuda(torch::Tensor q,
   TORCH_CHECK(v.scalar_type() == at::ScalarType::BFloat16, "v must be bf16");
   const int seq_len = static_cast<int>(q.size(2));
   TORCH_CHECK(seq_len == kTile || seq_len == kMaxSeqLen, "seq_len must be 16 or 32");
-  TORCH_CHECK(q.size(3) == kHeadDim, "head_dim must be 32");
+  TORCH_CHECK(q.size(3) == kHeadDim, "head_dim must be 64");
 
   auto output = torch::empty_like(q);
   const int batch_heads = static_cast<int>(q.size(0) * q.size(1));
