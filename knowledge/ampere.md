@@ -195,6 +195,12 @@ variation steps.
   small aligned shared-memory tile path without early returns or dead score tiles;
   direct global-load skeletons that do not integrate with online softmax are not
   useful progress.
+  A later warp-row WMMA QK skeleton used `scalar_t` as the WMMA matrix fragment
+  element inside the generic PyTorch-dispatched kernel. NVCC instantiated that
+  code for `float`, `c10::Half`, and `c10::BFloat16`, and rejected all matrix A/B
+  fragments as incomplete. The planner now rejects `scalar_t` WMMA matrix
+  fragments; future WMMA patches must use explicit CUDA WMMA element types, such
+  as `__nv_bfloat16`, inside dtype-specific code paths.
   The next accepted warp-row improvement added one padding column to both staged
   K and V shared-memory tiles (`kMaxHeadDim + 1`) to reduce bank conflicts in the
   V accumulation path. It preserved correctness on the seq256/head_dim128 BF16
