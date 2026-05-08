@@ -16,6 +16,10 @@ DEFAULT_AGENT_RETRY_DELAY_S = 1.0
 ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "score"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 TOOL_PARAMETER_MARKERS = ("<parameter ", "</parameter>")
+DEFAULT_SCORE_HEAD_DIM = 128
+DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
+WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
+MMA_SEED = "candidates/cuda_mma_attention_seed.py"
 PATCH_REQUIRED_EDIT_VERBS = frozenset(
     {
         "add",
@@ -139,7 +143,8 @@ class VariationDecision:
             expected_effect=_require_string(normalized_payload, "expected_effect"),
             risk=_require_string(normalized_payload, "risk"),
             next_command=_validate_next_command(
-                _require_string(normalized_payload, "next_command")
+                _require_string(normalized_payload, "next_command"),
+                candidate_patch=candidate_patch,
             ),
         )
 
@@ -279,6 +284,10 @@ def build_repo_context(root: Path) -> str:
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
         "or empty.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
+        "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
+        "seq_lens 16 or 32 with head_dim 16; "
+        "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 128 and "
+        "head_dim <= 128. Larger seed scores need candidate_patch to update the wrapper/kernel.",
     ]
     if candidates:
         lines.append("Candidate modules:")
@@ -429,7 +438,7 @@ def _candidate_edit_requires_patch(candidate_edit: str) -> bool:
     return any(word in PATCH_REQUIRED_EDIT_VERBS for word in words)
 
 
-def _validate_next_command(command: str) -> str:
+def _validate_next_command(command: str, *, candidate_patch: str = "") -> str:
     try:
         parts = shlex.split(command)
     except ValueError as exc:
@@ -444,11 +453,11 @@ def _validate_next_command(command: str) -> str:
         raise ValueError(
             f"next_command uses unsupported avo subcommand '{subcommand}'; allowed: {allowed}"
         )
-    _validate_subcommand_arguments(parts)
+    _validate_subcommand_arguments(parts, candidate_patch=candidate_patch)
     return command
 
 
-def _validate_subcommand_arguments(parts: list[str]) -> None:
+def _validate_subcommand_arguments(parts: list[str], *, candidate_patch: str = "") -> None:
     subcommand = parts[1]
     if subcommand == "compile":
         if _has_option(parts, "--candidate"):
@@ -488,6 +497,11 @@ def _validate_subcommand_arguments(parts: list[str]) -> None:
                 "--candidate",
                 allowed_roots=("candidates/",),
                 suffixes=(".py",),
+            )
+            _validate_known_candidate_score_shape(
+                parts,
+                candidate=candidate,
+                candidate_patch=candidate_patch,
             )
 
 
@@ -550,6 +564,64 @@ def _validate_command_path(
     if suffixes is not None and path.suffix not in suffixes:
         allowed = ", ".join(suffixes)
         raise ValueError(f"next_command {option} must reference a {allowed} file")
+
+
+def _validate_known_candidate_score_shape(
+    parts: list[str],
+    *,
+    candidate: str,
+    candidate_patch: str,
+) -> None:
+    if candidate_patch.strip():
+        return
+    seq_lens = _score_seq_lens(parts)
+    head_dim = _score_head_dim(parts)
+    if candidate == WARP_ROWS_SEED:
+        if any(seq_len > 128 for seq_len in seq_lens) or head_dim > 128:
+            raise ValueError(
+                "next_command scores cuda_warp_rows_attention_seed.py outside its "
+                "unpatched seq_len<=128/head_dim<=128 cap; include candidate_patch "
+                "to update the wrapper/kernel first"
+            )
+    elif candidate == MMA_SEED:
+        if any(seq_len not in {16, 32} for seq_len in seq_lens) or head_dim != 16:
+            raise ValueError(
+                "next_command scores cuda_mma_attention_seed.py outside its unpatched "
+                "seq_len 16/32 and head_dim 16 cap; include candidate_patch to update "
+                "the wrapper/kernel first"
+            )
+
+
+def _score_seq_lens(parts: list[str]) -> tuple[int, ...]:
+    raw = _single_option_value(parts, "--seq-lens")
+    if raw is None:
+        return DEFAULT_SCORE_SEQ_LENS
+    values: list[int] = []
+    for item in raw.split(","):
+        stripped = item.strip()
+        if not stripped:
+            raise ValueError("next_command --seq-lens must be a comma-separated list of integers")
+        try:
+            value = int(stripped)
+        except ValueError as exc:
+            raise ValueError("next_command --seq-lens must contain only integers") from exc
+        if value <= 0:
+            raise ValueError("next_command --seq-lens values must be positive")
+        values.append(value)
+    return tuple(values)
+
+
+def _score_head_dim(parts: list[str]) -> int:
+    raw = _single_option_value(parts, "--head-dim")
+    if raw is None:
+        return DEFAULT_SCORE_HEAD_DIM
+    try:
+        head_dim = int(raw)
+    except ValueError as exc:
+        raise ValueError("next_command --head-dim must be an integer") from exc
+    if head_dim <= 0:
+        raise ValueError("next_command --head-dim must be positive")
+    return head_dim
 
 
 def _recover_json_object(text: str) -> dict[str, Any] | None:

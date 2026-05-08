@@ -140,6 +140,55 @@ def test_parse_variation_decision_rejects_candidate_score_without_candidate() ->
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_unpatched_warp_rows_score_outside_cap() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Score the existing warp-row seed at seq 256."
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_warp_rows_attention_seed.py "
+        "--seq-lens 256 --total-tokens 256 --num-heads 1 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="outside its unpatched seq_len<=128"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_patched_warp_rows_score_outside_cap() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Extend the warp-row wrapper cap for seq 256."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention_seed.py "
+        "b/candidates/cuda_warp_rows_attention_seed.py\n"
+        "--- a/candidates/cuda_warp_rows_attention_seed.py\n"
+        "+++ b/candidates/cuda_warp_rows_attention_seed.py\n"
+        "@@ -1 +1 @@\n"
+        "-MAX_SMOKE_SEQUENCE = 128\n"
+        "+MAX_SMOKE_SEQUENCE = 256\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_warp_rows_attention_seed.py "
+        "--seq-lens 256 --total-tokens 256 --num-heads 1 --head-dim 128"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command == payload["next_command"]
+
+
+def test_parse_variation_decision_rejects_unpatched_mma_score_outside_cap() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Score the existing MMA seed at head_dim 32."
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 32"
+    )
+
+    with pytest.raises(ValueError, match="outside its unpatched seq_len 16/32"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_non_string_patch() -> None:
     payload = decision_payload()
     payload["candidate_patch"] = {"diff": "not-a-string"}
@@ -222,6 +271,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/torch_sdpa_seed.py" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu" in context
     assert "candidates/cuda_identity/identity_kernel.cu" in context
+    assert "Unpatched seed score caps:" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
     assert "candidate_patch as a raw unified diff" in context
