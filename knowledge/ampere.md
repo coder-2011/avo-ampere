@@ -496,6 +496,14 @@ variation steps.
   be removed. The planner now rejects non-empty patches when their own risk text
   calls out stale code that still needs removal or may reference undeclared
   symbols.
+  A later head_dim32 two-chunk patch removed the stale single-chunk QK lines and
+  widened `pv_tile`/`output_acc`, but still declared the score accumulator as
+  `wmma::fragment<wmma::accumulator, kTile, kTile, kHeadDim, float>` after
+  setting `kHeadDim = 32`. NVCC rejected the instantiated
+  `fragment<accumulator, 16, 16, 32, float>` as incomplete/unsupported. The
+  planner now rejects this specific score-fragment shape; future two-chunk QK
+  patches must keep each WMMA fragment K at 16 and accumulate the two chunks
+  into a valid 16x16 score accumulator.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
