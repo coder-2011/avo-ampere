@@ -292,6 +292,56 @@ def test_parse_variation_decision_rejects_unpatched_mma_workload_scaling() -> No
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_unpatched_tiled_score_outside_validated_cap() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Score the existing tiled seed at the larger smoke shape."
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_tiled_attention_seed.py "
+        "--seq-lens 128 --total-tokens 512 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="outside its unpatched validated seq_len 16"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_unpatched_tiled_validated_smoke() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "No edit needed; score the validated tiny tiled smoke."
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_tiled_attention_seed.py "
+        "--seq-lens 16 --total-tokens 16 --num-heads 1 --head-dim 16"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command == payload["next_command"]
+
+
+def test_parse_variation_decision_allows_patched_tiled_score_outside_cap() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Fix the tiled kernel online softmax and score seq 128."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_tiled_attention/attention_kernel.cu "
+        "b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-#include <ATen/cuda/CUDAContext.h>\n"
+        "+#include <ATen/cuda/CUDAContext.h>\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_tiled_attention_seed.py "
+        "--seq-lens 128 --total-tokens 512 --num-heads 4 --head-dim 128"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command == payload["next_command"]
+
+
 def test_parse_variation_decision_rejects_non_string_patch() -> None:
     payload = decision_payload()
     payload["candidate_patch"] = {"diff": "not-a-string"}
@@ -376,6 +426,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/cuda_identity/identity_kernel.cu" in context
     assert "Unpatched seed score caps:" in context
     assert "total_tokens <= 512" in context
+    assert "cuda_tiled_attention_seed.py is only validated at seq_lens 16" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context

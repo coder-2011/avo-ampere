@@ -22,6 +22,7 @@ DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
 DEFAULT_SCORE_TOTAL_TOKENS = 32768
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
 MMA_SEED = "candidates/cuda_mma_attention_seed.py"
+TILED_SEED = "candidates/cuda_tiled_attention_seed.py"
 ENV_COMMAND_KEYWORDS = (
     "baseline",
     "build",
@@ -327,8 +328,10 @@ def build_repo_context(root: Path) -> str:
         "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
         "seq_lens 16 or 32 with head_dim 16, total_tokens <= 32, and num_heads 1; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 128 and "
-        "head_dim <= 128 with total_tokens <= 512 and num_heads <= 4. Larger seed scores "
-        "need candidate_patch to update the wrapper/kernel.",
+        "head_dim <= 128 with total_tokens <= 512 and num_heads <= 4; "
+        "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
+        "head_dim 16, total_tokens <= 16, and num_heads 1. Larger seed scores need "
+        "candidate_patch to update the wrapper/kernel.",
     ]
     if candidates:
         lines.append("Candidate modules:")
@@ -670,6 +673,18 @@ def _validate_known_candidate_score_shape(
                 "next_command scores cuda_mma_attention_seed.py outside its unpatched "
                 "seq_len 16/32, head_dim 16, total_tokens<=32, and num_heads=1 cap; "
                 "include candidate_patch to update the wrapper/kernel first"
+            )
+    elif candidate == TILED_SEED:
+        if (
+            any(seq_len != 16 for seq_len in seq_lens)
+            or head_dim != 16
+            or total_tokens > 16
+            or num_heads != 1
+        ):
+            raise ValueError(
+                "next_command scores cuda_tiled_attention_seed.py outside its unpatched "
+                "validated seq_len 16, head_dim 16, total_tokens<=16, and num_heads=1 "
+                "cap; include candidate_patch to fix or extend the wrapper/kernel first"
             )
 
 

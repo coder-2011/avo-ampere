@@ -116,7 +116,13 @@ variation steps.
 - The tiled seed compiles cleanly on sm86 with no spills. Its ptxas diagnostics
   report 40 registers and 1 barrier for BF16/Half/FP32 entry points, and 48
   registers and 1 barrier for the double entry point. The ptxas output did not
-  report static shared-memory allocation for those entry points.
+  report static shared-memory allocation for those entry points. It passes the
+  tiny BF16 smoke at `seq_len=16`, `head_dim=16`, `total_tokens=16`, and
+  `num_heads=1` with geomean `1.1994290536675978e-05` TFLOPS, but fails the
+  larger `seq_len=128`, `head_dim=128`, `total_tokens=512`, `num_heads=4` smoke
+  with max_abs_error `0.485504150390625` noncausal and `1.4482421875` causal.
+  Do not score larger tiled shapes without a patch that fixes or extends the
+  tiled kernel first.
 - NVIDIA's CUTLASS CuTeDSL Ampere FlashAttention v2 example is useful search
   evidence for the direction from the warp-row seed toward FA2-like structure:
   it combines 128-bit `cp.async` Q/K/V global-to-shared copies, Ampere BF16/FP16
