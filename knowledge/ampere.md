@@ -38,10 +38,13 @@ variation steps.
   setup will fail; fix `CUDA_HOME`/`CUDA_PATH`/`PATH` or use a torch build that
   matches the available toolkit before retrying the baseline.
 - On this pod, installing `nvidia-cuda-nvcc==13.0.88`,
-  `nvidia-cuda-crt==13.0.88`, and `nvidia-nvvm==13.0.88` provides a CUDA 13.0
-  compiler under the Python site-packages `nvidia/cu13` root. The baseline build
-  environment prefers that root when the ambient system `CUDA_HOME` points at the
-  incompatible CUDA 12.9 toolkit.
+  `nvidia-cuda-crt==13.0.88`, `nvidia-nvvm==13.0.88`, and
+  `nvidia-cuda-cccl==13.0.85` provides a CUDA 13.0 compiler, CRT, NVVM, and CCCL
+  headers under the Python site-packages `nvidia/cu13` root. The baseline and
+  candidate extension environments prefer that root when the ambient system
+  `CUDA_HOME` points at the incompatible CUDA 12.9 toolkit. They also filter
+  ambient `/usr/local/cuda*` include/lib paths and add a cached `libcudart.so`
+  link shim for NVIDIA wheels that ship only `libcudart.so.13`.
 - Score records can use `--trials N` to collect replicate CUDA-event timings.
   Per-case TFLOPS is computed from the median sample, and the JSON includes
   samples, min, mean, median, and coefficient of variation so noisy runs are
