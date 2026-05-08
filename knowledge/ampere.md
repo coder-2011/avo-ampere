@@ -231,6 +231,14 @@ variation steps.
   0.42179242571503833 TFLOPS, causal 0.24919370741961078 TFLOPS. Do not repeat
   dynamic-shared K/V migration by itself; only revisit dynamic shared memory when
   adding real async-copy or double-buffering logic that can offset the overhead.
+  A later warp-row patch converted the shared `score_tiles` staging buffer from
+  FP32 to BF16 to halve that buffer's shared-memory footprint. It preserved
+  correctness on the fixed seq256/head_dim128 BF16 suite, but regressed the
+  shared-memory skew best: geomean `0.3565090838055145` TFLOPS versus
+  `0.43185073056556733`, with noncausal `0.44378300977557367` TFLOPS and causal
+  `0.28639836144273007` TFLOPS. Do not repeat the BF16 `score_tiles`
+  conversion as a candidate-improving step; the planner now rejects that exact
+  buffer-precision change.
   A direct threshold-only change from `head_dim <= 64` to `head_dim <= 128` for
   `can_stage_shared` is unsafe. The generated patch was corrupt, and a manual
   one-line score check failed correctness: noncausal hit a CUDA unknown error and
