@@ -202,6 +202,12 @@ variation steps.
   signature differs from the seq256 warp-row best. Do not spend another loop on
   the unpatched MMA baseline unless checking that the CUDA extension toolchain
   still works after an environment change.
+  A subsequent no-edit compile diagnostic for
+  `candidates/cuda_mma_attention/attention_kernel.cu` succeeded on sm86 with 40
+  registers, 1 barrier, and 3776 bytes of shared memory, but it did not test a
+  source change or score a candidate. The planner/validator now blocks repeated
+  no-patch compiles of that recorded MMA source; future MMA compiles should
+  build-check a non-empty candidate patch.
   A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
   to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as
   `fragment<matrix_a, 16, 16, 32, ...>` and `fragment<accumulator, 16, 32, 16,

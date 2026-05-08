@@ -154,7 +154,7 @@ def test_parse_variation_decision_allows_compile_source_out_dir() -> None:
     payload["expected_effect"] = "Confirm the translation unit still builds."
     payload["risk"] = "Compilation may expose syntax or include-path issues."
     payload["next_command"] = (
-        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "avo compile --source candidates/new_attention/attention_kernel.cu "
         "--out-dir build/smoke"
     )
 
@@ -172,6 +172,21 @@ def test_parse_variation_decision_rejects_recorded_no_patch_compile_baseline() -
     payload["next_command"] = (
         "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
         "--out-dir build/warp_diag"
+    )
+
+    with pytest.raises(ValueError, match="recorded no-patch compile diagnostic"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_recorded_mma_no_patch_compile_baseline() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = "The MMA seed build path may have changed."
+    payload["candidate_edit"] = "Compile the CUDA source to verify nvcc accepts it."
+    payload["expected_effect"] = "Confirm already-recorded WMMA seed build diagnostics."
+    payload["risk"] = "This repeats a known baseline without changing code."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_baseline_check"
     )
 
     with pytest.raises(ValueError, match="recorded no-patch compile diagnostic"):
@@ -452,6 +467,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "No-patch compile diagnostics are already recorded" in context
+    assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
     assert "candidate_patch as a raw unified diff" in context

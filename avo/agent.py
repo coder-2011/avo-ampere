@@ -27,6 +27,7 @@ MMA_SEED = "candidates/cuda_mma_attention_seed.py"
 TILED_SEED = "candidates/cuda_tiled_attention_seed.py"
 RECORDED_NO_PATCH_COMPILE_SOURCES = frozenset(
     {
+        "candidates/cuda_mma_attention/attention_kernel.cu",
         "candidates/cuda_tiled_attention/attention_kernel.cu",
         "candidates/cuda_warp_rows_attention/attention_kernel.cu",
     }
@@ -341,7 +342,8 @@ def build_repo_context(root: Path) -> str:
         "or empty.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compile diagnostics are already recorded for "
-        "candidates/cuda_warp_rows_attention/attention_kernel.cu and "
+        "candidates/cuda_mma_attention/attention_kernel.cu, "
+        "candidates/cuda_warp_rows_attention/attention_kernel.cu, and "
         "candidates/cuda_tiled_attention/attention_kernel.cu; compile those sources only "
         "when build-checking a candidate_patch.",
         "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
