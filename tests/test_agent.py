@@ -866,6 +866,31 @@ def test_parse_variation_decision_rejects_stale_code_patch_warning() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_incomplete_removal_warning() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA two-chunk PV and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = (
+        "Main risk: the patch may have incomplete removal of old single-chunk PV "
+        "lines. Those old lines should be completely removed before compile."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="incomplete removal"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_decision_tool_uses_strict_schema() -> None:
     tool = decision_tool()
     assert tool["name"] == DECISION_TOOL_NAME

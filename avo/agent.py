@@ -568,6 +568,12 @@ def _validate_candidate_patch_not_self_rejected(
             "stale code is called out as requiring removal. Return a corrected patch "
             "or choose no-edit mode."
         )
+    if "incomplete removal" in normalized and "should be completely removed" in normalized:
+        raise ValueError(
+            "candidate_patch is described as known invalid by the decision itself; "
+            "the risk calls out incomplete removal of old code. Return a corrected patch "
+            "or choose no-edit mode."
+        )
 
 
 def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
