@@ -203,6 +203,12 @@ variation steps.
   odd/non-packed head dimension. NVIDIA CUTLASS guidance also frames unrolling
   as most useful for loops with compile-time-known trip counts; the scalar
   fallback loop uses runtime `head_dim`.
+  A later q-offset hoist patch was rejected before compile because its context
+  did not match the current warp-row source. The source already computes
+  `q_offset` before both shared and global K/V tile loops; merely introducing a
+  `q_row = q + q_offset` pointer is likely too small to beat timing noise, and
+  any such patch must use exact context after `can_stage_shared` is declared if
+  it branches on that value.
   NVIDIA's CUDA Programming Guide says the mapping of matrix elements into
   WMMA fragment internal storage is unspecified and can change across
   architectures. Do not infer row/column positions from `fragment.x[]`; apply
