@@ -1693,6 +1693,7 @@ def test_decision_feedback_explains_self_invalid_patch_error() -> None:
 
     content = updated["messages"][0]["content"]
     assert "Do not retry a patch whose own hypothesis" in content
+    assert "cannot improve throughput" in content
     assert "Submit a corrected raw diff" in content
     assert "switch to No edit; mode" in content
 

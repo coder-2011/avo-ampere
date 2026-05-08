@@ -839,3 +839,8 @@ source files.
   risk text said the diff was incomplete and should be rejected. The planner now
   treats those self-invalid phrases as hard stops and rejects 2D probability
   indexing unless the diff also declares `probabilities` as a 2D shared tile.
+  A later loop failed planning validation after three attempts because the
+  decision text still described its patch as unable to improve throughput.
+  Retry feedback now explicitly includes "cannot improve throughput" among the
+  self-invalid patch descriptions that require a corrected diff or no-edit
+  diagnostic instead of another patch attempt.

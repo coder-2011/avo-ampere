@@ -520,9 +520,9 @@ def _validation_feedback_hint(error: ValueError) -> str:
     if "known invalid by the decision itself" in message:
         return (
             "Do not retry a patch whose own hypothesis, expected_effect, or risk says it "
-            "will fail compile, break correctness, is unused, or is not ready. Submit a "
-            "corrected raw diff that no longer has the called-out flaw, or switch to "
-            "No edit; mode for a bounded diagnostic. "
+            "will fail compile, break correctness, is unused, cannot improve throughput, "
+            "or is not ready. Submit a corrected raw diff that no longer has the "
+            "called-out flaw, or switch to No edit; mode for a bounded diagnostic. "
         )
     if "--out-dir must be under: build" in message:
         return (
