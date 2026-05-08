@@ -113,6 +113,10 @@ variation steps.
   spills; BF16/Half entry points use 48 registers, 1 barrier, and 16896 bytes
   shared memory, while the FP32 entry point uses 56 registers, 1 barrier, and
   33280 bytes shared memory.
+- The tiled seed compiles cleanly on sm86 with no spills. Its ptxas diagnostics
+  report 40 registers and 1 barrier for BF16/Half/FP32 entry points, and 48
+  registers and 1 barrier for the double entry point. The ptxas output did not
+  report static shared-memory allocation for those entry points.
 - NVIDIA's CUTLASS CuTeDSL Ampere FlashAttention v2 example is useful search
   evidence for the direction from the warp-row seed toward FA2-like structure:
   it combines 128-bit `cp.async` Q/K/V global-to-shared copies, Ampere BF16/FP16
