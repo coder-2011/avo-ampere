@@ -510,6 +510,13 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "Do not mention fixing, extending, updating, modifying, or implementing code in "
             "no-edit mode. "
         )
+    if "known invalid by the decision itself" in message:
+        return (
+            "Do not retry a patch whose own hypothesis, expected_effect, or risk says it "
+            "will fail compile, break correctness, is unused, or is not ready. Submit a "
+            "corrected raw diff that no longer has the called-out flaw, or switch to "
+            "No edit; mode for a bounded diagnostic. "
+        )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
             "Do not retry scalar sizeof(__nv_bfloat16) async copies. A valid Ampere "

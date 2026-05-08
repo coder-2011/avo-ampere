@@ -732,6 +732,9 @@ variation steps.
   WMMA fragment, but never consumed the preloaded fragment in `mma_sync`. It compiled with unchanged
   resource counts and was cleaned up as a compile-only no-op. Do not repeat unused WMMA preload
   skeletons; wire the preloaded fragment into real QK/PV dataflow before compile-checking.
+  A later planner loop failed validation after three attempts because the proposed patch described
+  itself as known-bad with "will cause a compile error". Treat self-invalid decision text as a hard
+  stop: submit a corrected diff that removes the called-out flaw, or use no-edit diagnostic mode.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.

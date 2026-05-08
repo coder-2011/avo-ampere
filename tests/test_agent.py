@@ -1535,6 +1535,23 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     assert "choose a materially different non-async candidate patch in this retry" in content
 
 
+def test_decision_feedback_explains_self_invalid_patch_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "candidate_patch is described as known invalid by the decision itself; "
+            "found phrase 'will cause a compile error'"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not retry a patch whose own hypothesis" in content
+    assert "Submit a corrected raw diff" in content
+    assert "switch to No edit; mode" in content
+
+
 def test_decision_feedback_explains_sync_mma_k_staging_error() -> None:
     kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
 
