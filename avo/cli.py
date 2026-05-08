@@ -35,6 +35,7 @@ from .evolve import (
     run_decision_command,
     summarize_attempt_history,
     update_promoted_preflight_tracks,
+    validate_decision_against_attempt_history,
     write_attempt,
     write_step,
     write_step_record,
@@ -479,6 +480,7 @@ def _run_evolve_step(args: argparse.Namespace, knowledge: str) -> EvolutionStep:
             repo_context=build_repo_context(args.cwd),
             model=args.model,
         )
+        validate_decision_against_attempt_history(decision, args.attempts_dir)
     except ValueError as exc:
         return planning_failure_step(exc)
     attempt = run_decision_command(

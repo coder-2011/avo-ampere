@@ -87,14 +87,17 @@ NO_EDIT_PHRASES = (
     "without editing",
     "without any edit",
 )
-STRUCTURED_TRANSFORM_OPS = frozenset(
+STRUCTURED_TRANSFORM_STEP_OPS = frozenset(
     {
+        "add_int_to_python_set",
         "replace_once",
         "insert_before_once",
         "insert_after_once",
         "set_constexpr_int",
     }
 )
+STRUCTURED_TRANSFORM_OPS = STRUCTURED_TRANSFORM_STEP_OPS | frozenset({"batch"})
+MAX_TRANSFORM_BATCH_STEPS = 4
 PLANNING_RISK_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
     (
         "no_effect_or_skeleton",
@@ -166,13 +169,15 @@ class CandidatePatchPreflightTrack:
     failure_class: str
     message: str
     detector: Callable[[CandidatePatchInspection], bool]
-TRANSFORM_SCHEMA: dict[str, Any] = {
+
+
+TRANSFORM_STEP_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
         "op": {
             "type": "string",
-            "enum": sorted(STRUCTURED_TRANSFORM_OPS),
-            "description": "Small structured edit operation materialized by the orchestrator.",
+            "enum": sorted(STRUCTURED_TRANSFORM_STEP_OPS),
+            "description": "Single tiny structured edit materialized by the orchestrator.",
         },
         "path": {
             "type": "string",
@@ -190,14 +195,37 @@ TRANSFORM_SCHEMA: dict[str, Any] = {
         },
         "name": {
             "type": "string",
-            "description": "constexpr integer name for set_constexpr_int.",
+            "description": "Integer constant name for set_constexpr_int or add_int_to_python_set.",
         },
         "value": {
             "type": "integer",
-            "description": "constexpr integer value for set_constexpr_int.",
+            "description": "Integer value for set_constexpr_int or add_int_to_python_set.",
         },
     },
     "required": ["op", "path"],
+    "additionalProperties": False,
+}
+TRANSFORM_SCHEMA: dict[str, Any] = {
+    "type": "object",
+    "properties": {
+        **TRANSFORM_STEP_SCHEMA["properties"],
+        "op": {
+            "type": "string",
+            "enum": sorted(STRUCTURED_TRANSFORM_OPS),
+            "description": (
+                "Small structured edit operation, or batch for a small ordered bundle "
+                "of tiny operations materialized by the orchestrator."
+            ),
+        },
+        "steps_json": {
+            "type": "string",
+            "description": (
+                "For op=batch, a compact JSON array of tiny transform step objects. "
+                "Each step has op, path, and the fields required by that op."
+            ),
+        },
+    },
+    "required": ["op"],
     "additionalProperties": False,
 }
 
@@ -233,8 +261,9 @@ DECISION_SCHEMA: dict[str, Any] = {
         "candidate_transform": {
             **TRANSFORM_SCHEMA,
             "description": (
-                "Preferred edit channel for CUDA/kernel evolution. Use exactly one tiny "
-                "structured transform, or omit this field for no-edit/legacy patch mode."
+                "Preferred edit channel for CUDA/kernel evolution. Use one tiny "
+                "structured transform or a small batch of tiny transforms, or omit "
+                "this field for no-edit/legacy patch mode."
             ),
         },
         "expected_effect": {
@@ -304,7 +333,10 @@ class VariationDecision:
         candidate_patch = _validate_candidate_patch(normalized_payload, "candidate_patch")
         raw_candidate_transform = normalized_payload.get("candidate_transform")
         if raw_candidate_transform is None and not candidate_patch.strip():
-            raw_candidate_transform = _infer_candidate_transform_from_edit(candidate_edit)
+            raw_candidate_transform = _infer_candidate_transform_from_edit(
+                candidate_edit,
+                files_to_inspect=files,
+            )
         candidate_transform = _validate_candidate_transform(raw_candidate_transform)
         if candidate_patch.strip() and candidate_transform is not None:
             raise ValueError(
@@ -449,10 +481,13 @@ def build_variation_prompt(
         "Optimize toward realistic long-sequence BF16 attention workloads; current small "
         "candidate smoke shapes are safety fences for unsupported seeds, not the end target.\n"
         "Use one of exactly three modes. Preferred edit mode: candidate_transform is one "
-        "tiny structured operation under candidates/ and candidate_patch is exactly the "
-        "empty string \"\". "
-        "Supported ops are replace_once, insert_before_once, insert_after_once, and "
-        "set_constexpr_int; the orchestrator materializes and preflights the patch. "
+        "tiny structured operation or a small ordered batch under candidates/, and "
+        "candidate_patch is exactly the empty string \"\". "
+        "Supported ops are replace_once, insert_before_once, insert_after_once, "
+        "set_constexpr_int, and add_int_to_python_set; use op=batch with steps_json "
+        "containing up to four tiny "
+        "steps when a coherent candidate needs coordinated wrapper/kernel edits. The "
+        "orchestrator materializes and preflights the patch. "
         "Legacy edit mode: candidate_patch is one small raw git-style unified diff under "
         "candidates/ starting with 'diff --git'. It may edit wrappers or other non-CUDA "
         "candidate files, but it must not edit .cu/.cuh kernel sources directly. No-edit "
@@ -499,10 +534,13 @@ def build_repo_context(root: Path) -> str:
         "4096/8192/16384/32768, total_tokens around 32768, num_heads around 16, "
         "head_dim 128, and both causal modes. Small candidate shapes are smoke fences, "
         "not the optimization objective.",
-        "Preferred edit channel: candidate_transform, a single tiny structured operation "
-        "under candidates/. Supported ops: replace_once, insert_before_once, "
-        "insert_after_once, set_constexpr_int. Legacy candidate_patch raw diffs are allowed "
-        "only for non-CUDA candidate files; .cu/.cuh kernel edits must use candidate_transform.",
+        "Preferred edit channel: candidate_transform, one tiny structured operation or "
+        "a small ordered batch under candidates/. Supported step ops: replace_once, "
+        "insert_before_once, insert_after_once, set_constexpr_int, "
+        "add_int_to_python_set. Use op=batch with steps_json when wrapper and kernel "
+        "caps must change together. Legacy "
+        "candidate_patch raw diffs are allowed only for non-CUDA candidate files; "
+        ".cu/.cuh kernel edits must use candidate_transform.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compile diagnostics are already recorded for "
         "candidates/cuda_mma_attention/attention_kernel.cu, "
@@ -535,9 +573,9 @@ def build_repo_context(root: Path) -> str:
         "MMA shared tiles are tile-local after staging: shared-memory loads should use "
         "tile-local offsets with the staged leading dimension, not global key_start "
         "offsets.",
-        "Shape graduation beyond the current smoke caps is a two-step path: first use "
-        "candidate_transform to update kernel/wrapper structure and run avo compile; "
-        "only score larger realistic shapes after that compile succeeds.",
+        "Shape graduation beyond the current smoke caps should update the wrapper and "
+        "kernel together with a small transform batch, run avo compile first, then score "
+        "larger realistic shapes after that compile succeeds.",
     ]
     if candidates:
         lines.append("Candidate modules:")
@@ -633,7 +671,8 @@ def _validation_feedback_hint(error: ValueError) -> str:
     ):
         return (
             "Choose exactly one valid mode. Preferred edit mode: candidate_transform is "
-            "one structured operation and candidate_patch is ''. Legacy edit mode: "
+            "one structured operation or a small ordered batch and candidate_patch is ''. "
+            "Legacy edit mode: "
             "candidate_patch must be a raw git-style unified diff under candidates/ "
             "starting with 'diff --git'. No-edit mode: candidate_patch must be exactly "
             "'' and candidate_edit must start with 'No edit;' followed only by the "
@@ -644,8 +683,9 @@ def _validation_feedback_hint(error: ValueError) -> str:
     if "candidate_patch and candidate_transform are mutually exclusive" in message:
         return (
             "Choose one edit channel only. For preferred structured-transform mode, set "
-            "candidate_transform to the operation object and set candidate_patch to exactly "
-            "the empty string ''. For legacy raw-diff mode, set candidate_patch to the "
+            "candidate_transform to the operation object or batch object and set "
+            "candidate_patch to exactly the empty string ''. For legacy raw-diff mode, "
+            "set candidate_patch to the "
             "unified diff and omit candidate_transform. "
         )
     if "no-edit mode but includes an edit payload" in message:
@@ -657,16 +697,18 @@ def _validation_feedback_hint(error: ValueError) -> str:
     if "must not edit CUDA source files directly" in message:
         return (
             "Do not use raw candidate_patch for .cu or .cuh files. Express the CUDA edit "
-            "as one candidate_transform operation, or choose a smaller CUDA transform that "
-            "can be represented by replace_once, insert_before_once, insert_after_once, or "
-            "set_constexpr_int. Raw candidate_patch is only for non-CUDA candidate files. "
+            "as candidate_transform: one operation, or op=batch when coordinated "
+            "wrapper/kernel changes are required. Each step must be representable by "
+            "replace_once, insert_before_once, insert_after_once, set_constexpr_int, "
+            "or add_int_to_python_set. "
+            "Raw candidate_patch is only for non-CUDA candidate files. "
         )
     if "structural preflight track" in message:
         return (
             "Treat the rejected edit as a failed transform family, not as a phrase to patch "
-            "around. Choose one smaller candidate_transform that changes real dataflow and "
-            "avoids the same structural class, or switch to a bounded diagnostic that gives "
-            "new information for a different transform family. "
+            "around. Choose a smaller candidate_transform operation or batch that changes "
+            "real dataflow and avoids the same structural class, or switch to a bounded "
+            "diagnostic that gives new information for a different transform family. "
         )
     if "known invalid by the decision itself" in message:
         if "must not be scored" in message:
@@ -700,6 +742,12 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "its wrapper; otherwise choose a different diagnostic such as a compile "
             "check for a new edit. "
         )
+    if "patched MMA shape extension beyond the current smoke cap" in message:
+        return (
+            "For larger MMA scores, use a structured transform batch that changes the "
+            "wrapper cap and the kernel cap/dataflow together. Wrapper-only cap edits "
+            "are not enough to graduate out of the smoke shape. "
+        )
     if "recorded no-patch warp-row seed score" in message:
         return (
             "Do not retry a no-edit score of cuda_warp_rows_attention_seed.py on the "
@@ -719,14 +767,14 @@ def _validation_feedback_hint(error: ValueError) -> str:
         return (
             "Do not retry a no-edit compile of an already-recorded candidate source. If "
             "you are compile-checking a code change, include candidate_transform with a "
-            "single operation and keep candidate_patch as ''. For an integer constant "
-            "change, use set_constexpr_int with path, name, and value. "
+            "single operation or small batch and keep candidate_patch as ''. For an "
+            "integer constant change, use set_constexpr_int with path, name, and value. "
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
             "A valid Ampere async-copy transform must copy aligned 16-byte groups in real "
             "kernel dataflow, with scalar tails outside the async path. If that cannot be "
-            "expressed as one small candidate_transform, choose a different transform "
+            "expressed as a small candidate_transform, choose a different transform "
             "family. "
         )
     return ""
@@ -801,17 +849,68 @@ def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
     if not isinstance(value, dict):
         raise ValueError("candidate_transform must be an object when provided")
     op = value.get("op")
-    path = value.get("path")
     if not isinstance(op, str) or op not in STRUCTURED_TRANSFORM_OPS:
         allowed = ", ".join(sorted(STRUCTURED_TRANSFORM_OPS))
         raise ValueError(f"candidate_transform op must be one of: {allowed}")
+    if op == "batch":
+        extra = set(value) - {"op", "steps", "steps_json"}
+        if extra:
+            raise ValueError(
+                "candidate_transform batch contains unsupported keys: "
+                + ", ".join(sorted(extra))
+            )
+        steps = _candidate_transform_batch_steps(value)
+        if (
+            not isinstance(steps, list)
+            or not steps
+            or len(steps) > MAX_TRANSFORM_BATCH_STEPS
+        ):
+            raise ValueError(
+                "candidate_transform batch steps must contain 1 to "
+                f"{MAX_TRANSFORM_BATCH_STEPS} operations"
+            )
+        return {
+            "op": "batch",
+            "steps": [
+                _validate_candidate_transform_step(step, label=f"batch step {index}")
+                for index, step in enumerate(steps)
+            ],
+        }
+    return _validate_candidate_transform_step(value)
+
+
+def _candidate_transform_batch_steps(value: dict[str, Any]) -> list[Any]:
+    steps = value.get("steps")
+    if isinstance(steps, list):
+        return steps
+    steps_json = value.get("steps_json")
+    if not isinstance(steps_json, str) or not steps_json.strip():
+        raise ValueError("candidate_transform batch requires steps_json")
+    try:
+        parsed = json.loads(steps_json)
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"candidate_transform batch steps_json is invalid JSON: {exc}") from exc
+    if not isinstance(parsed, list):
+        raise ValueError("candidate_transform batch steps_json must be a JSON array")
+    return parsed
+
+
+def _validate_candidate_transform_step(value: Any, *, label: str = "operation") -> dict[str, Any]:
+    if not isinstance(value, dict):
+        raise ValueError(f"candidate_transform {label} must be an object")
+    op = value.get("op")
+    path = value.get("path")
+    if not isinstance(op, str) or op not in STRUCTURED_TRANSFORM_STEP_OPS:
+        allowed = ", ".join(sorted(STRUCTURED_TRANSFORM_STEP_OPS))
+        raise ValueError(f"candidate_transform {label} op must be one of: {allowed}")
     if not isinstance(path, str) or not path.strip():
-        raise ValueError("candidate_transform path must be a non-empty string")
+        raise ValueError(f"candidate_transform {label} path must be a non-empty string")
     _validate_candidate_transform_path(path)
-    extra = set(value) - set(TRANSFORM_SCHEMA["properties"])
+    extra = set(value) - set(TRANSFORM_STEP_SCHEMA["properties"])
     if extra:
         raise ValueError(
-            "candidate_transform contains unsupported keys: " + ", ".join(sorted(extra))
+            f"candidate_transform {label} contains unsupported keys: "
+            + ", ".join(sorted(extra))
         )
     if op == "replace_once":
         _require_transform_string(value, "find")
@@ -819,34 +918,93 @@ def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
     elif op in {"insert_before_once", "insert_after_once"}:
         _require_transform_string(value, "anchor")
         _require_transform_string(value, "text")
-    elif op == "set_constexpr_int":
+    elif op in {"set_constexpr_int", "add_int_to_python_set"}:
         _require_transform_string(value, "name")
         if not isinstance(value.get("value"), int):
-            raise ValueError("candidate_transform value must be an integer")
+            raise ValueError(f"candidate_transform {label} value must be an integer")
     return dict(value)
 
 
-def _infer_candidate_transform_from_edit(candidate_edit: str) -> dict[str, Any] | None:
-    path_match = re.search(
-        r"\b(?P<path>candidates/[A-Za-z0-9_./-]+\.(?:cu|cuh|cpp|h|hpp))\b",
+def _infer_candidate_transform_from_edit(
+    candidate_edit: str,
+    *,
+    files_to_inspect: list[str] | None = None,
+) -> dict[str, Any] | None:
+    candidate_paths = re.findall(
+        r"\b(candidates/[A-Za-z0-9_./-]+\.(?:cu|cuh|cpp|h|hpp|py))\b",
         candidate_edit,
     )
-    if path_match is None:
+    candidate_paths.extend(files_to_inspect or [])
+    candidate_paths = list(dict.fromkeys(candidate_paths))
+    if not candidate_paths:
         return None
-    value_match = re.search(
-        r"\b(?:change|set)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
-        r"(?:\s+from\s+[-+]?\d+)?\s+to\s+(?P<value>[-+]?\d+)\b",
+    source_suffixes = {".cu", ".cuh", ".cpp", ".h", ".hpp"}
+    source_path = next(
+        (path for path in candidate_paths if Path(path).suffix in source_suffixes),
+        None,
+    )
+    if source_path is None:
+        return None
+    steps: list[dict[str, Any]] = []
+    const_match = re.search(
+        r"\b(?:change|set|setting|update|updating)\s+(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
+        r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
         candidate_edit,
         flags=re.IGNORECASE,
     )
-    if value_match is None:
+    if const_match is None:
         return None
-    return {
-        "op": "set_constexpr_int",
-        "path": path_match.group("path"),
-        "name": value_match.group("name"),
-        "value": int(value_match.group("value")),
-    }
+    steps.append(
+        {
+            "op": "set_constexpr_int",
+            "path": source_path,
+            "name": const_match.group("name"),
+            "value": int(const_match.group("value")),
+        }
+    )
+    replace_match = re.search(
+        r"\breplace\s+(?P<find>(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*=\s*\{[^}]+\})"
+        r"\s+with\s+(?P<replace>(?P=name)\s*=\s*\{[^}]+\})",
+        candidate_edit,
+    )
+    wrapper_path = next((path for path in candidate_paths if path.endswith(".py")), None)
+    if replace_match is not None and wrapper_path is not None:
+        steps.append(
+            {
+                "op": "replace_once",
+                "path": wrapper_path,
+                "find": replace_match.group("find"),
+                "replace": replace_match.group("replace"),
+            }
+        )
+    elif wrapper_path is not None:
+        set_name = _infer_python_set_name_from_edit(candidate_edit)
+        if set_name is None:
+            return steps[0]
+        add_match = re.search(r"\badd(?:ing)?\s+(?P<value>[-+]?\d+)\b", candidate_edit)
+        value = int(add_match.group("value")) if add_match is not None else steps[0]["value"]
+        steps.append(
+            {
+                "op": "add_int_to_python_set",
+                "path": wrapper_path,
+                "name": set_name,
+                "value": value,
+            }
+        )
+    if len(steps) == 1:
+        return steps[0]
+    return {"op": "batch", "steps": steps}
+
+
+def _infer_python_set_name_from_edit(candidate_edit: str) -> str | None:
+    direct_match = re.search(
+        r"\b(?:to|into|in|update|updating)\s+(?P<name>[A-Z][A-Z0-9_]*_[A-Z0-9_]+)\b",
+        candidate_edit,
+    )
+    if direct_match is not None:
+        return direct_match.group("name")
+    names = re.findall(r"\b[A-Z][A-Z0-9_]*_[A-Z0-9_]+\b", candidate_edit)
+    return names[0] if len(set(names)) == 1 else None
 
 
 def _validate_candidate_transform_path(raw_path: str) -> None:
@@ -989,6 +1147,12 @@ def _candidate_edit_changed_paths(
     candidate_patch: str,
     candidate_transform: dict[str, Any] | None,
 ) -> set[str]:
+    if candidate_transform is not None and candidate_transform.get("op") == "batch":
+        return {
+            str(step["path"])
+            for step in candidate_transform.get("steps", [])
+            if isinstance(step, dict) and isinstance(step.get("path"), str)
+        }
     if candidate_transform is not None and isinstance(candidate_transform.get("path"), str):
         return {candidate_transform["path"]}
     return _candidate_patch_changed_paths(candidate_patch)
@@ -1040,13 +1204,6 @@ def _candidate_patch_uses_unsupported_mma_m32_fragment(added_text: str) -> bool:
     return explicit_m32 or (sets_ktile32 and symbolic_m32)
 
 
-def _candidate_patch_converts_warp_score_tiles_to_bf16(added_text: str) -> bool:
-    return (
-        "__shared__ __nv_bfloat16 score_tiles" in added_text
-        and "__bfloat162float(scores" in added_text
-    )
-
-
 def _candidate_patch_uses_generic_scalar_wmma_fragments(added_text: str) -> bool:
     compact = re.sub(r"\s+", "", added_text)
     return bool(
@@ -1068,59 +1225,41 @@ def _candidate_patch_uses_missing_wmma_matrix_element_type(added_text: str) -> b
     )
 
 
-def _candidate_patch_repeats_mma_qk_fragment_preload_chain(added_text: str) -> bool:
-    compact = re.sub(r"\s+", "", added_text)
-    return (
-        "k_frag_next" in added_text
-        and "mma_sync(score_frag,q_frag,k_frag_next,score_frag)" in compact
-        and "next_chunk=chunk+1" in compact
-        and "next_chunk<8" in compact
-        and "next_chunk*16" in compact
+def _candidate_patch_has_incomplete_mma_head_dim_extension(candidate_patch: str) -> bool:
+    kernel_before = re.search(
+        r"(?m)^-\s*constexpr\s+int\s+kHeadDim\s*=\s*(?P<value>\d+)\s*;",
+        candidate_patch,
     )
-
-
-def _candidate_patch_repeats_mma_q_fragment_preload_chain(added_text: str) -> bool:
-    compact = re.sub(r"\s+", "", added_text)
-    return (
-        "q_frag_next" in added_text
-        and "q_frag=q_frag_next" in compact
-        and "load_matrix_sync(q_frag_next" in compact
-        and "next_chunk_offset=(chunk+1)*16" in compact
+    kernel_after = re.search(
+        r"(?m)^\+\s*constexpr\s+int\s+kHeadDim\s*=\s*(?P<value>\d+)\s*;",
+        candidate_patch,
     )
-
-
-def _candidate_patch_repeats_stale_tiled_rescale_fix(candidate_patch: str) -> bool:
-    compact = re.sub(r"\s+", "", candidate_patch)
-    return (
-        "-output_acc=tile_acc*tile_scale;" in compact
-        and "+output_acc=output_acc*old_scale+tile_acc*tile_scale;" in compact
+    wrapper_before = re.search(
+        r"(?m)^-\s*SMOKE_HEAD_DIM\s*=\s*(?P<value>\d+)\b",
+        candidate_patch,
     )
-
-
-def _candidate_patch_repeats_tiled_reduction_guard_fix(candidate_patch: str) -> bool:
-    compact = re.sub(r"\s+", "", candidate_patch)
-    return (
-        "+reduce[tid]=score;" in compact
-        and "+reduce[tid]=-std::numeric_limits<float>::infinity();" in compact
-        and "+reduce[tid]=shifted;" in compact
-        and "+reduce[tid]=0.0f;" in compact
+    wrapper_after = re.search(
+        r"(?m)^\+\s*SMOKE_HEAD_DIM\s*=\s*(?P<value>\d+)\b",
+        candidate_patch,
     )
-
-
-def _candidate_patch_repeats_partial_mma_head_dim128_extension(candidate_patch: str) -> bool:
-    compact = re.sub(r"\s+", "", candidate_patch)
+    if (
+        kernel_before is None
+        or kernel_after is None
+        or wrapper_before is None
+        or wrapper_after is None
+    ):
+        return False
     extends_constant = (
-        "-constexprintkHeadDim=64;" in compact
-        and "+constexprintkHeadDim=128;" in compact
-        and "-SMOKE_HEAD_DIM=64" in compact
-        and "+SMOKE_HEAD_DIM=128" in compact
+        int(kernel_after.group("value")) > int(kernel_before.group("value"))
+        and int(wrapper_after.group("value")) > int(wrapper_before.group("value"))
     )
     if not extends_constant:
         return False
+    compact_added = re.sub(r"\s+", "", "\n".join(_candidate_patch_added_lines(candidate_patch)))
     adds_wider_loop = (
-        "+for(intchunk=0;chunk<8;++chunk)" in compact
-        or "+for(intchunk=0;chunk<kHeadDim/16;++chunk)" in compact
-        or "+constexprintkHeadChunks=kHeadDim/16;" in compact
+        "for(intchunk=0;chunk<" in compact_added
+        or "kHeadDim/16" in compact_added
+        or "kHeadChunks" in compact_added
     )
     return not adds_wider_loop
 
@@ -1193,65 +1332,9 @@ def _candidate_patch_adds_stray_mma_probability_fragment_statement(added_text: s
     )
 
 
-def _candidate_patch_repeats_sync_mma_q_staging(added_text: str) -> bool:
-    return (
-        "__shared__ __nv_bfloat16 q_shared[kTile * kHeadDim]" in added_text
-        and bool(re.search(r"\bq_shared\s*\+\s*chunk_offset\b", added_text))
-        and "cp.async" not in added_text
-        and "memcpy_async" not in added_text
-    )
-
-
-def _candidate_patch_repeats_sync_mma_k_staging(added_text: str) -> bool:
-    return (
-        "__shared__ __nv_bfloat16 k_shared[kTile * kHeadDim]" in added_text
-        and bool(re.search(r"\bk_shared\s*\+\s*chunk_offset\b", added_text))
-        and "cp.async" not in added_text
-        and "memcpy_async" not in added_text
-    )
-
-
-def _candidate_patch_repeats_sync_mma_v_staging(added_text: str) -> bool:
-    compact = re.sub(r"\s+", "", added_text)
-    return (
-        (
-            "__shared____nv_bfloat16v_shared[2][kTile*kHeadDim]" in compact
-            or "__shared____nv_bfloat16v_shared[kTile*kHeadDim]" in compact
-        )
-        and (
-            "v_shared[current_buffer][chunk_offset]" in compact
-            or "v_shared+chunk_offset" in compact
-        )
-        and "cp.async" not in added_text
-        and "memcpy_async" not in added_text
-    )
-
-
 def _candidate_patch_uses_invalid_mma_probability_ldm(added_text: str) -> bool:
     compact = re.sub(r"\s+", "", added_text)
     return "load_matrix_sync(probability_frag,probabilities,kTile+1)" in compact
-
-
-def _candidate_patch_repeats_mma_probability_stride_skew(added_text: str) -> bool:
-    compact = re.sub(r"\s+", "", added_text)
-    return (
-        "kProbabilityStride=kTile+8" in compact
-        and (
-            "load_matrix_sync(probability_frag,probabilities,kProbabilityStride)" in compact
-            or "load_matrix_sync(probability_frag,&probabilities[0][0],kProbabilityStride)"
-            in compact
-        )
-    )
-
-
-def _candidate_patch_repeats_mma_probability_stride20_skew(added_text: str) -> bool:
-    compact = re.sub(r"\s+", "", added_text)
-    return (
-        "kProbabilityStride=20" in compact
-        and "__shared____nv_bfloat16probabilities[kTile][kProbabilityStride]" in compact
-        and "load_matrix_sync(probability_frag,&probabilities[0][0],kProbabilityStride)"
-        in compact
-    )
 
 
 def _candidate_patch_uses_2d_probability_index_without_2d_declaration(
@@ -1261,15 +1344,6 @@ def _candidate_patch_uses_2d_probability_index_without_2d_declaration(
     return (
         "probabilities[row][key]" in compact
         and "__shared____nv_bfloat16probabilities[kTile][" not in compact
-    )
-
-
-def _candidate_patch_repeats_mma_score_stride_skew(added_text: str) -> bool:
-    compact = re.sub(r"\s+", "", added_text)
-    return (
-        ("kScoreStride=24" in compact or "kScoreStride=kTile+8" in compact)
-        and "__shared__floatscores[kTile][kScoreStride]" in compact
-        and "store_matrix_sync(&scores[0][0],score_frag,kScoreStride" in compact
     )
 
 
@@ -1312,7 +1386,7 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
             "shape-cap changes must update all loop/chunk structure that covers the new "
             "head dimension"
         ),
-        detector=lambda inspection: _candidate_patch_repeats_partial_mma_head_dim128_extension(
+        detector=lambda inspection: _candidate_patch_has_incomplete_mma_head_dim_extension(
             inspection.patch_text
         ),
     ),
@@ -1547,7 +1621,7 @@ def _validate_subcommand_arguments(
                 allowed_roots=("candidates/",),
                 suffixes=(".py",),
             )
-            _validate_patched_mma_score_is_compile_checked_first(
+            _validate_patched_mma_score_shape_extension(
                 parts,
                 candidate=candidate,
                 candidate_patch=candidate_patch,
@@ -1752,7 +1826,7 @@ def _is_outside_tiled_validated_cap(
     )
 
 
-def _validate_patched_mma_score_is_compile_checked_first(
+def _validate_patched_mma_score_shape_extension(
     parts: list[str],
     *,
     candidate: str,
@@ -1773,18 +1847,38 @@ def _validate_patched_mma_score_is_compile_checked_first(
         "--num-heads",
         default=DEFAULT_SCORE_NUM_HEADS,
     )
-    if (
+    if _is_mma_seed_smoke_shape(
+        seq_lens=seq_lens,
+        head_dim=head_dim,
+        total_tokens=total_tokens,
+        num_heads=num_heads,
+    ):
+        return
+    changed_paths = _candidate_edit_changed_paths(candidate_patch, candidate_transform)
+    if candidate_transform is not None and {
+        MMA_SEED,
+        "candidates/cuda_mma_attention/attention_kernel.cu",
+    } <= changed_paths:
+        return
+    raise ValueError(
+        "next_command scores a patched MMA shape extension beyond the current smoke cap; "
+        "use a structured transform batch that updates both the wrapper cap and kernel "
+        "cap/dataflow together before scoring larger shapes"
+    )
+
+
+def _is_mma_seed_smoke_shape(
+    *,
+    seq_lens: tuple[int, ...],
+    head_dim: int,
+    total_tokens: int,
+    num_heads: int,
+) -> bool:
+    return (
         all(seq_len in {16, 32, 64, 128, 256} for seq_len in seq_lens)
         and head_dim == 128
         and total_tokens <= 1024
         and num_heads <= 4
-    ):
-        return
-    raise ValueError(
-        "next_command scores a patched MMA shape extension beyond the current "
-        "seq256/head_dim128 smoke; "
-        "first run avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
-        "--out-dir build/<name> to build-check the candidate_patch"
     )
 
 

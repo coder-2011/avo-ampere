@@ -522,6 +522,9 @@ def summarize_attempt_history(
     supervisor_signal = _summarize_supervisor_signal(payloads)
     if supervisor_signal:
         summary = f"{summary}\n{supervisor_signal}"
+    followup_signal = _summarize_followup_signal(payloads)
+    if followup_signal:
+        summary = f"{summary}\n{followup_signal}"
     promoted_summary = _summarize_promoted_preflight_tracks(directory)
     if promoted_summary:
         summary = f"{summary}\n{promoted_summary}"
@@ -558,6 +561,29 @@ def update_promoted_preflight_tracks(
     state = {"version": 1, "tracks": tracks}
     _write_promoted_preflight_state(directory, state)
     return state
+
+
+def validate_decision_against_attempt_history(
+    decision: VariationDecision,
+    directory: Path | None,
+) -> None:
+    if directory is None or not directory.exists():
+        return
+    payloads = [payload for _, payload in _load_step_payloads(directory)]
+    if not payloads:
+        return
+    latest_transform = _successful_compile_only_transform(payloads[-1])
+    if latest_transform is None:
+        return
+    if decision.candidate_transform != latest_transform:
+        return
+    if _decision_subcommand(decision) != "compile":
+        return
+    raise ValueError(
+        "next_command repeats a successful compile-only candidate_transform; score the "
+        "same structured transform on a validation workload or choose a materially "
+        "different transform family"
+    )
 
 
 def load_promoted_preflight_classes(directory: Path | None) -> frozenset[str]:
@@ -713,6 +739,42 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
+    if not payloads:
+        return ""
+    latest = payloads[-1]
+    if _successful_compile_only_transform(latest) is None:
+        return ""
+    return (
+        "Follow-up signal: the latest structured transform compiled successfully but has "
+        "not been scored. Do not repeat the compile-only check; score the same "
+        "candidate_transform on the next validation workload, or choose a materially "
+        "different transform family."
+    )
+
+
+def _successful_compile_only_transform(payload: dict[str, Any]) -> dict[str, Any] | None:
+    if _step_failure_class(payload) != "compile_only_diagnostic":
+        return None
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    patch_result = attempt.get("patch_result")
+    if not isinstance(patch_result, dict) or patch_result.get("ok") is not True:
+        return None
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    transform = decision.get("candidate_transform")
+    return transform if isinstance(transform, dict) else None
+
+
+def _decision_subcommand(decision: VariationDecision) -> str:
+    try:
+        parts = shlex.split(decision.next_command)
+    except ValueError:
+        return ""
+    if len(parts) < 2 or parts[0] != "avo":
+        return ""
+    return parts[1]
+
+
 def _repeated_unaccepted_failure_class(
     payloads: list[dict[str, Any]],
     *,
@@ -773,8 +835,27 @@ def _step_payload_fingerprint(payload: dict[str, Any]) -> str:
         "files_to_inspect": _string_list(decision.get("files_to_inspect")),
         "next_command": _fingerprint_next_command(str(decision.get("next_command") or "")),
     }
+    planning_detail = _planning_failure_detail(payload)
+    if planning_detail:
+        components["planning_failure_class"] = _classify_planning_failure(
+            planning_detail.lower()
+        )
+        components["planning_failure_detail"] = _shorten(planning_detail, 260)
     encoded = json.dumps(components, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:12]
+
+
+def _planning_failure_detail(payload: dict[str, Any]) -> str:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    command_result = (
+        attempt.get("command_result") if isinstance(attempt.get("command_result"), dict) else {}
+    )
+    detail = _result_detail(command_result)
+    if "agent planning failed validation" not in detail.lower():
+        return ""
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    risk = str(decision.get("risk") or "")
+    return risk or detail
 
 
 def _fingerprint_next_command(command: str) -> str:
@@ -877,43 +958,83 @@ def _preflight_materialized_candidate_patch(
 
 
 def materialize_candidate_transform(transform: dict[str, Any], *, cwd: Path) -> str:
-    op = str(transform["op"])
-    relative_path = _normalize_transform_path(transform["path"])
-    source = cwd / relative_path
-    if not source.is_file() or _has_symlink_component(cwd, source):
-        raise ValueError(f"transform path is not a regular candidate file: {relative_path}")
-    old = source.read_text(encoding="utf-8")
+    old_by_path: dict[str, str] = {}
+    new_by_path: dict[str, str] = {}
+    for step in _candidate_transform_steps(transform):
+        relative_path = _normalize_transform_path(step["path"])
+        if relative_path not in old_by_path:
+            source = cwd / relative_path
+            if not source.is_file() or _has_symlink_component(cwd, source):
+                raise ValueError(f"transform path is not a regular candidate file: {relative_path}")
+            old_by_path[relative_path] = source.read_text(encoding="utf-8")
+            new_by_path[relative_path] = old_by_path[relative_path]
+        current = new_by_path[relative_path]
+        updated = _apply_candidate_transform_step(step, current)
+        if current == updated:
+            raise ValueError(f"transform step produced no source change: {relative_path}")
+        new_by_path[relative_path] = updated
+    changed_paths = [
+        path for path in sorted(old_by_path) if old_by_path[path] != new_by_path[path]
+    ]
+    if not changed_paths:
+        raise ValueError("transform produced no source change")
+    return "".join(
+        _unified_diff_for_content(path, old_by_path[path], new_by_path[path])
+        for path in changed_paths
+    )
+
+
+def _candidate_transform_steps(transform: dict[str, Any]) -> list[dict[str, Any]]:
+    if transform.get("op") == "batch":
+        steps = transform.get("steps")
+        if steps is None and isinstance(transform.get("steps_json"), str):
+            try:
+                steps = json.loads(str(transform["steps_json"]))
+            except json.JSONDecodeError as exc:
+                raise ValueError(f"batch transform steps_json is invalid JSON: {exc}") from exc
+        if not isinstance(steps, list) or not steps:
+            raise ValueError("batch transform must contain steps")
+        if not all(isinstance(step, dict) for step in steps):
+            raise ValueError("batch transform steps must be objects")
+        return steps
+    return [transform]
+
+
+def _apply_candidate_transform_step(step: dict[str, Any], content: str) -> str:
+    op = str(step["op"])
     if op == "replace_once":
-        new = _transform_replace_once(
-            old,
-            find=str(transform["find"]),
-            replacement=str(transform["replace"]),
+        return _transform_replace_once(
+            content,
+            find=str(step["find"]),
+            replacement=str(step["replace"]),
         )
-    elif op == "insert_before_once":
-        new = _transform_insert_once(
-            old,
-            anchor=str(transform["anchor"]),
-            text=str(transform["text"]),
+    if op == "insert_before_once":
+        return _transform_insert_once(
+            content,
+            anchor=str(step["anchor"]),
+            text=str(step["text"]),
             before=True,
         )
-    elif op == "insert_after_once":
-        new = _transform_insert_once(
-            old,
-            anchor=str(transform["anchor"]),
-            text=str(transform["text"]),
+    if op == "insert_after_once":
+        return _transform_insert_once(
+            content,
+            anchor=str(step["anchor"]),
+            text=str(step["text"]),
             before=False,
         )
-    elif op == "set_constexpr_int":
-        new = _transform_set_constexpr_int(
-            old,
-            name=str(transform["name"]),
-            value=int(transform["value"]),
+    if op == "set_constexpr_int":
+        return _transform_set_constexpr_int(
+            content,
+            name=str(step["name"]),
+            value=int(step["value"]),
         )
-    else:
-        raise ValueError(f"unsupported transform op: {op}")
-    if old == new:
-        raise ValueError("transform produced no source change")
-    return _unified_diff_for_content(relative_path, old, new)
+    if op == "add_int_to_python_set":
+        return _transform_add_int_to_python_set(
+            content,
+            name=str(step["name"]),
+            value=int(step["value"]),
+        )
+    raise ValueError(f"unsupported transform op: {op}")
 
 
 def _normalize_transform_path(raw_path: Any) -> str:
@@ -957,6 +1078,43 @@ def _transform_set_constexpr_int(content: str, *, name: str, value: int) -> str:
             f"set_constexpr_int expected exactly one constexpr int {name}, found {len(matches)}"
         )
     return pattern.sub(rf"\g<prefix>{value}\g<suffix>", content, count=1)
+
+
+def _transform_add_int_to_python_set(content: str, *, name: str, value: int) -> str:
+    if not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_]*", name):
+        raise ValueError("add_int_to_python_set name must be a Python identifier")
+    pattern = re.compile(
+        rf"(?m)^(?P<prefix>{re.escape(name)}\s*=\s*\{{)"
+        r"(?P<body>[^}]*)"
+        r"(?P<suffix>\})$"
+    )
+    matches = list(pattern.finditer(content))
+    if len(matches) != 1:
+        raise ValueError(
+            f"add_int_to_python_set expected exactly one set assignment {name}, "
+            f"found {len(matches)}"
+        )
+    match = matches[0]
+    values = _python_int_set_values(match.group("body"))
+    if value in values:
+        return content
+    values.append(value)
+    body = ", ".join(str(item) for item in values)
+    replacement = f"{match.group('prefix')}{body}{match.group('suffix')}"
+    return content[: match.start()] + replacement + content[match.end() :]
+
+
+def _python_int_set_values(body: str) -> list[int]:
+    values: list[int] = []
+    for raw_item in body.split(","):
+        item = raw_item.strip()
+        if not item:
+            continue
+        try:
+            values.append(int(item))
+        except ValueError as exc:
+            raise ValueError("add_int_to_python_set only supports integer set values") from exc
+    return values
 
 
 def _unified_diff_for_content(relative_path: str, old: str, new: str) -> str:

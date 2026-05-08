@@ -68,6 +68,38 @@ def test_parse_variation_decision_accepts_structured_transform() -> None:
     assert decision.candidate_transform == payload["candidate_transform"]
 
 
+def test_parse_variation_decision_accepts_transform_batch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Batch wrapper and kernel cap changes for seq_len 512."
+    steps = [
+        {
+            "op": "set_constexpr_int",
+            "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+            "name": "kMaxSeqLen",
+            "value": 512,
+        },
+        {
+            "op": "add_int_to_python_set",
+            "path": "candidates/cuda_mma_attention_seed.py",
+            "name": "SMOKE_SEQUENCES",
+            "value": 512,
+        },
+    ]
+    payload["candidate_transform"] = {
+        "op": "batch",
+        "steps_json": json.dumps(steps, separators=(",", ":")),
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_batch"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+    assert decision.candidate_transform == {"op": "batch", "steps": steps}
+
+
 def test_parse_variation_decision_infers_set_constexpr_transform_from_edit() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = (
@@ -108,6 +140,113 @@ def test_parse_variation_decision_infers_constant_transform_without_channel_word
         "path": "candidates/cuda_mma_attention/attention_kernel.cu",
         "name": "kMaxSeqLen",
         "value": 512,
+    }
+
+
+def test_parse_variation_decision_infers_batch_transform_from_edit_text() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Batch transform: set kMaxSeqLen=512 in "
+        "candidates/cuda_mma_attention/attention_kernel.cu and replace "
+        "SMOKE_SEQUENCES = {16, 32, 64, 128, 256} with "
+        "SMOKE_SEQUENCES = {16, 32, 64, 128, 256, 512} in "
+        "candidates/cuda_mma_attention_seed.py."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_seq512"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "set_constexpr_int",
+                "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+                "name": "kMaxSeqLen",
+                "value": 512,
+            },
+            {
+                "op": "replace_once",
+                "path": "candidates/cuda_mma_attention_seed.py",
+                "find": "SMOKE_SEQUENCES = {16, 32, 64, 128, 256}",
+                "replace": "SMOKE_SEQUENCES = {16, 32, 64, 128, 256, 512}",
+            },
+        ],
+    }
+
+
+def test_parse_variation_decision_infers_batch_from_files_to_inspect() -> None:
+    payload = decision_payload()
+    payload["files_to_inspect"] = [
+        "candidates/cuda_mma_attention_seed.py",
+        "candidates/cuda_mma_attention/attention_kernel.cu",
+    ]
+    payload["candidate_edit"] = (
+        "Extend MMA seq support to 512 by updating SMOKE_SEQUENCES in the wrapper to "
+        "add 512 and setting kMaxSeqLen to 512 in the kernel. Use op=batch with two "
+        "tiny steps."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_seq512"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "set_constexpr_int",
+                "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+                "name": "kMaxSeqLen",
+                "value": 512,
+            },
+            {
+                "op": "add_int_to_python_set",
+                "path": "candidates/cuda_mma_attention_seed.py",
+                "name": "SMOKE_SEQUENCES",
+                "value": 512,
+            },
+        ],
+    }
+
+
+def test_parse_variation_decision_infers_generic_python_set_add() -> None:
+    payload = decision_payload()
+    payload["files_to_inspect"] = [
+        "candidates/example_seed.py",
+        "candidates/example_kernel.cu",
+    ]
+    payload["candidate_edit"] = (
+        "Extend the candidate by setting kMaxSeqLen to 1024 in the kernel and adding "
+        "1024 to ALLOWED_SEQUENCES in the wrapper."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/example_kernel.cu --out-dir build/example"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "set_constexpr_int",
+                "path": "candidates/example_kernel.cu",
+                "name": "kMaxSeqLen",
+                "value": 1024,
+            },
+            {
+                "op": "add_int_to_python_set",
+                "path": "candidates/example_seed.py",
+                "name": "ALLOWED_SEQUENCES",
+                "value": 1024,
+            },
+        ],
     }
 
 
@@ -570,7 +709,7 @@ def test_parse_variation_decision_rejects_unpatched_mma_smoke_cap() -> None:
         parse_decision_text(json.dumps(payload))
 
 
-def test_parse_variation_decision_rejects_patched_mma_shape_score_before_compile() -> None:
+def test_parse_variation_decision_rejects_wrapper_only_mma_shape_graduation() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Extend the MMA wrapper cap for head_dim 256."
     payload["candidate_patch"] = (
@@ -588,8 +727,42 @@ def test_parse_variation_decision_rejects_patched_mma_shape_score_before_compile
         "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 256"
     )
 
-    with pytest.raises(ValueError, match="first run avo compile"):
+    with pytest.raises(ValueError, match="updates both the wrapper cap and kernel"):
         parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_batched_mma_shape_score() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Change kMaxSeqLen from 256 to 512 in "
+        "candidates/cuda_mma_attention/attention_kernel.cu and add 512 to "
+        "SMOKE_SEQUENCES in candidates/cuda_mma_attention_seed.py."
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 512 --total-tokens 2048 --num-heads 4 --head-dim 128"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "set_constexpr_int",
+                "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+                "name": "kMaxSeqLen",
+                "value": 512,
+            },
+            {
+                "op": "add_int_to_python_set",
+                "path": "candidates/cuda_mma_attention_seed.py",
+                "name": "SMOKE_SEQUENCES",
+                "value": 512,
+            },
+        ],
+    }
 
 
 def test_parse_variation_decision_rejects_unpatched_mma_workload_scaling() -> None:
@@ -2039,7 +2212,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "WMMA fragment shape and element type" in context
     assert "Async copy must move aligned 16-byte groups" in context
     assert "shared-memory loads should use tile-local offsets" in context
-    assert "Shape graduation beyond the current smoke caps is a two-step path" in context
+    assert "Shape graduation beyond the current smoke caps should update the wrapper" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 4096,8192,16384" in context
     assert "candidate_transform" in context
@@ -2195,7 +2368,8 @@ def test_decision_feedback_explains_raw_cuda_patch_error() -> None:
 
     content = updated["messages"][0]["content"]
     assert "Do not use raw candidate_patch for .cu or .cuh files" in content
-    assert "Express the CUDA edit as one candidate_transform operation" in content
+    assert "Express the CUDA edit as candidate_transform" in content
+    assert "op=batch" in content
     assert "Raw candidate_patch is only for non-CUDA candidate files" in content
 
 
@@ -2238,7 +2412,7 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     content = updated["messages"][0]["content"]
     assert "valid Ampere async-copy transform" in content
     assert "16-byte groups in real kernel dataflow" in content
-    assert "one small candidate_transform" in content
+    assert "small candidate_transform" in content
     assert "different transform family" in content
 
 
@@ -2343,6 +2517,23 @@ def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
     assert "structurally changes candidates/cuda_mma_attention/attention_kernel.cu" in content
 
 
+def test_decision_feedback_explains_wrapper_only_mma_shape_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command scores a patched MMA shape extension beyond the current smoke cap; "
+            "use a structured transform batch that updates both the wrapper cap and kernel "
+            "cap/dataflow together before scoring larger shapes"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "structured transform batch" in content
+    assert "Wrapper-only cap edits are not enough" in content
+
+
 def test_decision_feedback_explains_unpatched_warp_row_score_error() -> None:
     kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
 
@@ -2373,7 +2564,7 @@ def test_decision_feedback_explains_structural_preflight_error() -> None:
 
     content = updated["messages"][0]["content"]
     assert "failed transform family" in content
-    assert "one smaller candidate_transform" in content
+    assert "smaller candidate_transform operation or batch" in content
     assert "avoids the same structural class" in content
 
 

@@ -994,3 +994,42 @@ source files.
   `planning_edit_channel` instead of falling into `unknown`, so recurring
   planner-interface failures can be promoted and summarized like execution
   failures.
+  A later reliability pass found that different planning-validation failures
+  shared a false command/edit fingerprint because the synthetic planning-failure
+  decision always used the same `No edit; planner returned invalid decision`
+  payload. Fingerprints now include the planning failure class and truncated
+  validation detail, so supervisor signals distinguish edit-channel mistakes,
+  missing edit payloads, and repeated no-patch compile diagnostics.
+  CUDA shape graduation can require more than one tiny edit. `candidate_transform`
+  now supports `op=batch` with a compact `steps_json` provider payload that the
+  orchestrator parses into up to four tiny steps. Batch steps still use small
+  structural transforms, not raw CUDA diffs. Supported steps now include generic
+  `add_int_to_python_set`, so wrapper cap updates such as adding `512` to
+  `SMOKE_SEQUENCES` are represented as a structured Python-set edit instead of
+  another raw hunk. Parser recovery also infers generic uppercase Python set
+  names from prose and `files_to_inspect`, not just the historical
+  `SMOKE_SEQUENCES` case.
+  Live loops after the batch interface repeatedly compiled the same seq512 MMA
+  shape-graduation transform (`kMaxSeqLen=512` plus wrapper sequence cap `512`).
+  The compile passed on sm86 with no spills, 40 registers, 1 barrier, and 9920
+  bytes shared memory, but repeated compile-only probes did not advance the
+  search. Attempt history now emits a follow-up signal after a successful
+  compile-only structured transform, and a cross-step hard preflight rejects
+  repeating that same transform with another compile command. The next live loop
+  therefore scored the same seq512 batch instead of compiling again.
+  Seq512 MMA shape-graduation score result on A6000: `seq_len=512`,
+  `total_tokens=2048`, `num_heads=8`, `head_dim=128`, BF16, both causal modes,
+  `trials=3`, `warmup=1`, `repeats=1`. Correctness passed for both cases.
+  Noncausal max error `0.001953125`, median `1.3272960186004639 ms`,
+  `3.2358774800882233` TFLOPS. Causal max error `0.0078125`, median
+  `1.2746880054473877 ms`, `1.6847131524127585` TFLOPS. Geomean was
+  `2.334850177270671` TFLOPS. Lineage did not accept it because the score shape
+  differs from the current best comparison set; keep this as evidence that the
+  loop can now graduate and score a larger validation workload, not as a new
+  accepted kernel.
+  Exa research refresh on agent failure handling reinforced the same design:
+  classify failure types before deciding retry/fallback behavior, persist failure
+  signatures to avoid infinite implement-verify loops, and enforce deterministic
+  guardrails around probabilistic planner output. Keep future reliability work
+  centered on classifier-driven preflights and search-loop routing, not on
+  accumulating phrase-specific bans.
