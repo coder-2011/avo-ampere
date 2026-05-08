@@ -476,6 +476,31 @@ def test_parse_variation_decision_rejects_self_rejected_patch() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_correctness_breaking_patch_warning() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch tiled online softmax rescaling and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_tiled_attention/attention_kernel.cu "
+        "b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_tiled_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = (
+        "The original formula is correct. This patch will break correctness. "
+        "Reject this direction and diagnose the tiled kernel more carefully."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_tiled_attention/attention_kernel.cu "
+        "--out-dir build/tiled"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_stale_code_patch_warning() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA two-chunk QK and compile it."

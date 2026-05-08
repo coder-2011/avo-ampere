@@ -89,6 +89,8 @@ NO_EDIT_PHRASES = (
 SELF_REJECTING_PATCH_PHRASES = (
     "not ready to apply",
     "will cause a compile error",
+    "will break correctness",
+    "reject this direction",
 )
 
 DECISION_SCHEMA: dict[str, Any] = {
