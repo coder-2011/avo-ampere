@@ -100,6 +100,7 @@ SELF_REJECTING_PATCH_PHRASES = (
     "will fail correctness",
     "will compute the wrong shared memory address",
     "likely segfault or produce incorrect results",
+    "must define koutputelements before using it",
     "reject this direction",
 )
 
@@ -407,6 +408,9 @@ def build_repo_context(root: Path) -> str:
         "The synchronous double-buffered MMA V staging path preserved correctness but "
         "regressed throughput; do not repeat static v_shared[2] staging unless adding "
         "real async-copy overlap.",
+        "For MMA probability-buffer skew, WMMA load_matrix_sync leading dimensions must "
+        "stay 16-byte aligned; kTile + 1 is invalid, and the corrected kTile + 8 "
+        "stride preserved correctness but regressed throughput.",
         "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
         "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
@@ -705,6 +709,16 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "the recorded score preserved correctness but regressed throughput, "
             "so add real async-copy overlap before revisiting"
         )
+    if _candidate_patch_uses_invalid_mma_probability_ldm(added_text):
+        raise ValueError(
+            "candidate_patch uses kTile + 1 as a WMMA probability leading dimension; "
+            "load_matrix_sync requires a 16-byte-aligned stride for half-type multiplicands"
+        )
+    if _candidate_patch_repeats_mma_probability_stride_skew(added_text):
+        raise ValueError(
+            "candidate_patch repeats the stride-24 MMA probability-buffer skew; "
+            "the recorded score preserved correctness but regressed geomean throughput"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -832,6 +846,19 @@ def _candidate_patch_repeats_sync_mma_v_staging(added_text: str) -> bool:
         and "v_shared[current_buffer][chunk_offset]" in added_text
         and "cp.async" not in added_text
         and "memcpy_async" not in added_text
+    )
+
+
+def _candidate_patch_uses_invalid_mma_probability_ldm(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return "load_matrix_sync(probability_frag,probabilities,kTile+1)" in compact
+
+
+def _candidate_patch_repeats_mma_probability_stride_skew(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return (
+        "kProbabilityStride=kTile+8" in compact
+        and "load_matrix_sync(probability_frag,probabilities,kProbabilityStride)" in compact
     )
 
 

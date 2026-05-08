@@ -672,6 +672,18 @@ variation steps.
   1.0978879928588867 ms. Do not repeat static synchronous `v_shared[2]`
   staging; revisit V staging only with real async-copy overlap or a materially
   different scheduling strategy.
+  A later probability-buffer skew patch tried to pad the 16x16 BF16
+  `probabilities` tile before the PV WMMA load. The generated `kTile + 1`
+  leading dimension was invalid for WMMA because NVIDIA documents
+  `load_matrix_sync` leading dimensions for half-type multiplicands as
+  16-byte-aligned strides. A manually corrected `kProbabilityStride = kTile + 8`
+  variant compiled cleanly with no spills, 40 registers, 1 barrier, and 18368
+  bytes shared memory, and passed correctness. It still regressed throughput:
+  geomean `0.46984155560491525` TFLOPS versus best `0.4924015757468769`,
+  noncausal `0.6514158963616397` TFLOPS at median 0.8241599798202515 ms, causal
+  `0.3388788769297927` TFLOPS at median 0.7921280264854431 ms. Do not repeat
+  simple probability-buffer skew padding without profiler evidence or a
+  materially different probability/PV dataflow.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
@@ -689,6 +701,8 @@ variation steps.
   https://docs.pytorch.org/docs/stable/benchmark_utils.html
 - NVIDIA CUTLASS CuTeDSL Ampere FlashAttention v2 example:
   https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/ampere/flash_attention_v2.py
+- NVIDIA CUDA Programming Guide WMMA `load_matrix_sync` requirements:
+  https://docs.nvidia.com/cuda/archive/13.0.3/cuda-c-programming-guide/index.html
 - Dao-AILab CuTe FlashAttention forward implementation:
   https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/flash_fwd.py
 - Dao-AILab CuTe FlashAttention online softmax helper:

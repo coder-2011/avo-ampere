@@ -960,6 +960,50 @@ def test_parse_variation_decision_rejects_sync_mma_v_staging_repeat() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_invalid_probability_wmma_ldm() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Skew the MMA probability tile by one column."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,3 @@\n"
+        "-old\n"
+        "+wmma::load_matrix_sync(probability_frag, probabilities, kTile + 1);\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_prob_skew"
+    )
+
+    with pytest.raises(ValueError, match="WMMA probability leading dimension"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_probability_stride_skew_repeat() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Skew the MMA probability tile with an aligned stride."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,5 @@\n"
+        "-old\n"
+        "+constexpr int kProbabilityStride = kTile + 8;\n"
+        "+wmma::load_matrix_sync(probability_frag, probabilities, kProbabilityStride);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="stride-24 MMA probability-buffer skew"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
@@ -1154,6 +1198,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "k_shared + key_start * kHeadDim + chunk_offset" in context
     assert "synchronous full-K MMA staging path preserved correctness but regressed" in context
     assert "synchronous double-buffered MMA V staging path preserved correctness" in context
+    assert "MMA probability-buffer skew" in context
     assert "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke" in context
     assert "partial MMA head_dim128 extension" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
