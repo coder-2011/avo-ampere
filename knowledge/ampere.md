@@ -57,7 +57,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for 16/32-token, head-dim 32
+  `candidates/cuda_mma_attention_seed.py` for 16/32-token, head-dim 64
   BF16 tensor-core QK/PV smokes
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
@@ -417,9 +417,9 @@ variation steps.
   probabilities as BF16 between the two MMA operations and keeps FP32 online
   row-max, row-sum, and output accumulators across up to two key tiles. It is only
   a correctness foothold for tensor-core attention: the wrapper currently accepts
-  only sequence lengths 16 or 32 with head dimension 16, and it does not yet use
-  production layouts. Do not score head dimension 32 or larger unless the
-  candidate patch updates the wrapper and CUDA kernel to support that shape first.
+  only sequence lengths 16 or 32 with head dimension 64, and it does not yet use
+  production layouts. Do not score larger shapes unless the candidate patch
+  updates the wrapper and CUDA kernel to support that shape first.
   A no-patch score at the maximum supported smoke shape (`seq_len=32`,
   `head_dim=16`, `total_tokens=32`, `num_heads=1`, BF16, both causal modes)
   passed correctness but was gate-rejected at `6.539498372773744e-05` geomean
@@ -456,7 +456,7 @@ variation steps.
   with `error: corrupt patch at line 120`. It also introduced undefined
   `head_dim` identifiers inside the CUDA kernel and still used unsupported
   WMMA fragment template shapes. The validator now rejects patched MMA scores
-  beyond the current head_dim32 smoke unless the next command is a compile
+  beyond the current head_dim64 smoke unless the next command is a compile
   build-check first.
   A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
   to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as
@@ -552,6 +552,23 @@ variation steps.
   correctness progress only: the workload signature differs from the current
   seq256/head_dim128 warp-row best and must not be used as a lineage-speed
   comparison.
+  A subsequent generated head_dim64 four-chunk MMA patch applied and compiled,
+  then was cleaned up because it was compile-only. A manual version of that same
+  structural step was committed with the runtime check message fixed. The
+  current MMA seed uses `kHeadDim = 64`, widens `pv_tile` and `output_acc` to
+  16x64, and processes QK/PV as four 16-wide WMMA chunks while keeping the score
+  and probability tiles at 16x16. The sm86 compile check succeeded with no
+  spills, 40 registers, 1 barrier, 9920 bytes shared memory, 400 bytes
+  `cmem[0]`, 224 bytes `cmem[4]`, and 28 bytes global memory. A fresh tiny score
+  at seq_len 32, total_tokens 32, num_heads 1, head_dim 64, BF16, both causal
+  modes passed correctness with max_abs_error 0.00390625 in both modes and
+  geomean `0.0003318536197406504` TFLOPS. Noncausal median was
+  0.6331200003623962 ms / `0.00041405104853732224` TFLOPS; causal median was
+  0.4927999973297119 ms / `0.0002659740274152339` TFLOPS. This is still
+  structural correctness progress only because the workload differs from the
+  seq256/head_dim128 warp-row best. The planner now treats head_dim64 as the
+  current unpatched MMA smoke cap and requires compile-first validation for
+  patched MMA scores beyond that cap.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
