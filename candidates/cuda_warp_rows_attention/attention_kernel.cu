@@ -74,8 +74,8 @@ __global__ void warp_rows_attention_kernel(const scalar_t* __restrict__ q,
                                            bool causal,
                                            float scale) {
   __shared__ float score_tiles[kRowsPerBlock][kTileKeys];
-  __shared__ scalar_t k_tiles[kTileKeys][kMaxHeadDim];
-  __shared__ scalar_t v_tiles[kTileKeys][kMaxHeadDim];
+  __shared__ scalar_t k_tiles[kTileKeys][kMaxHeadDim + 1];
+  __shared__ scalar_t v_tiles[kTileKeys][kMaxHeadDim + 1];
 
   const int tid = threadIdx.x;
   const int warp_id = tid / kWarpSize;
