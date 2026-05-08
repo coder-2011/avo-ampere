@@ -102,6 +102,8 @@ SELF_REJECTING_PATCH_PHRASES = (
     "will compute the wrong shared memory address",
     "likely segfault or produce incorrect results",
     "must define koutputelements before using it",
+    "would fail compilation",
+    "do not use this diff",
     "reject this direction",
 )
 
@@ -731,6 +733,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "does not support, so use explicit CUDA WMMA element types in "
             "dtype-specific code"
         )
+    if _candidate_patch_uses_missing_wmma_matrix_element_type(added_text):
+        raise ValueError(
+            "candidate_patch declares a WMMA matrix fragment without an element type; "
+            "matrix_a/matrix_b fragments must include __nv_bfloat16 or another "
+            "supported CUDA WMMA element type before the layout"
+        )
     if _candidate_patch_leaves_orphan_mma_k_fragment(added_text):
         raise ValueError(
             "candidate_patch leaves an orphan post-QK WMMA k_frag block after "
@@ -847,6 +855,17 @@ def _candidate_patch_uses_generic_scalar_wmma_fragments(added_text: str) -> bool
     return bool(
         re.search(
             r"fragment<(?:nvcuda::)?wmma::matrix_[ab],[^>]*,scalar_t,",
+            compact,
+        )
+    )
+
+
+def _candidate_patch_uses_missing_wmma_matrix_element_type(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return bool(
+        re.search(
+            r"fragment<(?:nvcuda::)?wmma::matrix_[ab],[^,>]+,[^,>]+,[^,>]+,"
+            r"(?:nvcuda::)?wmma::(?:row|col)_major>",
             compact,
         )
     )

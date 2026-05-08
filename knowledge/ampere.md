@@ -792,7 +792,12 @@ when they should inform future variation decisions.
 Agent compile commands should write build artifacts under `build/`, not under
 `candidates/`, so rejected compile-only steps do not leave object files beside
 source files.
-A later planner loop still retried an invalid compile output path after this
-guard, failing validation after three attempts with `--out-dir must be under:
-build`. Retry feedback now explicitly tells the agent to use `build/<name>` and
-not write compiler artifacts under `candidates/`.
+  A later planner loop still retried an invalid compile output path after this
+  guard, failing validation after three attempts with `--out-dir must be under:
+  build`. Retry feedback now explicitly tells the agent to use `build/<name>` and
+  not write compiler artifacts under `candidates/`.
+  A later Q-preload patch applied but failed compile because it declared
+  `wmma::fragment<wmma::matrix_a, kTile, kTile, 16, wmma::row_major>` without
+  the required matrix element type, and its own risk text said "Do not use this
+  diff". The planner now treats that language as self-invalid and rejects WMMA
+  matrix fragments that omit `__nv_bfloat16` or another supported element type.

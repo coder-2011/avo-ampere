@@ -600,6 +600,28 @@ def test_parse_variation_decision_rejects_self_rejected_patch() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_do_not_use_this_diff_warning() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA Q preload and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = "Do not use this diff; a correct Q-preload patch must be simpler."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_q_preload"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_correctness_breaking_patch_warning() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch tiled online softmax rescaling and compile it."
@@ -884,6 +906,28 @@ def test_parse_variation_decision_rejects_scalar_t_wmma_matrix_fragment() -> Non
     )
 
     with pytest.raises(ValueError, match="scalar_t as a WMMA matrix fragment"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_missing_wmma_matrix_element_type() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA Q preload and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,3 @@\n"
+        "-old\n"
+        "+wmma::fragment<wmma::matrix_a, kTile, kTile, 16, "
+        "wmma::row_major> q_frag_chunk;\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_q_preload"
+    )
+
+    with pytest.raises(ValueError, match="without an element type"):
         parse_decision_text(json.dumps(payload))
 
 
