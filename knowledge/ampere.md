@@ -202,6 +202,11 @@ variation steps.
   TFLOPS: noncausal 0.60304142909027 TFLOPS, causal 0.3092574481513733 TFLOPS.
   Ptxas for sm86 reports no spills; BF16/Half use 48 registers and 17024 bytes
   shared memory, FP32 uses 56 registers and 33536 bytes shared memory.
+  A follow-up standalone `#pragma unroll` patch on the V accumulation loops was
+  scored after the skew and regressed badly despite passing correctness: geomean
+  0.2576601941393183 TFLOPS, noncausal 0.32998084031335845 TFLOPS, causal
+  0.20118978902189197 TFLOPS. Do not repeat pragma-only performance patches;
+  the planner now rejects patches whose only added lines are `#pragma unroll`.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
