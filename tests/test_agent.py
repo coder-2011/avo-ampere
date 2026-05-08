@@ -358,7 +358,7 @@ def test_parse_variation_decision_rejects_unpatched_tiled_score_outside_validate
         parse_decision_text(json.dumps(payload))
 
 
-def test_parse_variation_decision_allows_unpatched_tiled_validated_smoke() -> None:
+def test_parse_variation_decision_rejects_recorded_unpatched_tiled_smoke() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "No edit needed; score the validated tiny tiled smoke."
     payload["next_command"] = (
@@ -367,9 +367,8 @@ def test_parse_variation_decision_allows_unpatched_tiled_validated_smoke() -> No
         "--seq-lens 16 --total-tokens 16 --num-heads 1 --head-dim 16"
     )
 
-    decision = parse_decision_text(json.dumps(payload))
-
-    assert decision.next_command == payload["next_command"]
+    with pytest.raises(ValueError, match="recorded no-patch tiled smoke"):
+        parse_decision_text(json.dumps(payload))
 
 
 def test_parse_variation_decision_allows_patched_tiled_score_outside_cap() -> None:

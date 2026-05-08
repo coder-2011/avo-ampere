@@ -364,7 +364,8 @@ def build_repo_context(root: Path) -> str:
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
         "head_dim <= 128 with total_tokens <= 1024 and num_heads <= 4; "
         "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
-        "head_dim 16, total_tokens <= 16, and num_heads 1. Larger seed scores need "
+        "head_dim 16, total_tokens <= 16, and num_heads 1, but that no-patch smoke is "
+        "already recorded and should not be repeated. Larger seed scores need "
         "candidate_patch to update the wrapper/kernel.",
         "Patched MMA shape extensions beyond head_dim 16 must run an avo compile "
         "build-check first; do not jump straight to score.",
@@ -793,6 +794,10 @@ def _validate_known_candidate_score_shape(
                 "validated seq_len 16, head_dim 16, total_tokens<=16, and num_heads=1 "
                 "cap; include candidate_patch to fix or extend the wrapper/kernel first"
             )
+        raise ValueError(
+            "next_command repeats the recorded no-patch tiled smoke score; include "
+            "candidate_patch to fix or extend the tiled wrapper/kernel first"
+        )
 
 
 def _validate_patched_mma_score_is_compile_checked_first(
