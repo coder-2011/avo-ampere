@@ -258,6 +258,12 @@ variation steps.
   Future tiled fixes should keep the online-softmax invariant explicit:
   `output_acc = output_acc * old_scale + tile_acc * tile_scale`, with
   `row_sum = row_sum * old_scale + tile_sum * tile_scale`.
+  A later tiled rescale probe did the opposite: it removed `tile_scale` from the
+  output update while its own risk text said the patch would break correctness
+  and should be rejected. That patch applied and compiled, then was cleaned up
+  because it was compile-only. The planner now also rejects non-empty patches
+  whose decision text says either `will break correctness` or
+  `reject this direction`.
 - The naive seed is useful only as a correctness reference. A no-patch BF16
   score at `seq_len=128`, `head_dim=128`, `total_tokens=512`, and `num_heads=4`
   passed both causal modes, but it was much slower than the warp-row best:
