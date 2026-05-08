@@ -133,6 +133,11 @@ variation steps.
   only sequence lengths 16 or 32 with head dimension 16, and it does not yet use
   production layouts. Do not score head dimension 32 or larger unless the
   candidate patch updates the wrapper and CUDA kernel to support that shape first.
+  A no-patch score at the maximum supported smoke shape (`seq_len=32`,
+  `head_dim=16`, `total_tokens=32`, `num_heads=1`, BF16, both causal modes)
+  passed correctness but was gate-rejected at `6.539498372773744e-05` geomean
+  TFLOPS versus the current `0.10830947571120902` best, so do not repeat that
+  baseline score as a candidate-improving step.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
