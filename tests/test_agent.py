@@ -2252,13 +2252,13 @@ def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
         kwargs,
         ValueError(
             "next_command repeats a recorded unpatched MMA seed score; include "
-            "candidate_patch to change kernel structure before scoring"
+            "candidate_transform/candidate_patch to change kernel structure before scoring"
         ),
     )
 
     content = updated["messages"][0]["content"]
     assert "Do not retry a no-edit score of cuda_mma_attention_seed.py" in content
-    assert "candidate_patch raw diff" in content
+    assert "candidate_transform or a legacy candidate_patch" in content
     assert "structurally changes candidates/cuda_mma_attention/attention_kernel.cu" in content
 
 
@@ -2269,14 +2269,14 @@ def test_decision_feedback_explains_unpatched_warp_row_score_error() -> None:
         kwargs,
         ValueError(
             "next_command repeats a recorded no-patch warp-row seed score; include "
-            "candidate_patch to change kernel structure before scoring"
+            "candidate_transform/candidate_patch to change kernel structure before scoring"
         ),
     )
 
     content = updated["messages"][0]["content"]
     assert "Do not retry a no-edit score of cuda_warp_rows_attention_seed.py" in content
     assert "seq256/head_dim128" in content
-    assert "candidate_patch raw diff" in content
+    assert "candidate_transform or a legacy candidate_patch" in content
 
 
 def test_decision_feedback_explains_sync_mma_k_staging_error() -> None:

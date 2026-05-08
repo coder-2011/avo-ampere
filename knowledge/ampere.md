@@ -955,3 +955,7 @@ source files.
   Retry feedback now explicitly explains the mutually exclusive edit channels:
   structured-transform mode uses a transform object with `candidate_patch == ""`;
   legacy raw-diff mode omits `candidate_transform`; no-edit mode omits both.
+  A later live loop got past the channel-mixing failure but repeated a recorded
+  unpatched MMA seed score because older retry text still said only
+  `candidate_patch`. Score-repeat errors and feedback now consistently say
+  `candidate_transform/candidate_patch`, with `candidate_transform` preferred.

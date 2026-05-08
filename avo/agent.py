@@ -664,16 +664,18 @@ def _validation_feedback_hint(error: ValueError) -> str:
         return (
             "Do not retry a no-edit score of cuda_mma_attention_seed.py. That exact "
             "MMA seed score is already in lineage. To score this candidate again, use "
-            "edit mode with a candidate_patch raw diff that structurally changes "
-            "candidates/cuda_mma_attention/attention_kernel.cu or its wrapper; otherwise "
-            "choose a different diagnostic such as a compile check for a new patch. "
+            "edit mode with candidate_transform or a legacy candidate_patch that "
+            "structurally changes candidates/cuda_mma_attention/attention_kernel.cu or "
+            "its wrapper; otherwise choose a different diagnostic such as a compile "
+            "check for a new edit. "
         )
     if "recorded no-patch warp-row seed score" in message:
         return (
             "Do not retry a no-edit score of cuda_warp_rows_attention_seed.py on the "
             "recorded seq256/head_dim128 workload. That diagnostic already passed "
-            "correctness and was gate-rejected for throughput. Use edit mode with a "
-            "candidate_patch raw diff before scoring that workload again. "
+            "correctness and was gate-rejected for throughput. Use edit mode with "
+            "candidate_transform or a legacy candidate_patch before scoring that "
+            "workload again. "
         )
     if "recorded environment stability diagnostic" in message:
         return (
@@ -1559,7 +1561,8 @@ def _validate_compile_source_not_recorded_baseline(
         return
     raise ValueError(
         "next_command repeats a recorded no-patch compile diagnostic; include "
-        "candidate_patch to build-check a change or run a bounded score instead"
+        "candidate_transform/candidate_patch to build-check a change or run a bounded "
+        "score instead"
     )
 
 
@@ -1608,7 +1611,8 @@ def _validate_known_candidate_score_shape(
             raise ValueError(
                 "next_command scores cuda_warp_rows_attention_seed.py outside its "
                 "unpatched seq_len<=256/head_dim<=128/total_tokens<=1024/num_heads<=4 "
-                "cap; include candidate_patch to update the wrapper/kernel first"
+                "cap; include candidate_transform/candidate_patch to update the "
+                "wrapper/kernel first"
             )
         if (
             seq_lens == (256,)
@@ -1618,7 +1622,7 @@ def _validate_known_candidate_score_shape(
         ):
             raise ValueError(
                 "next_command repeats a recorded no-patch warp-row seed score; include "
-                "candidate_patch to change kernel structure before scoring"
+                "candidate_transform/candidate_patch to change kernel structure before scoring"
             )
     elif candidate == MMA_SEED:
         if (
@@ -1631,11 +1635,11 @@ def _validate_known_candidate_score_shape(
                 "next_command scores cuda_mma_attention_seed.py outside its unpatched "
                 "seq_len 16/32/64/128/256, head_dim 128, total_tokens<=1024, and "
                 "num_heads<=4 cap; "
-                "include candidate_patch to update the wrapper/kernel first"
+                "include candidate_transform/candidate_patch to update the wrapper/kernel first"
             )
         raise ValueError(
             "next_command repeats a recorded unpatched MMA seed score; include "
-            "candidate_patch to change kernel structure before scoring"
+            "candidate_transform/candidate_patch to change kernel structure before scoring"
         )
     elif candidate == TILED_SEED:
         if _is_outside_tiled_validated_cap(
@@ -1647,11 +1651,13 @@ def _validate_known_candidate_score_shape(
             raise ValueError(
                 "next_command scores cuda_tiled_attention_seed.py outside its unpatched "
                 "validated seq_len 16, head_dim 16, total_tokens<=16, and num_heads=1 "
-                "cap; include candidate_patch to fix or extend the wrapper/kernel first"
+                "cap; include candidate_transform/candidate_patch to fix or extend the "
+                "wrapper/kernel first"
             )
         raise ValueError(
             "next_command repeats the recorded no-patch tiled smoke score; include "
-            "candidate_patch to fix or extend the tiled wrapper/kernel first"
+            "candidate_transform/candidate_patch to fix or extend the tiled "
+            "wrapper/kernel first"
         )
 
 
