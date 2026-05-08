@@ -105,6 +105,13 @@ variation steps.
   overlap. Any new cp.async patch must use vector-aligned 16-byte groups, preserve zero-fill or
   guarded shared-memory state for partial tiles, and introduce a real overlapped pipeline rather
   than a single-stage copy/wait replacement.
+- A later MMA single-stage cp.async patch was also rejected before compile with
+  `error: corrupt patch at line 53`. It proposed scalar BF16 element
+  `__pipeline_memcpy_async` calls into a 16x16 K tile and an immediate
+  commit/wait before `wmma::load_matrix_sync`, so even a syntactically valid
+  version would not be a useful Ampere pipeline. For MMA cp.async attempts, use
+  aligned 16-byte groups (8 BF16 elements), keep scalar tails disjoint, and
+  compile-check a clean diff before attempting any score.
 - A later double-buffered cp.async warp-row patch applied but failed compile on this NVCC/header
   path because `__pipeline_commit` and `__pipeline_wait_prior` were undefined. Do not use those
   intrinsics here unless the necessary CUDA pipeline API/include contract is first proven by a tiny
