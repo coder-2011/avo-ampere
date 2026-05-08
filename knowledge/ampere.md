@@ -208,8 +208,10 @@ variation steps.
 ## Gate
 
 A candidate enters lineage only when it passes correctness and matches or
-improves the current best aggregate score. The score payload must also contain
-at least one scored case and a finite positive geomean, so malformed empty score
-records cannot become lineage commits. Failed attempts remain in the agent run
-log, not the committed lineage. Persist them in an attempts directory when they
-should inform future variation decisions.
+improves the current best aggregate score on the same benchmark case signature
+as the current best. Shape-only changes are useful as new baselines, but they
+must not win the throughput gate by changing the workload. The score payload must
+also contain at least one scored case and a finite positive geomean, so malformed
+empty score records cannot become lineage commits. Failed attempts remain in the
+agent run log, not the committed lineage. Persist them in an attempts directory
+when they should inform future variation decisions.
