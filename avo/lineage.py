@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import math
 import shutil
@@ -68,7 +69,8 @@ def seed_baseline(
 
     baseline_path.write_text(json.dumps(seeded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
     latest_path.write_text(json.dumps(seeded, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    _git(path, "add", "scores/baseline.json", "scores/latest.json")
+    _write_signature_score(path, seeded)
+    _git(path, "add", "scores")
     _git(path, "commit", "-m", message)
     return seeded
 
@@ -108,12 +110,12 @@ def decide_gate(
             candidate_geomean,
             best_geomean,
         )
-    return GateDecision(
-        True,
-        "candidate passed correctness and throughput gate",
-        candidate_geomean,
-        best_geomean,
+    reason = (
+        "candidate established benchmark case set"
+        if best_payload is None and best_geomean <= 0.0
+        else "candidate passed correctness and throughput gate"
     )
+    return GateDecision(True, reason, candidate_geomean, best_geomean)
 
 
 def commit_score(
@@ -125,7 +127,7 @@ def commit_score(
     candidate_patch: str | None = None,
 ) -> GateDecision:
     init_lineage_repo(path)
-    best_payload = latest_score_payload(path)
+    best_payload = best_score_payload_for_signature(path, candidate)
     best = _score_geomean(best_payload)
     decision = decide_gate(candidate, best, best_payload=best_payload)
     if not decision.accepted:
@@ -140,6 +142,7 @@ def commit_score(
 
     score_path = path / "scores" / "latest.json"
     score_path.write_text(json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+    _write_signature_score(path, candidate)
     _write_source_artifacts(
         path,
         source_files=source_files,
@@ -169,6 +172,52 @@ def latest_score_payload(path: Path) -> dict[str, Any] | None:
     return payload if isinstance(payload, dict) else None
 
 
+def best_score_payload_for_signature(
+    path: Path,
+    candidate: dict[str, Any],
+) -> dict[str, Any] | None:
+    if not (path / ".git").exists() or not _has_commits(path):
+        return None
+    signature = _benchmark_signature(candidate)
+    if not signature:
+        return None
+    signature_path = (
+        path / "scores" / "by_signature" / f"{_benchmark_signature_hash(candidate)}.json"
+    )
+    payload = _read_score_payload(signature_path)
+    if payload is not None and _benchmark_signature(payload) == signature:
+        return payload
+
+    best_payload: dict[str, Any] | None = None
+    best_geomean = 0.0
+    for commit in _git_capture(path, "rev-list", "HEAD").splitlines():
+        try:
+            raw = _git_capture(path, "show", f"{commit}:scores/latest.json")
+        except subprocess.CalledProcessError:
+            continue
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(payload, dict) or _benchmark_signature(payload) != signature:
+            continue
+        geomean = _score_geomean(payload)
+        if best_payload is None or geomean > best_geomean:
+            best_payload = payload
+            best_geomean = geomean
+    return best_payload
+
+
+def _read_score_payload(path: Path) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
 def _score_geomean(payload: dict[str, Any] | None) -> float:
     if payload is None:
         return 0.0
@@ -187,6 +236,25 @@ def _benchmark_signature(payload: dict[str, Any]) -> tuple[str, ...]:
         if isinstance(case, dict):
             signature.append(json.dumps(case, sort_keys=True, separators=(",", ":")))
     return tuple(sorted(signature))
+
+
+def _benchmark_signature_hash(payload: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        _benchmark_signature(payload),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
+
+
+def _write_signature_score(path: Path, payload: dict[str, Any]) -> None:
+    signature_hash = _benchmark_signature_hash(payload)
+    signature_path = path / "scores" / "by_signature" / f"{signature_hash}.json"
+    signature_path.parent.mkdir(parents=True, exist_ok=True)
+    signature_path.write_text(
+        json.dumps(payload, indent=2, sort_keys=True) + "\n",
+        encoding="utf-8",
+    )
 
 
 def _has_commits(path: Path) -> bool:

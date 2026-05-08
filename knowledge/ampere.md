@@ -784,13 +784,17 @@ variation steps.
 ## Gate
 
 A candidate enters lineage only when it passes correctness and matches or
-improves the current best aggregate score on the same benchmark case signature
-as the current best. Shape-only changes are useful as new baselines, but they
-must not win the throughput gate by changing the workload. The score payload must
-also contain at least one scored case and a finite positive geomean, so malformed
-empty score records cannot become lineage commits. Failed attempts remain in the
-agent run log, not the committed lineage. Persist them in an attempts directory
-when they should inform future variation decisions.
+improves the best aggregate score for the same benchmark case signature. The
+lineage also stores per-signature score lanes, so a larger validation workload
+can establish a new benchmark case set instead of being rejected solely because
+the current latest commit was scored on a smaller smoke suite. Shape-only changes
+still must not win an existing throughput lane by changing the workload; later
+candidates on the same signature compare apples-to-apples against that lane's
+best score. The score payload must also contain at least one scored case and a
+finite positive geomean, so malformed empty score records cannot become lineage
+commits. Failed attempts remain in the agent run log, not the committed lineage.
+Persist them in an attempts directory when they should inform future variation
+decisions.
 Agent compile commands should write build artifacts under `build/`, not under
 `candidates/`, so rejected compile-only steps do not leave object files beside
 source files.
@@ -1024,9 +1028,11 @@ source files.
   `3.2358774800882233` TFLOPS. Causal max error `0.0078125`, median
   `1.2746880054473877 ms`, `1.6847131524127585` TFLOPS. Geomean was
   `2.334850177270671` TFLOPS. Lineage did not accept it because the score shape
-  differs from the current best comparison set; keep this as evidence that the
-  loop can now graduate and score a larger validation workload, not as a new
-  accepted kernel.
+  differed from the current best comparison set under the old single-latest
+  lineage gate. The lineage gate now tracks benchmark signatures separately, and
+  that recorded seq512 score was replayed into lineage as commit
+  `bc05dd85ccc8872308c786ba57664cfdffdc4640` with reason `candidate
+  established benchmark case set`.
   Exa research refresh on agent failure handling reinforced the same design:
   classify failure types before deciding retry/fallback behavior, persist failure
   signatures to avoid infinite implement-verify loops, and enforce deterministic

@@ -252,7 +252,7 @@ uv run python -m avo apply-patch candidate.patch
 
 Anthropic decisions now include a required `candidate_patch` string. Empty means no edit. A non-empty raw unified diff is applied through the same validator before `run-decision` or `evolve-once` runs the bounded `next_command`; the command allowlist remains limited to `avo env`, `avo compile`, and `avo score`. When `evolve-once` applies a patch but the step is not accepted by the score gate, it checks and applies the reverse patch so rejected edits do not pollute the next attempt. When a candidate step is accepted, the lineage commit records `sources/latest/...` snapshots for the scored candidate module and companion source directory alongside `scores/latest.json`; patched accepted steps also record `patches/latest.patch`.
 
-`evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the existing lineage gate.
+`evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the suite-aware lineage gate. Candidates compare against the best prior score with the same benchmark case signature; a new signature can establish its own lane when correctness passes and source artifacts are captured.
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
 When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step JSON for every run, including rejected and failed attempts. Later `agent-plan` or `evolve-once` calls summarize the latest records from that directory so the agent can avoid repeating known dead ends without adding them to committed lineage.
 

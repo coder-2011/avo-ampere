@@ -4,6 +4,7 @@ import subprocess
 
 from avo.lineage import (
     best_geomean,
+    best_score_payload_for_signature,
     commit_score,
     decide_gate,
     init_lineage_repo,
@@ -71,21 +72,37 @@ def test_commit_score_records_payload(tmp_path) -> None:
     assert '"geomean_tflops": 12.5' in latest
 
 
-def test_commit_score_rejects_changed_benchmark_shape(tmp_path) -> None:
+def test_commit_score_accepts_new_benchmark_shape_lane(tmp_path) -> None:
     repo = tmp_path / "lineage"
     init_lineage_repo(repo)
     baseline = score_payload(seq_len=128, geomean=1.0)
     changed_shape = score_payload(seq_len=256, geomean=2.0)
     commit_score(repo, baseline)
-    head_before = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
 
     decision = commit_score(repo, changed_shape)
 
+    assert decision.accepted
+    assert "established benchmark case set" in decision.reason
+    assert best_geomean(repo) == 2.0
+    assert best_score_payload_for_signature(repo, baseline)["geomean_tflops"] == 1.0
+    assert best_score_payload_for_signature(repo, changed_shape)["geomean_tflops"] == 2.0
+
+
+def test_commit_score_rejects_same_benchmark_shape_regression(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    baseline = score_payload(seq_len=128, geomean=2.0)
+    regression = score_payload(seq_len=128, geomean=1.0)
+    commit_score(repo, baseline)
+    head_before = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+
+    decision = commit_score(repo, regression)
+
     head_after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
     assert not decision.accepted
-    assert "benchmark cases differ" in decision.reason
+    assert "regressed" in decision.reason
     assert head_after == head_before
-    assert best_geomean(repo) == 1.0
+    assert best_geomean(repo) == 2.0
 
 
 def test_commit_score_rejects_unchanged_source_rerun(tmp_path) -> None:
@@ -144,8 +161,8 @@ def test_commit_score_records_accepted_source_artifacts(tmp_path) -> None:
 def test_commit_score_does_not_record_source_for_rejected_candidate(tmp_path) -> None:
     repo = tmp_path / "lineage"
     init_lineage_repo(repo)
-    baseline = {"backend": "mock", "all_correct": True, "geomean_tflops": 12.5, "cases": [{}]}
-    regression = {"backend": "mock", "all_correct": True, "geomean_tflops": 1.0, "cases": [{}]}
+    baseline = score_payload(seq_len=128, geomean=12.5)
+    regression = score_payload(seq_len=128, geomean=1.0)
     commit_score(repo, baseline)
     head_before = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
 
