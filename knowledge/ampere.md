@@ -198,6 +198,11 @@ variation steps.
   correctness attempt must widen both `pv_tile` and `output_acc`, keep score and
   probability tiles at `16x16`, and verify the PV store offsets for each
   16-wide output chunk.
+  Do not use `linear / kTile` to compute output rows in widened 16x32 loops; the
+  row stride is the head dimension, so row indexing should use `linear / head_dim`
+  or `linear / kHeadDim` when `kHeadDim` is the runtime stride. A later generated
+  patch with `linear / kTile` was rejected before compile due corrupt diff
+  structure, but the indexing direction itself was also wrong.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
