@@ -117,6 +117,14 @@ variation steps.
   shared-to-register copies, online softmax with output rescaling, and head-dim
   padding to multiples of 32. It uses default 128x128 m/n tiles with 128 threads,
   but smaller smoke tiles are still appropriate here until correctness is stable.
+- Dao-AILab's CuTe FlashAttention forward path gives concrete guardrails for
+  Ampere-style FA2 edits: dtype must be FP16 or BF16, head dimensions and V head
+  dimensions are expected to be multiples of 8 for 16-byte alignment, tile-N must
+  be divisible by 16, thread count must be a multiple of 32, and shared-memory
+  use is budgeted as Q plus staged K/V tiles. For local CUDA patches, keep these
+  constraints explicit and prefer small, testable steps such as widening the
+  MMA seed shape or adding correctly overlapped staging over another shape-only
+  score of the warp-row seed.
 - The tiny MMA seed uses CUDA WMMA on sm86 to compute 16x16 BF16 QK score tiles
   and BF16 PV output tiles with tensor cores. It stores unnormalized softmax
   probabilities as BF16 between the two MMA operations and keeps FP32 online
@@ -142,6 +150,8 @@ variation steps.
   https://docs.pytorch.org/docs/stable/benchmark_utils.html
 - NVIDIA CUTLASS CuTeDSL Ampere FlashAttention v2 example:
   https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/ampere/flash_attention_v2.py
+- Dao-AILab CuTe FlashAttention forward implementation:
+  https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/flash_fwd.py
 
 ## Gate
 
