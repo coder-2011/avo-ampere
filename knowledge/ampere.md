@@ -132,8 +132,12 @@ variation steps.
   `__pipeline_wait_prior(N)`. The higher-level `cuda::pipeline` flow uses
   producer acquire, `cuda::memcpy_async`, producer commit, and consumer wait.
   On Ampere+, `cuda::memcpy_async` can lower to `cp.async` for aligned
-  global-to-shared copies. Do not use a templated public spelling for
-  `__pipeline_wait_prior`.
+  global-to-shared copies. CCCL documents 4-byte alignment as the minimum
+  Ampere+ lowering condition, while NVIDIA Ampere material calls out 16-byte
+  size/alignment as the better async-copy path. For AVO BF16 throughput patches,
+  keep treating 16-byte groups as the target and reject scalar 2-byte async-copy
+  noise; 4-byte copies are only useful for API smokes or carefully justified tails.
+  Do not use a templated public spelling for `__pipeline_wait_prior`.
   That tiny compile smoke has now succeeded on the warp-row source for sm86: adding the header plus
   unused wrappers around `__pipeline_memcpy_async`, `__pipeline_commit`, and
   `__pipeline_wait_prior` compiled with no spills. NVCC warned only that the commit/wait wrappers
@@ -454,6 +458,8 @@ variation steps.
   https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/pipelines.html
 - NVIDIA CCCL/libcu++ `cuda::memcpy_async` reference:
   https://nvidia.github.io/cccl/unstable/libcudacxx/extended_api/asynchronous_operations/memcpy_async.html
+- NVIDIA GTC 2020 Ampere CUDA architecture presentation:
+  https://developer.download.nvidia.com/video/gputechconf/gtc/2020/presentations/s21170-cuda-on-nvidia-ampere-gpu-architecture-taking-your-algorithms-to-the-next-level-of-performance.pdf
 - NVIDIA CUTLASS programming guidelines, loop unrolling:
   https://docs.nvidia.com/cutlass/4.4.0/media/docs/cpp/programming_guidelines.html#loop-unrolling
 
