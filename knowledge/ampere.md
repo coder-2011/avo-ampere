@@ -507,6 +507,12 @@ variation steps.
   be removed. The planner now rejects non-empty patches when their own risk text
   calls out stale code that still needs removal or may reference undeclared
   symbols.
+  Another generated head_dim32 two-chunk patch kept WMMA K at 16, but was still
+  rejected by `git apply --check` after it left old single-chunk PV fragment
+  lines after the new two-chunk PV loop. Its own risk text said incomplete
+  removal of old single-chunk lines was the main risk and that those lines should
+  be completely removed. The planner now treats that incomplete-removal warning
+  as self-invalid for non-empty patches.
   A later head_dim32 two-chunk patch removed the stale single-chunk QK lines and
   widened `pv_tile`/`output_acc`, but still declared the score accumulator as
   `wmma::fragment<wmma::accumulator, kTile, kTile, kHeadDim, float>` after
