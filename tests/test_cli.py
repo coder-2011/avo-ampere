@@ -511,6 +511,48 @@ def test_evolve_loop_runs_until_accepted_and_records_attempts(
     assert json.loads((tmp_path / "loop.json").read_text(encoding="utf-8"))["accepted"] is True
 
 
+def test_evolve_loop_records_planning_validation_failure(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+
+    def fake_request_variation_decision(**kwargs):
+        raise ValueError("invalid seed score shape")
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+
+    exit_code = _evolve_loop(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            env_file=None,
+            model="claude",
+            max_steps=1,
+            loop_json=tmp_path / "loop.json",
+            attempts_dir=tmp_path / "attempts",
+            attempt_limit=5,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    saved_payload = json.loads((tmp_path / "loop.json").read_text(encoding="utf-8"))
+
+    assert exit_code == 2
+    assert payload["accepted"] is False
+    assert payload["completed_steps"] == 1
+    assert payload["steps"][0]["attempt"]["command_result"]["ok"] is False
+    assert "agent planning failed validation" in payload["steps"][0]["attempt"]["command_result"][
+        "stderr_tail"
+    ]
+    assert saved_payload == payload
+    assert len(list((tmp_path / "attempts").glob("*.json"))) == 1
+
+
 def test_evolve_loop_requires_attempts_dir(tmp_path: Path) -> None:
     knowledge = tmp_path / "knowledge.md"
     knowledge.write_text("Ampere only.", encoding="utf-8")

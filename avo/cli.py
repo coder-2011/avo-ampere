@@ -30,6 +30,7 @@ from .evolve import (
     apply_candidate_patch,
     cleanup_rejected_candidate_patch,
     finalize_attempt,
+    planning_failure_step,
     run_decision_command,
     summarize_attempt_history,
     write_attempt,
@@ -465,13 +466,16 @@ def _evolve_loop(args: argparse.Namespace) -> int:
 
 
 def _run_evolve_step(args: argparse.Namespace, knowledge: str) -> EvolutionStep:
-    decision = request_variation_decision(
-        lineage_summary=_lineage_summary(args.lineage),
-        knowledge=knowledge,
-        attempt_history=summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit),
-        repo_context=build_repo_context(args.cwd),
-        model=args.model,
-    )
+    try:
+        decision = request_variation_decision(
+            lineage_summary=_lineage_summary(args.lineage),
+            knowledge=knowledge,
+            attempt_history=summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit),
+            repo_context=build_repo_context(args.cwd),
+            model=args.model,
+        )
+    except ValueError as exc:
+        return planning_failure_step(exc)
     attempt = run_decision_command(
         decision,
         cwd=args.cwd,

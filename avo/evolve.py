@@ -407,6 +407,32 @@ def finalize_attempt(
     return EvolutionStep(attempt=attempt, gate_decision=gate_decision)
 
 
+def planning_failure_step(error: Exception) -> EvolutionStep:
+    timestamp = _utc_now()
+    decision = VariationDecision(
+        hypothesis="agent planning failed validation",
+        files_to_inspect=[],
+        candidate_edit="No edit; planner returned invalid decision.",
+        candidate_patch="",
+        expected_effect="No candidate command was executed.",
+        risk=f"{type(error).__name__}: {error}",
+        next_command="avo env",
+    )
+    attempt = VariationAttempt(
+        decision=decision,
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "agent-plan"],
+            returncode=None,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail=_tail(f"agent planning failed validation: {type(error).__name__}: {error}"),
+        ),
+        started_at=timestamp,
+        completed_at=timestamp,
+    )
+    return EvolutionStep(attempt=attempt, gate_decision=None)
+
+
 def cleanup_rejected_candidate_patch(step: EvolutionStep, *, cwd: Path) -> EvolutionStep:
     if step.accepted:
         return step
