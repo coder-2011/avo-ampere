@@ -638,6 +638,30 @@ def test_summarize_attempt_history_flags_repeated_unaccepted_attempts(tmp_path: 
     assert "materially different optimization direction" in summary
 
 
+def test_summarize_attempt_history_normalizes_compile_out_dir(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    source = "candidates/cuda_tiled_attention/attention_kernel.cu"
+    for index in range(3):
+        attempt = VariationAttempt(
+            decision=decision(f"avo compile --source {source} --out-dir build/tiled_{index}"),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "compile"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+            started_at=f"2026-05-08T00:00:0{index}+00:00",
+            completed_at=f"2026-05-08T00:00:0{index + 1}+00:00",
+        )
+        write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "Supervisor signal" in summary
+    assert "share command/edit fingerprint" in summary
+
+
 def test_summarize_attempt_history_flags_unaccepted_exhaustion(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     for index in range(5):

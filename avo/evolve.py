@@ -590,10 +590,33 @@ def _step_payload_fingerprint(payload: dict[str, Any]) -> str:
     components = {
         "candidate_patch": str(decision.get("candidate_patch") or "").strip(),
         "files_to_inspect": _string_list(decision.get("files_to_inspect")),
-        "next_command": str(decision.get("next_command") or "").strip(),
+        "next_command": _fingerprint_next_command(str(decision.get("next_command") or "")),
     }
     encoded = json.dumps(components, sort_keys=True, separators=(",", ":")).encode("utf-8")
     return hashlib.sha256(encoded).hexdigest()[:12]
+
+
+def _fingerprint_next_command(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return " ".join(command.split())
+    if len(parts) >= 2 and parts[:2] == ["avo", "compile"]:
+        source = _command_option_value(parts, "--source")
+        if source:
+            return f"avo compile --source {source}"
+        return "avo compile"
+    return " ".join(parts)
+
+
+def _command_option_value(parts: list[str], option: str) -> str:
+    prefix = f"{option}="
+    for index, part in enumerate(parts):
+        if part == option and index + 1 < len(parts):
+            return parts[index + 1]
+        if part.startswith(prefix):
+            return part[len(prefix) :]
+    return ""
 
 
 def _string_list(value: object) -> list[str]:
