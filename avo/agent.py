@@ -1151,6 +1151,10 @@ def _validate_known_candidate_score_shape(
                 "num_heads<=4 cap; "
                 "include candidate_patch to update the wrapper/kernel first"
             )
+        raise ValueError(
+            "next_command repeats a recorded unpatched MMA seed score; include "
+            "candidate_patch to change kernel structure before scoring"
+        )
     elif candidate == TILED_SEED:
         if _is_outside_tiled_validated_cap(
             seq_lens=seq_lens,

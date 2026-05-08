@@ -694,6 +694,13 @@ variation steps.
   header availability is already recorded. If adding wrappers, place helper
   definitions before the kernel signature and call them in real 16-byte-group
   dataflow, otherwise choose a materially different non-async patch.
+  A later no-edit MMA seq256/head_dim128 rescore was correctly rejected by the
+  lineage gate due to timing regression: geomean `0.3399665809331029` TFLOPS,
+  noncausal `0.4969407540080716` TFLOPS at median 1.0803519487380981 ms, and
+  causal `0.23257757633914394` TFLOPS at median 1.1541759967803955 ms. This
+  confirms that fresh-baseline no-patch scores waste loop budget and can look
+  worse under noise; the planner now rejects unpatched MMA seed scores and
+  requires a structural `candidate_patch` before scoring that source again.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.

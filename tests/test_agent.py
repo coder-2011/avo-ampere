@@ -355,7 +355,7 @@ def test_parse_variation_decision_rejects_unpatched_mma_score_outside_cap() -> N
         parse_decision_text(json.dumps(payload))
 
 
-def test_parse_variation_decision_allows_unpatched_mma_smoke_cap() -> None:
+def test_parse_variation_decision_rejects_unpatched_mma_smoke_cap() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "No edit; score the existing MMA seed at its validated cap."
     payload["next_command"] = (
@@ -364,9 +364,8 @@ def test_parse_variation_decision_allows_unpatched_mma_smoke_cap() -> None:
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    decision = parse_decision_text(json.dumps(payload))
-
-    assert decision.next_command == payload["next_command"]
+    with pytest.raises(ValueError, match="recorded unpatched MMA seed score"):
+        parse_decision_text(json.dumps(payload))
 
 
 def test_parse_variation_decision_rejects_patched_mma_shape_score_before_compile() -> None:
