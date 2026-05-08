@@ -15,6 +15,7 @@ DEFAULT_AGENT_REQUEST_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_DELAY_S = 1.0
 ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "score"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
+TOOL_PARAMETER_MARKERS = ("<parameter ", "</parameter>")
 PATCH_REQUIRED_EDIT_VERBS = frozenset(
     {
         "add",
@@ -388,6 +389,8 @@ def _require_string(payload: dict[str, Any], key: str) -> str:
     value = payload[key]
     if not isinstance(value, str) or not value.strip():
         raise ValueError(f"{key} must be a non-empty string")
+    if any(marker in value for marker in TOOL_PARAMETER_MARKERS):
+        raise ValueError(f"{key} must not contain tool parameter markup")
     return value
 
 

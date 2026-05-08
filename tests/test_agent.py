@@ -175,6 +175,16 @@ def test_parse_variation_decision_rejects_empty_patch_for_code_edit() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_tool_parameter_markup_in_string() -> None:
+    payload = decision_payload()
+    payload["expected_effect"] = (
+        "score smoke shape\n<parameter name=\"risk\">risk text leaked into wrong field"
+    )
+
+    with pytest.raises(ValueError, match="expected_effect must not contain tool parameter markup"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_markdown_fenced_patch() -> None:
     payload = decision_payload()
     payload["candidate_patch"] = (
