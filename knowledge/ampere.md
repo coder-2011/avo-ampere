@@ -127,6 +127,13 @@ variation steps.
   source-size/zero-fill argument for partial copies, and asserts shared/global address spaces plus
   4/8/16-byte alignment. A future cp.async attempt can first add `#include <cuda_pipeline_primitives.h>`
   and compile a tiny candidate-local smoke before restructuring the warp-row loop.
+  NVIDIA's current CUDA Programming Guide also documents the primitives as
+  function-style calls: `__pipeline_memcpy_async`, `__pipeline_commit`, and
+  `__pipeline_wait_prior(N)`. The higher-level `cuda::pipeline` flow uses
+  producer acquire, `cuda::memcpy_async`, producer commit, and consumer wait.
+  On Ampere+, `cuda::memcpy_async` can lower to `cp.async` for aligned
+  global-to-shared copies. Do not use a templated public spelling for
+  `__pipeline_wait_prior`.
   That tiny compile smoke has now succeeded on the warp-row source for sm86: adding the header plus
   unused wrappers around `__pipeline_memcpy_async`, `__pipeline_commit`, and
   `__pipeline_wait_prior` compiled with no spills. NVCC warned only that the commit/wait wrappers
@@ -435,6 +442,12 @@ variation steps.
   https://github.com/NVIDIA/cuda-samples/blob/master/Samples/3_CUDA_Features/bf16TensorCoreGemm/bf16TensorCoreGemm.cu
 - NVIDIA CUDA C++ Programming Guide, Warp Matrix Functions:
   https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#warp-matrix-functions
+- NVIDIA CUDA Programming Guide, Advanced Kernel Programming / async copy primitives:
+  https://docs.nvidia.com/cuda/cuda-programming-guide/03-advanced/advanced-kernel-programming.html
+- NVIDIA CUDA Programming Guide, Pipelines:
+  https://docs.nvidia.com/cuda/cuda-programming-guide/04-special-topics/pipelines.html
+- NVIDIA CCCL/libcu++ `cuda::memcpy_async` reference:
+  https://nvidia.github.io/cccl/unstable/libcudacxx/extended_api/asynchronous_operations/memcpy_async.html
 - NVIDIA CUTLASS programming guidelines, loop unrolling:
   https://docs.nvidia.com/cutlass/4.4.0/media/docs/cpp/programming_guidelines.html#loop-unrolling
 
