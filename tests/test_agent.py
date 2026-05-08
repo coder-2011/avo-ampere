@@ -1731,6 +1731,24 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     assert "Do not mention fixing" in content
 
 
+def test_decision_feedback_explains_missing_required_keys_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "variation decision missing required keys: expected_effect, risk, next_command"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "complete variation decision object" in content
+    assert "expected_effect" in content
+    assert "risk" in content
+    assert "next_command" in content
+    assert "Do not omit" in content
+
+
 def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     kwargs = {
         "messages": [

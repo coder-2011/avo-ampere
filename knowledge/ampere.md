@@ -861,3 +861,7 @@ source files.
   chunk. It passed correctness but regressed geomean to
   `0.4215966561800913` TFLOPS versus the accepted
   `0.5772885607891738`. Do not repeat this exact Q-fragment preload chain.
+  A later loop failed planning validation after three attempts because the
+  returned decision omitted required fields (`expected_effect`, `risk`, and
+  `next_command`). Retry feedback now explicitly asks for a complete decision
+  object with all required fields even in no-edit diagnostic mode.

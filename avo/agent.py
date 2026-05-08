@@ -508,6 +508,13 @@ def _decision_kwargs_with_feedback(
 
 def _validation_feedback_hint(error: ValueError) -> str:
     message = str(error)
+    if "variation decision missing required keys" in message:
+        return (
+            "Return one complete variation decision object with every required field: "
+            "hypothesis, files_to_inspect, candidate_edit, candidate_patch, "
+            "expected_effect, risk, and next_command. Do not omit expected_effect, "
+            "risk, or next_command even in no-edit diagnostic mode. "
+        )
     if "candidate_patch must be non-empty" in message:
         return (
             "Choose exactly one valid mode. Edit mode: candidate_patch must be a raw "
