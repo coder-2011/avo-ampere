@@ -89,6 +89,7 @@ NO_EDIT_PHRASES = (
 SELF_REJECTING_PATCH_PHRASES = (
     "cannot affect correctness or throughput",
     "cannot improve throughput",
+    "does not affect correctness or throughput",
     "not ready to apply",
     "not yet called",
     "stub is empty",
@@ -425,6 +426,9 @@ def build_repo_context(root: Path) -> str:
         "Scalar async-copy validation has failed repeatedly in recent loops. Treat cp.async/"
         "__pipeline_memcpy_async as a cooled-down direction unless the diff is a complete "
         "16-byte-group dataflow change with exact current context and no scalar async calls.",
+        "Compile-only WMMA skeletons that add fragments or shared buffers without wiring "
+        "them into MMA and online-softmax dataflow are recorded no-ops; build-check only "
+        "candidate patches that are intended to be scored after a successful compile.",
         "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
         "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
@@ -776,6 +780,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch adds an MMA preload fragment that is loaded but never consumed; "
             "compile-only unused preload skeletons do not affect correctness or throughput"
         )
+    if _candidate_patch_adds_unused_wmma_compile_skeleton(added_text):
+        raise ValueError(
+            "candidate_patch adds a WMMA compile skeleton without any MMA or online-softmax "
+            "dataflow; compile-only WMMA skeletons do not affect correctness or throughput"
+        )
     if _candidate_patch_repeats_mma_qk_fragment_preload_chain(added_text):
         raise ValueError(
             "candidate_patch repeats the MMA QK k_frag_next preload chain; "
@@ -1009,6 +1018,16 @@ def _candidate_patch_adds_unused_mma_preload_fragment(added_text: str) -> bool:
         and "load_matrix_sync(k_frag_next," in compact
         and "mma_sync" not in compact
     )
+
+
+def _candidate_patch_adds_unused_wmma_compile_skeleton(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    adds_wmma_fragment = (
+        "wmma::fragment<wmma::accumulator" in compact
+        or "wmma::fragment<wmma::matrix_a" in compact
+        or "wmma::fragment<wmma::matrix_b" in compact
+    )
+    return adds_wmma_fragment and "wmma::fill_fragment" in compact and "mma_sync(" not in compact
 
 
 def _candidate_patch_repeats_sync_mma_q_staging(added_text: str) -> bool:

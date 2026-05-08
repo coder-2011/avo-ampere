@@ -756,6 +756,8 @@ variation steps.
   https://docs.nvidia.com/cuda/archive/13.0.3/cuda-c-programming-guide/index.html
 - Dao-AILab CuTe FlashAttention forward implementation:
   https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/flash_fwd.py
+- Dao-AILab SM80 FlashAttention mainloop:
+  https://github.com/Dao-AILab/flash-attention/blob/main/hopper/mainloop_fwd_sm80.hpp
 - Dao-AILab CuTe FlashAttention online softmax helper:
   https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/softmax.py
 - NVIDIA CUDA Samples BF16 Tensor Core GEMM:
@@ -865,3 +867,11 @@ source files.
   returned decision omitted required fields (`expected_effect`, `risk`, and
   `next_command`). Retry feedback now explicitly asks for a complete decision
   object with all required fields even in no-edit diagnostic mode.
+  A later warp-row detour added a compile-only WMMA skeleton with `mma.h`,
+  shared BF16 Q/K buffers, and a `wmma::accumulator` fragment, but it never ran
+  `mma_sync` or connected the fragment to online-softmax score/PV dataflow. It
+  compiled with 48 BF16 registers, 1 barrier, and 17024 bytes shared memory, but
+  produced no correctness or throughput evidence and was cleaned up. Do not
+  repeat compile-only WMMA skeletons; a build-check patch must wire the new
+  fragments into real dataflow and be intended for bounded scoring after
+  compile.

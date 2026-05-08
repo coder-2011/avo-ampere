@@ -1488,6 +1488,55 @@ def test_parse_variation_decision_rejects_noop_async_copy_stub_patch() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_patch_described_as_no_effect() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add a warp-row WMMA build check and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+#include <mma.h>\n"
+    )
+    payload["expected_effect"] = (
+        "This compile-only patch does not affect correctness or throughput."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/warp"
+    )
+
+    with pytest.raises(ValueError, match="does not affect correctness or throughput"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_unused_wmma_compile_skeleton() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add a warp-row WMMA skeleton and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1,8 @@\n"
+        "-old\n"
+        "+#include <mma.h>\n"
+        "+__shared__ __nv_bfloat16 q_shared[kRowsPerBlock][kMaxHeadDim];\n"
+        "+__shared__ __nv_bfloat16 k_shared[kTileKeys][kMaxHeadDim];\n"
+        "+wmma::fragment<wmma::accumulator, 16, 16, 16, float> score_frag;\n"
+        "+wmma::fill_fragment(score_frag, 0.0f);\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/warp"
+    )
+
+    with pytest.raises(ValueError, match="WMMA compile skeleton"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_bf16_score_tiles_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Convert warp-row score_tiles shared memory to BF16."
