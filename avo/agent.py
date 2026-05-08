@@ -91,6 +91,7 @@ SELF_REJECTING_PATCH_PHRASES = (
     "not ready to apply",
     "not yet called",
     "stub is empty",
+    "would break correctness",
     "will cause a compile error",
     "will break correctness",
     "reject this direction",
@@ -565,6 +566,9 @@ def _validate_candidate_patch_not_self_rejected(
 def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
     if not candidate_patch.strip():
         return
+    for added_line in _candidate_patch_added_lines(candidate_patch):
+        if added_line.rstrip(" \t") != added_line:
+            raise ValueError("candidate_patch added lines must not contain trailing whitespace")
     added_text = "\n".join(_candidate_patch_added_lines(candidate_patch))
     if "__pipeline_wait_prior<" in added_text:
         raise ValueError(

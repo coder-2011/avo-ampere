@@ -497,6 +497,27 @@ def test_parse_variation_decision_rejects_markdown_fenced_patch() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_added_trailing_whitespace() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch warp-row WMMA skeleton and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+wmma::load_matrix_sync(q_frag, src, 128); \n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/warp"
+    )
+
+    with pytest.raises(ValueError, match="trailing whitespace"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_self_rejected_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch tiled online softmax and compile it."
@@ -538,6 +559,28 @@ def test_parse_variation_decision_rejects_correctness_breaking_patch_warning() -
     payload["next_command"] = (
         "avo compile --source candidates/cuda_tiled_attention/attention_kernel.cu "
         "--out-dir build/tiled"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_would_break_correctness_warning() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch warp-row WMMA skeleton and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = "The early return would break correctness if this patch were scored."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/warp"
     )
 
     with pytest.raises(ValueError, match="known invalid"):
