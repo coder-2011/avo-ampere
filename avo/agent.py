@@ -21,7 +21,7 @@ DEFAULT_SCORE_HEAD_DIM = 128
 DEFAULT_SCORE_NUM_HEADS = 16
 DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
 DEFAULT_SCORE_TOTAL_TOKENS = 32768
-MMA_ACCEPTED_VALIDATION_SEQ = 16384
+MMA_ACCEPTED_VALIDATION_SEQ = 32768
 MAX_REPO_CONTEXT_FILE_CHARS = 12_000
 MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
@@ -35,7 +35,7 @@ RECORDED_NO_PATCH_COMPILE_SOURCES = frozenset(
     }
 )
 MMA_BASE_SMOKE_SEQUENCES = frozenset(
-    {16, 32, 64, 128, 256, 1024, 2048, 4096, 8192, 16384}
+    {16, 32, 64, 128, 256, 1024, 2048, 4096, 8192, 16384, 32768}
 )
 ENV_COMMAND_KEYWORDS = (
     "baseline",
@@ -554,7 +554,7 @@ def build_repo_context(root: Path) -> str:
         "optimization steps; compile only when build-checking a materialized edit.",
         "Unpatched seed score caps are smoke-only safety fences: "
         "candidates/cuda_mma_attention_seed.py supports "
-        "seq_lens up to the accepted seq16384 lane with head_dim 128; "
+        "seq_lens up to the accepted seq32768 lane with head_dim 128; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
         "head_dim <= 128 with total_tokens <= 1024 and num_heads <= 4; "
         "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
@@ -1965,7 +1965,7 @@ def _validate_known_candidate_score_shape(
         ):
             raise ValueError(
                 "next_command scores cuda_mma_attention_seed.py outside its unpatched "
-                "seq_len 16/32/64/128/256/1024/2048/4096/8192/16384, "
+                "seq_len 16/32/64/128/256/1024/2048/4096/8192/16384/32768, "
                 "head_dim 128, total_tokens<=32768, "
                 "and num_heads<=16 cap; "
                 "include candidate_transform/candidate_patch to update the wrapper/kernel first"
@@ -2052,6 +2052,7 @@ def _is_recorded_mma_seed_score(
             ((4096,), 128, 32768, 16),
             ((8192,), 128, 32768, 16),
             ((16384,), 128, 32768, 16),
+            ((32768,), 128, 32768, 16),
         }
     )
 
@@ -2424,7 +2425,7 @@ def _preferred_candidate_score_command(candidates: list[str]) -> str:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_mma_attention_seed.py "
-            "--seq-lens 4096,8192,16384 --total-tokens 32768 --num-heads 16 "
+            "--seq-lens 4096,8192,16384,32768 --total-tokens 32768 --num-heads 16 "
             "--head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
@@ -2432,7 +2433,7 @@ def _preferred_candidate_score_command(candidates: list[str]) -> str:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_warp_rows_attention_seed.py "
-            "--seq-lens 4096,8192,16384 --total-tokens 32768 --num-heads 16 "
+            "--seq-lens 4096,8192,16384,32768 --total-tokens 32768 --num-heads 16 "
             "--head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
@@ -2440,7 +2441,7 @@ def _preferred_candidate_score_command(candidates: list[str]) -> str:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_tiled_attention_seed.py "
-            "--seq-lens 4096,8192,16384 --total-tokens 32768 --num-heads 16 "
+            "--seq-lens 4096,8192,16384,32768 --total-tokens 32768 --num-heads 16 "
             "--head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
@@ -2448,7 +2449,7 @@ def _preferred_candidate_score_command(candidates: list[str]) -> str:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_naive_attention_seed.py "
-            "--seq-lens 4096,8192,16384 --total-tokens 32768 --num-heads 16 "
+            "--seq-lens 4096,8192,16384,32768 --total-tokens 32768 --num-heads 16 "
             "--head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
