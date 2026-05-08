@@ -358,6 +358,11 @@ variation steps.
   Future tiled fixes should keep the online-softmax invariant explicit:
   `output_acc = output_acc * old_scale + tile_acc * tile_scale`, with
   `row_sum = row_sum * old_scale + tile_sum * tile_scale`.
+  The current tiled source already contains that exact output recurrence. A
+  later loop repeated a stale patch from `output_acc = tile_acc * tile_scale` to
+  the correct recurrence, but that old line is no longer present and `git apply`
+  rejected the patch. The planner now rejects this stale tiled rescale fix; look
+  for other larger-shape correctness causes instead.
   Dao-AILab's CuTe softmax helper reinforces this recurrence: it computes a
   per-row scale from the previous row max to the current row max, updates the
   running row sum using `old_row_sum * row_scale` as the reduction initializer,
