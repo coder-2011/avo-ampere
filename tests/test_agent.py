@@ -351,7 +351,7 @@ def test_parse_variation_decision_rejects_unpatched_mma_score_outside_cap() -> N
         "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 256"
     )
 
-    with pytest.raises(ValueError, match="outside its unpatched seq_len 16/32/64"):
+    with pytest.raises(ValueError, match="outside its unpatched seq_len 16/32/64/128"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -361,7 +361,7 @@ def test_parse_variation_decision_allows_unpatched_mma_smoke_cap() -> None:
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 64 --total-tokens 256 --num-heads 4 --head-dim 128"
+        "--seq-lens 128 --total-tokens 512 --num-heads 4 --head-dim 128"
     )
 
     decision = parse_decision_text(json.dumps(payload))
@@ -397,10 +397,10 @@ def test_parse_variation_decision_rejects_unpatched_mma_workload_scaling() -> No
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 64 --total-tokens 512 --num-heads 4 --head-dim 128"
+        "--seq-lens 128 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="total_tokens<=256"):
+    with pytest.raises(ValueError, match="total_tokens<=512"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1080,10 +1080,11 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
     assert "Patch hunks must use exact current file context" in context
     assert "The unpatched MMA seq64/head_dim128 score passed correctness" in context
+    assert "The unpatched MMA seq128/head_dim128 score passed correctness" in context
     assert "Patched MMA shape extensions beyond the current head_dim128 smoke" in context
     assert "partial MMA head_dim128 extension" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
-    assert "--seq-lens 64" in context
+    assert "--seq-lens 128" in context
     assert "candidate_patch as a raw unified diff" in context
     assert "avo score --backend candidate" in context
     assert "Candidate source excerpts for exact patch context:" in context

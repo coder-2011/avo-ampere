@@ -26,7 +26,7 @@ Recent commits show the work moved in layers:
 - `feat: add candidate scoring backend` added the candidate interface and a PyTorch SDPA seed candidate.
 - `fix: harden Anthropic agent planning` improved structured-tool fallbacks and validation.
 - `feat: add CUDA extension candidate smoke` added a minimal compiled CUDA extension path that copies an SDPA result, proving the candidate build/load path before replacing the attention computation itself.
-- `feat: add tiny mma attention seed` added a 16/32/64-token BF16 WMMA QK/PV candidate so the local search has a tensor-core attention-math foothold.
+- `feat: add tiny mma attention seed` added a 16/32/64/128-token BF16 WMMA QK/PV candidate so the local search has a tensor-core attention-math foothold.
 
 ## Repository layout
 
@@ -166,14 +166,14 @@ uv run --extra cuda python -m avo score \
   --timeout-s 300
 ```
 
-Score the tiny BF16 WMMA QK/PV attention smoke candidate on its 64-token shape:
+Score the tiny BF16 WMMA QK/PV attention smoke candidate on its 128-token shape:
 
 ```bash
 uv run --extra cuda python -m avo score \
   --backend candidate \
   --candidate candidates/cuda_mma_attention_seed.py \
-  --seq-lens 64 \
-  --total-tokens 256 \
+  --seq-lens 128 \
+  --total-tokens 512 \
   --num-heads 4 \
   --head-dim 128 \
   --dtype bf16 \
@@ -271,7 +271,7 @@ uv run python -m avo evolve-loop \
 
 ## What is still missing
 
-- Scaling the tiny WMMA QK/PV seed beyond its 16/32/64-token smoke shapes.
+- Scaling the tiny WMMA QK/PV seed beyond its 16/32/64/128-token smoke shapes.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
 - Longer-running autonomous supervision beyond the minimal capped `evolve-loop`, including active intervention and richer stop policies.
 - Broader dependency manifests for accepted candidates that import files outside the scored module and companion source directory.
