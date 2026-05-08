@@ -683,6 +683,51 @@ def test_parse_variation_decision_rejects_direct_head_dim128_shared_threshold() 
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_symbolic_mma_score_k32_fragment() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA head_dim32 two-chunk score path and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,3 @@\n"
+        "-constexpr int kHeadDim = 16;\n"
+        "+constexpr int kHeadDim = 32;\n"
+        "+wmma::fragment<wmma::accumulator, kTile, kTile, kHeadDim, float> "
+        "score_frag;\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="unsupported WMMA accumulator"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_literal_mma_score_k32_fragment() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA literal head_dim32 score fragment and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,2 @@\n"
+        "-old\n"
+        "+nvcuda::wmma::fragment<nvcuda::wmma::accumulator, 16, 16, 32, float, "
+        "void> score_frag;\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="unsupported WMMA accumulator"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."

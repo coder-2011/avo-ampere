@@ -612,6 +612,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "the recorded version preserved correctness but regressed throughput, "
             "so include real async-copy or double-buffering logic"
         )
+    if _candidate_patch_uses_unsupported_mma_score_k32(added_text):
+        raise ValueError(
+            "candidate_patch uses unsupported WMMA accumulator shape 16x16x32; "
+            "keep the score fragment K at 16 and accumulate two 16-wide chunks "
+            "into a 16x16 accumulator"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -640,6 +646,19 @@ def _candidate_patch_adds_only_unroll_pragmas(candidate_patch: str) -> bool:
     return bool(meaningful_added_lines) and all(
         line == "#pragma unroll" for line in meaningful_added_lines
     )
+
+
+def _candidate_patch_uses_unsupported_mma_score_k32(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    sets_khead32 = "kHeadDim=32" in compact
+    symbolic_score = "fragment<wmma::accumulator,kTile,kTile,kHeadDim,float>" in compact
+    literal_score = bool(
+        re.search(
+            r"fragment<(?:nvcuda::)?wmma::accumulator,16,16,32,float(?:,void)?>",
+            compact,
+        )
+    )
+    return (sets_khead32 and symbolic_score) or literal_score
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:
