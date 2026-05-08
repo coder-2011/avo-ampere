@@ -194,6 +194,16 @@ variation steps.
   only handles a `head_dim == 16` BF16 score path for `warp_id == 0`, does not
   integrate the WMMA scores into the existing online softmax/output accumulation
   for all rows, and would leave that branch without a final output update.
+  A later warp-row single-tile WMMA probe added `mma.h` and fragment declarations
+  inside the warp-row kernel and compiled with unchanged BF16/Half diagnostics
+  (48 registers, 1 barrier, 16896 bytes shared memory, no spills; FP32 56
+  registers, 33280 bytes shared memory). It is compile-only and not scoreable:
+  the generated code gated WMMA work behind `lane == 0`, did not store the WMMA
+  score fragment into the existing `scores` array, and would be skipped on the
+  head_dim128 target because `can_stage_shared` is false. NVIDIA's warp-level
+  primitive guidance requires all participating warp threads to execute
+  collectives coherently; future WMMA work must not call `load_matrix_sync` or
+  `mma_sync` from a single lane.
   A later scalar fallback unroll patch was rejected before compile because its
   context did not match the current source and it referenced `qv`, `kv`, and
   `inner` outside the packed branch where those names are defined. The fixed
