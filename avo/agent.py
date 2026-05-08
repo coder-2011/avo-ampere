@@ -401,6 +401,9 @@ def build_repo_context(root: Path) -> str:
         "For MMA shared K staging, k_shared is tile-local: do not load from "
         "k_shared + key_start * kHeadDim + chunk_offset. Use k_shared + chunk_offset "
         "with leading dimension kHeadDim after staging the 16x128 tile.",
+        "The corrected synchronous full-K MMA staging path preserved correctness but "
+        "regressed throughput; do not repeat static k_shared staging unless adding "
+        "real async-copy or double-buffered overlap.",
         "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
         "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
@@ -687,6 +690,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "with the global key_start offset; use tile-local k_shared + "
             "chunk_offset addressing with kHeadDim as the leading dimension"
         )
+    if _candidate_patch_repeats_sync_mma_k_staging(added_text):
+        raise ValueError(
+            "candidate_patch repeats synchronous MMA K shared-memory staging; "
+            "the recorded score preserved correctness but regressed throughput, "
+            "so add real async-copy or double-buffered overlap before revisiting"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -797,6 +806,15 @@ def _candidate_patch_leaves_orphan_mma_k_fragment(added_text: str) -> bool:
 
 def _candidate_patch_uses_global_offset_for_shared_k_tile(added_text: str) -> bool:
     return bool(re.search(r"\bk_shared\s*\+\s*key_start\s*\*\s*kHeadDim\b", added_text))
+
+
+def _candidate_patch_repeats_sync_mma_k_staging(added_text: str) -> bool:
+    return (
+        "__shared__ __nv_bfloat16 k_shared[kTile * kHeadDim]" in added_text
+        and bool(re.search(r"\bk_shared\s*\+\s*chunk_offset\b", added_text))
+        and "cp.async" not in added_text
+        and "memcpy_async" not in added_text
+    )
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:

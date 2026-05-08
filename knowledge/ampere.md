@@ -653,6 +653,14 @@ variation steps.
   compiled with the same 40 registers, 1 barrier, and 22208 bytes shared
   memory, then was cleaned up without score or gate decision. The planner now
   rejects this global-offset shared-K pattern before compile.
+  A corrected manual full-K staging patch used tile-local
+  `k_shared + chunk_offset`, compiled with the same diagnostics, and passed
+  correctness on the seq256/head_dim128 BF16 suite, but the lineage gate
+  rejected it for throughput regression: geomean `0.30611777431945414` TFLOPS
+  versus best `0.4924015757468769`. Noncausal was `0.4325250932830868` TFLOPS
+  at median 1.2412480115890503 ms; causal was `0.2166535380479405` TFLOPS at
+  median 1.2390079498291016 ms. Do not repeat synchronous static `k_shared`
+  staging without real async-copy or double-buffered overlap.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
