@@ -891,6 +891,29 @@ def test_parse_variation_decision_rejects_orphan_mma_k_fragment_block() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_global_offset_for_shared_mma_k_tile() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Stage the MMA K tile in shared memory and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,3 @@\n"
+        "-old\n"
+        "+__shared__ __nv_bfloat16 k_shared[kTile * kHeadDim];\n"
+        "+wmma::load_matrix_sync(k_frag, k_shared + key_start * kHeadDim + chunk_offset, "
+        "kHeadDim);\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="global key_start offset"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
@@ -1082,6 +1105,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "The unpatched MMA seq64/head_dim128 score passed correctness" in context
     assert "The unpatched MMA seq128/head_dim128 score passed correctness" in context
     assert "The unpatched MMA seq256/head_dim128 score passed correctness" in context
+    assert "k_shared + key_start * kHeadDim + chunk_offset" in context
     assert "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke" in context
     assert "partial MMA head_dim128 extension" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context

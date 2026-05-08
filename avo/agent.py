@@ -98,6 +98,8 @@ SELF_REJECTING_PATCH_PHRASES = (
     "will cause a compile error",
     "will break correctness",
     "will fail correctness",
+    "will compute the wrong shared memory address",
+    "likely segfault or produce incorrect results",
     "reject this direction",
 )
 
@@ -396,6 +398,9 @@ def build_repo_context(root: Path) -> str:
         "recorded as structural progress; do not repeat it without a new candidate_patch.",
         "The unpatched MMA seq256/head_dim128 score passed correctness and was accepted "
         "into lineage; do not repeat it without a structural candidate_patch.",
+        "For MMA shared K staging, k_shared is tile-local: do not load from "
+        "k_shared + key_start * kHeadDim + chunk_offset. Use k_shared + chunk_offset "
+        "with leading dimension kHeadDim after staging the 16x128 tile.",
         "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
         "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
@@ -676,6 +681,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "storing scores; remove old single-chunk QK fragment declarations "
             "completely"
         )
+    if _candidate_patch_uses_global_offset_for_shared_k_tile(added_text):
+        raise ValueError(
+            "candidate_patch stages an MMA K tile in shared memory but loads it "
+            "with the global key_start offset; use tile-local k_shared + "
+            "chunk_offset addressing with kHeadDim as the leading dimension"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -782,6 +793,10 @@ def _candidate_patch_leaves_orphan_mma_k_fragment(added_text: str) -> bool:
             compact,
         )
     )
+
+
+def _candidate_patch_uses_global_offset_for_shared_k_tile(added_text: str) -> bool:
+    return bool(re.search(r"\bk_shared\s*\+\s*key_start\s*\*\s*kHeadDim\b", added_text))
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:

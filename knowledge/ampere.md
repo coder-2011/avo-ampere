@@ -645,6 +645,14 @@ variation steps.
   staging compile-only probe; the next K/V staging step should either stage all
   QK chunks and score, or introduce a clearly different cp.async/double-buffered
   load path and compile-check it first.
+  The next loop proposed full synchronous K staging and compiled, but its own
+  risk text identified a tile-local addressing bug: it loaded K fragments from
+  `k_shared + key_start * kHeadDim + chunk_offset`. Because `k_shared` stores
+  only the current 16x128 K tile, the WMMA load base should be
+  `k_shared + chunk_offset` with leading dimension `kHeadDim`. The bad patch
+  compiled with the same 40 registers, 1 barrier, and 22208 bytes shared
+  memory, then was cleaned up without score or gate decision. The planner now
+  rejects this global-offset shared-K pattern before compile.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
