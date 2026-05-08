@@ -341,6 +341,13 @@ def _relative_files(root: Path, dirname: str, *, suffix: str) -> list[str]:
 
 
 def _preferred_candidate_score_command(candidates: list[str]) -> str:
+    if "candidates/cuda_mma_attention_seed.py" in candidates:
+        return (
+            "avo score --backend candidate "
+            "--candidate candidates/cuda_mma_attention_seed.py "
+            "--seq-lens 16 --total-tokens 16 --num-heads 1 --head-dim 16 "
+            "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
+        )
     if "candidates/cuda_warp_rows_attention_seed.py" in candidates:
         return (
             "avo score --backend candidate "
