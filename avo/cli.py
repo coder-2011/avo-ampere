@@ -7,6 +7,7 @@ import os
 import re
 import shutil
 import subprocess
+import sysconfig
 from pathlib import Path
 
 from .agent import (
@@ -484,6 +485,9 @@ def _baseline_build_env(env: dict[str, str]) -> dict[str, str]:
     # default while still allowing an explicit caller override.
     env.setdefault("MAX_JOBS", "1")
     env.setdefault("NVCC_THREADS", "1")
+    python_cuda_home = _compatible_python_cuda_home(env)
+    if python_cuda_home is not None and not _cuda_env_is_build_compatible(env):
+        env["CUDA_HOME"] = python_cuda_home
     return env
 
 
@@ -509,6 +513,8 @@ def _baseline_build_status(
             "FLASH_ATTN_CUDA_ARCHS": baseline_env["FLASH_ATTN_CUDA_ARCHS"],
             "MAX_JOBS": baseline_env["MAX_JOBS"],
             "NVCC_THREADS": baseline_env["NVCC_THREADS"],
+            "CUDA_HOME": baseline_env.get("CUDA_HOME"),
+            "CUDA_PATH": baseline_env.get("CUDA_PATH"),
         },
         "torch_cuda": torch_cuda,
         "nvcc_path": nvcc_path,
@@ -526,6 +532,48 @@ def _nvcc_path_from_env(env: dict[str, str]) -> str | None:
         executable = "nvcc.exe" if os.name == "nt" else "nvcc"
         return str(Path(cuda_home) / "bin" / executable)
     return shutil.which("nvcc", path=env.get("PATH"))
+
+
+def _python_cuda_home() -> str | None:
+    try:
+        purelib = Path(sysconfig.get_paths()["purelib"])
+    except Exception:
+        return None
+    candidates = []
+    for nvcc in purelib.glob("nvidia/cu*/bin/nvcc"):
+        cuda_home = nvcc.parent.parent
+        if (cuda_home / "include" / "cuda.h").exists():
+            candidates.append(cuda_home)
+    if len(candidates) != 1:
+        return None
+    return str(candidates[0])
+
+
+def _compatible_python_cuda_home(env: dict[str, str]) -> str | None:
+    cuda_home = _python_cuda_home()
+    if cuda_home is None:
+        return None
+    nvcc_path = str(Path(cuda_home) / "bin" / ("nvcc.exe" if os.name == "nt" else "nvcc"))
+    nvcc_cuda, _ = _nvcc_cuda_version(nvcc_path, env)
+    compatibility, _ = _cuda_build_compatibility(_torch_cuda_version(), nvcc_cuda)
+    if compatibility not in {"exact", "minor_mismatch"}:
+        return None
+    return cuda_home
+
+
+def _cuda_env_is_build_compatible(env: dict[str, str]) -> bool:
+    nvcc_path = _nvcc_path_from_env(env)
+    nvcc_cuda, _ = _nvcc_cuda_version(nvcc_path, env)
+    compatibility, _ = _cuda_build_compatibility(_torch_cuda_version(), nvcc_cuda)
+    return compatibility in {"exact", "minor_mismatch"}
+
+
+def _torch_cuda_version() -> str | None:
+    try:
+        import torch
+    except Exception:
+        return None
+    return torch.version.cuda
 
 
 def _nvcc_cuda_version(
