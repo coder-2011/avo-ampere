@@ -513,6 +513,11 @@ variation steps.
   removal of old single-chunk lines was the main risk and that those lines should
   be completely removed. The planner now treats that incomplete-removal warning
   as self-invalid for non-empty patches.
+  A subsequent v3 generated patch was again rejected by `git apply --check` and
+  left an orphan post-QK `wmma::fragment<wmma::matrix_b, ...> k_frag;` block
+  after storing the score tile. The planner now rejects that exact orphan
+  post-score-store `k_frag` pattern; a valid two-chunk QK rewrite must remove all
+  old single-chunk fragment declarations.
   A later head_dim32 two-chunk patch removed the stale single-chunk QK lines and
   widened `pv_tile`/`output_acc`, but still declared the score accumulator as
   `wmma::fragment<wmma::accumulator, kTile, kTile, kHeadDim, float>` after
