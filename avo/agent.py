@@ -21,7 +21,7 @@ DEFAULT_SCORE_HEAD_DIM = 128
 DEFAULT_SCORE_NUM_HEADS = 16
 DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
 DEFAULT_SCORE_TOTAL_TOKENS = 32768
-MMA_ACCEPTED_VALIDATION_SEQ = 1024
+MMA_ACCEPTED_VALIDATION_SEQ = 2048
 MAX_REPO_CONTEXT_FILE_CHARS = 12_000
 MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
@@ -34,7 +34,7 @@ RECORDED_NO_PATCH_COMPILE_SOURCES = frozenset(
         "candidates/cuda_warp_rows_attention/attention_kernel.cu",
     }
 )
-MMA_BASE_SMOKE_SEQUENCES = frozenset({16, 32, 64, 128, 256, 1024})
+MMA_BASE_SMOKE_SEQUENCES = frozenset({16, 32, 64, 128, 256, 1024, 2048})
 ENV_COMMAND_KEYWORDS = (
     "baseline",
     "build",
@@ -552,7 +552,7 @@ def build_repo_context(root: Path) -> str:
         "optimization steps; compile only when build-checking a materialized edit.",
         "Unpatched seed score caps are smoke-only safety fences: "
         "candidates/cuda_mma_attention_seed.py supports "
-        "seq_lens up to the accepted seq1024 lane with head_dim 128; "
+        "seq_lens up to the accepted seq2048 lane with head_dim 128; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
         "head_dim <= 128 with total_tokens <= 1024 and num_heads <= 4; "
         "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
@@ -743,11 +743,12 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "candidate_patch cannot edit CUDA kernel sources. Otherwise choose a "
             "different diagnostic such as a compile check for a new edit. "
         )
-    if "below the current accepted seq1024 validation lane" in message:
+    if "below the current accepted seq" in message and "validation lane" in message:
         return (
-            "Do not spend no-edit score steps below the accepted seq1024 lane. Score the "
-            "current MMA seed at seq1024 or use a structured transform batch that moves "
-            "the wrapper and kernel toward larger long-sequence workloads. "
+            f"Do not spend no-edit score steps below the accepted seq{MMA_ACCEPTED_VALIDATION_SEQ} "
+            "lane. Score the current MMA seed at the accepted lane or use a structured "
+            "transform batch that moves the wrapper and kernel toward larger "
+            "long-sequence workloads. "
         )
     if "patched MMA shape extension beyond the current smoke cap" in message:
         return (
@@ -1961,15 +1962,16 @@ def _validate_known_candidate_score_shape(
         ):
             raise ValueError(
                 "next_command scores cuda_mma_attention_seed.py outside its unpatched "
-                "seq_len 16/32/64/128/256/1024, head_dim 128, total_tokens<=32768, "
+                "seq_len 16/32/64/128/256/1024/2048, head_dim 128, total_tokens<=32768, "
                 "and num_heads<=16 cap; "
                 "include candidate_transform/candidate_patch to update the wrapper/kernel first"
             )
         if max(seq_lens) < MMA_ACCEPTED_VALIDATION_SEQ:
             raise ValueError(
                 "next_command scores cuda_mma_attention_seed.py below the current accepted "
-                f"seq{MMA_ACCEPTED_VALIDATION_SEQ} validation lane; use seq1024 or a "
-                "larger structured shape-graduation score instead of another small smoke score"
+                f"seq{MMA_ACCEPTED_VALIDATION_SEQ} validation lane; use "
+                f"seq{MMA_ACCEPTED_VALIDATION_SEQ} or a larger structured "
+                "shape-graduation score instead of another small smoke score"
             )
         if _is_recorded_mma_seed_score(
             seq_lens=seq_lens,
@@ -2042,6 +2044,7 @@ def _is_recorded_mma_seed_score(
         (seq_lens, head_dim, total_tokens, num_heads)
         in {
             ((1024,), 128, 8192, 8),
+            ((2048,), 128, 16384, 16),
         }
     )
 
@@ -2067,13 +2070,6 @@ def _validate_patched_mma_score_shape_extension(
         "--num-heads",
         default=DEFAULT_SCORE_NUM_HEADS,
     )
-    if _is_mma_seed_smoke_shape(
-        seq_lens=seq_lens,
-        head_dim=head_dim,
-        total_tokens=total_tokens,
-        num_heads=num_heads,
-    ):
-        return
     changed_paths = _candidate_edit_changed_paths(candidate_patch, candidate_transform)
     if candidate_transform is not None and {
         MMA_SEED,
@@ -2083,6 +2079,13 @@ def _validate_patched_mma_score_shape_extension(
             candidate_transform,
             seq_lens=seq_lens,
         )
+        return
+    if _is_mma_seed_smoke_shape(
+        seq_lens=seq_lens,
+        head_dim=head_dim,
+        total_tokens=total_tokens,
+        num_heads=num_heads,
+    ):
         return
     raise ValueError(
         "next_command scores a patched MMA shape extension beyond the current smoke cap; "
@@ -2116,6 +2119,13 @@ def _validate_mma_transform_covers_score_shape(
         op="set_constexpr_int",
         name="kMaxSeqLen",
     )
+    missing_base_sequences = sorted(set(seq_lens) - MMA_BASE_SMOKE_SEQUENCES)
+    if max_seq_len is None and missing_base_sequences:
+        missing_text = ",".join(str(seq_len) for seq_len in missing_base_sequences)
+        raise ValueError(
+            "next_command scores MMA seq_lens beyond the transformed cap; "
+            f"kernel cap transform is missing for: {missing_text}"
+        )
     if max_seq_len is not None and any(seq_len > max_seq_len for seq_len in seq_lens):
         raise ValueError(
             "next_command scores MMA seq_lens beyond the transformed cap; "
@@ -2126,6 +2136,12 @@ def _validate_mma_transform_covers_score_shape(
         name="SMOKE_SEQUENCES",
     )
     if wrapper_sequences is None:
+        if missing_base_sequences:
+            missing_text = ",".join(str(seq_len) for seq_len in missing_base_sequences)
+            raise ValueError(
+                "next_command scores MMA seq_lens beyond the transformed cap; "
+                f"wrapper sequence set is missing for: {missing_text}"
+            )
         return
     missing = sorted(set(seq_lens) - (MMA_BASE_SMOKE_SEQUENCES | wrapper_sequences))
     if missing:

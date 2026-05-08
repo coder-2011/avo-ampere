@@ -57,7 +57,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for the accepted seq1024 head-dim 128
+  `candidates/cuda_mma_attention_seed.py` for the accepted seq2048 head-dim 128
   BF16 tensor-core QK/PV lane
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
@@ -1080,7 +1080,7 @@ source files.
   wrapper sequence set in the same batch. Repeating a successful compile-only
   transform remains blocked even after that transform has been scored; the
   search must score the compiled transform or choose a different family.
-  Runtime source now carries the accepted MMA seq1024 lane (`kMaxSeqLen=1024`
+  At that checkpoint, runtime source carried the accepted MMA seq1024 lane (`kMaxSeqLen=1024`
   and `SMOKE_SEQUENCES={16, 32, 64, 128, 256, 1024}`). No-edit MMA scoring below
   seq1024 is rejected so the planner does not keep spending steps on tiny smoke
   workloads. The accepted seq1024 lineage lane is commit
@@ -1095,3 +1095,12 @@ source files.
   after the fix passed correctness for both causal modes: geomean
   `0.525593999281922` TFLOPS, noncausal `0.8659655248879056` TFLOPS, causal
   `0.3190069860078135` TFLOPS.
+  After that guard repair, a bounded evolve loop graduated the MMA source to the
+  next shape lane with a two-step structured batch (`kMaxSeqLen=2048`, add
+  `2048` to `SMOKE_SEQUENCES`). Compile passed with no spills, 40 registers,
+  1 barrier, and 9920 bytes shared memory. The follow-up score at seq_len 2048,
+  total_tokens 16384, num_heads 16, head_dim 128, BF16, both causal modes
+  passed correctness and was accepted into lineage as commit
+  `39af063`: geomean `7.079133390217197` TFLOPS, noncausal
+  `9.955973678368473` TFLOPS, causal `5.033573930129197` TFLOPS. Runtime
+  source now carries the accepted seq2048 cap.

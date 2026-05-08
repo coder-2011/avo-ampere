@@ -790,7 +790,7 @@ def test_parse_variation_decision_rejects_unpatched_mma_smoke_cap() -> None:
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 1024 --total-tokens 8192 --num-heads 8 --head-dim 128"
+        "--seq-lens 2048 --total-tokens 16384 --num-heads 16 --head-dim 128"
     )
 
     with pytest.raises(ValueError, match="recorded unpatched MMA seed score"):
@@ -879,20 +879,20 @@ def test_parse_variation_decision_rejects_unpatched_mma_below_accepted_lane() ->
         "--seq-lens 256 --total-tokens 2048 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="below the current accepted seq1024"):
+    with pytest.raises(ValueError, match="below the current accepted seq2048"):
         parse_decision_text(json.dumps(payload))
 
 
 def test_parse_variation_decision_rejects_unpatched_mma_beyond_current_seq_cap() -> None:
     payload = decision_payload()
-    payload["candidate_edit"] = "Score the existing MMA seed at seq2048."
+    payload["candidate_edit"] = "Score the existing MMA seed at seq4096."
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 2048 --total-tokens 32768 --num-heads 16 --head-dim 128"
+        "--seq-lens 4096 --total-tokens 32768 --num-heads 16 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="seq_len 16/32/64/128/256/1024"):
+    with pytest.raises(ValueError, match="seq_len 16/32/64/128/256/1024/2048"):
         parse_decision_text(json.dumps(payload))
 
 
