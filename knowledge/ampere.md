@@ -173,6 +173,14 @@ variation steps.
   ...>` are incomplete/unsupported. Any head-dimension-32 MMA extension must keep
   WMMA K fragments at 16 and explicitly process two 16-wide chunks for QK and PV;
   do not repeat the constant-only `kHeadDim=32` patch.
+  A follow-up two-chunk generated patch applied and ran the score command, but
+  failed CUDA compilation because it only partially replaced `kHeadDim`: stale
+  `linear / kHeadDim` row calculations remained, and the output write path
+  redeclared `row` after adding `linear / head_dim`. A correct two-chunk patch
+  must consistently separate score tile size (`16x16`) from output tile size
+  (`16xhead_dim`), size `pv_tile`/`output_acc` for the maximum supported head
+  dimension, use `head_dim` for runtime row/dim indexing and global strides, and
+  avoid duplicate local declarations in the final store loop.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
