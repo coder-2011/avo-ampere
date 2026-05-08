@@ -126,6 +126,7 @@ def add_score_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--dtype", choices=["bf16", "fp16", "fp32"], default="bf16")
     parser.add_argument("--warmup", type=int, default=5)
     parser.add_argument("--repeats", type=int, default=20)
+    parser.add_argument("--trials", type=int, default=1)
 
 
 def _env() -> int:
@@ -189,6 +190,8 @@ def _score(args: argparse.Namespace) -> int:
         str(args.warmup),
         "--repeats",
         str(args.repeats),
+        "--trials",
+        str(args.trials),
     )
     if args.candidate:
         worker_args.extend(["--candidate", str(args.candidate)])
@@ -223,6 +226,8 @@ def _seed_baseline(args: argparse.Namespace) -> int:
         str(args.warmup),
         "--repeats",
         str(args.repeats),
+        "--trials",
+        str(args.trials),
     )
     if args.candidate:
         worker_args.extend(["--candidate", str(args.candidate)])
@@ -254,6 +259,7 @@ def _worker_score(args: argparse.Namespace) -> int:
         cases,
         warmup=args.warmup,
         repeats=args.repeats,
+        trials=args.trials,
         candidate=args.candidate,
     )
     print_result(payload)

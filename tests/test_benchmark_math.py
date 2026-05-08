@@ -1,4 +1,12 @@
-from avo.benchmark import attention_forward_flops, geometric_mean, tflops_from_ms
+import pytest
+
+from avo.benchmark import (
+    CaseScore,
+    attention_forward_flops,
+    geometric_mean,
+    tflops_from_ms,
+    timing_summary,
+)
 from avo.config import AttentionCase
 
 
@@ -17,3 +25,35 @@ def test_tflops_from_ms() -> None:
 def test_geometric_mean_ignores_zero_failed_scores() -> None:
     assert geometric_mean([2.0, 8.0, 0.0]) == 4.0
     assert geometric_mean([0.0]) == 0.0
+
+
+def test_timing_summary_reports_replicate_statistics() -> None:
+    summary = timing_summary([3.0, 1.0, 2.0])
+
+    assert summary["samples_ms"] == [3.0, 1.0, 2.0]
+    assert summary["trials"] == 3
+    assert summary["min_ms"] == 1.0
+    assert summary["median_ms"] == 2.0
+    assert summary["mean_ms"] == 2.0
+    assert summary["cv"] == pytest.approx(0.40824829046)
+
+
+def test_case_score_serializes_empty_timing_stats() -> None:
+    payload = CaseScore(
+        backend="mock",
+        case=AttentionCase(seq_len=16, causal=False),
+        correct=False,
+        milliseconds=None,
+        tflops=0.0,
+        max_abs_error=None,
+        error="failed",
+    ).as_dict()
+
+    assert payload["timing"] == {
+        "samples_ms": [],
+        "trials": 0,
+        "min_ms": None,
+        "median_ms": None,
+        "mean_ms": None,
+        "cv": None,
+    }

@@ -32,6 +32,10 @@ variation steps.
 - Baseline installation should pin FlashAttention compile targets for A6000 via
   `FLASH_ATTN_CUDA_ARCHS=80` (the upstream build script’s Ampere-family target)
   and cap build parallelism with `MAX_JOBS`.
+- Score records can use `--trials N` to collect replicate CUDA-event timings.
+  Per-case TFLOPS is computed from the median sample, and the JSON includes
+  samples, min, mean, median, and coefficient of variation so noisy runs are
+  visible instead of hidden.
 - FlashAttention-2 v2.8.3 has a device-specific block-size heuristic for sm8x
   that treats sm86/sm89 separately from sm80. For head dimension 128, it chooses
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
@@ -75,6 +79,9 @@ variation steps.
   https://github.com/Dao-AILab/flash-attention/blob/v2.8.3/flash_attn/flash_attn_interface.py
 - NVIDIA vectorized memory access guidance:
   https://developer.nvidia.com/blog/cuda-pro-tip-increase-performance-with-vectorized-memory-access/
+- PyTorch benchmark utilities guidance on warmups, replicates, and median
+  statistics:
+  https://docs.pytorch.org/docs/stable/benchmark_utils.html
 
 ## Gate
 

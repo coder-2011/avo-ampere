@@ -11,6 +11,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Baseline: FlashAttention-2. FlashAttention-4 is intentionally excluded because its Blackwell path uses primitives that are not available on Ampere.
 - Candidate support: Python candidate modules plus a first CUDA-extension smoke candidate.
 - Agent support: Anthropic-backed variation planning with strict schema validation and a bounded command allowlist.
+- Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise in JSON.
 - Research state: infrastructure-first checkpoint. The code can score and gate candidates, but the repository does not yet contain a novel accepted attention kernel.
 
 ## What was built
@@ -159,6 +160,10 @@ uv run --extra cuda python -m avo score \
   --warmup 1 \
   --timeout-s 300
 ```
+
+For noisier comparisons, add `--trials 5` or higher. Each case record will include
+the raw timing samples, min, median, mean, and coefficient of variation; the
+reported `milliseconds` and `tflops` use the median sample.
 
 Seed a FlashAttention-2 baseline lineage:
 

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import statistics
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
@@ -22,6 +23,7 @@ class CaseScore:
     tflops: float
     max_abs_error: float | None
     error: str | None = None
+    timing_samples_ms: tuple[float, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -32,6 +34,7 @@ class CaseScore:
             "tflops": self.tflops,
             "max_abs_error": self.max_abs_error,
             "error": self.error,
+            "timing": timing_summary(self.timing_samples_ms),
         }
 
 
@@ -44,6 +47,28 @@ def tflops_from_ms(case: AttentionCase, milliseconds: float) -> float:
     if milliseconds <= 0:
         return math.inf
     return attention_forward_flops(case) / (milliseconds / 1000.0) / 1e12
+
+
+def timing_summary(samples_ms: Iterable[float]) -> dict[str, Any]:
+    samples = tuple(float(sample) for sample in samples_ms)
+    if not samples:
+        return {
+            "samples_ms": [],
+            "trials": 0,
+            "min_ms": None,
+            "median_ms": None,
+            "mean_ms": None,
+            "cv": None,
+        }
+    mean = statistics.fmean(samples)
+    return {
+        "samples_ms": list(samples),
+        "trials": len(samples),
+        "min_ms": min(samples),
+        "median_ms": statistics.median(samples),
+        "mean_ms": mean,
+        "cv": statistics.pstdev(samples) / mean if mean > 0 and len(samples) > 1 else 0.0,
+    }
 
 
 def geometric_mean(values: Iterable[float]) -> float:
@@ -67,16 +92,19 @@ def score_backend(
     cases: list[AttentionCase],
     warmup: int,
     repeats: int,
+    trials: int = 1,
     seed: int = 0,
     candidate: Path | None = None,
 ) -> dict[str, Any]:
     if backend == "torch-sdpa":
         scores = [
-            _score_torch_sdpa(case, warmup=warmup, repeats=repeats, seed=seed) for case in cases
+            _score_torch_sdpa(case, warmup=warmup, repeats=repeats, trials=trials, seed=seed)
+            for case in cases
         ]
     elif backend == "flash-attn":
         scores = [
-            _score_flash_attn(case, warmup=warmup, repeats=repeats, seed=seed) for case in cases
+            _score_flash_attn(case, warmup=warmup, repeats=repeats, trials=trials, seed=seed)
+            for case in cases
         ]
     elif backend == "candidate":
         if candidate is None:
@@ -89,7 +117,15 @@ def score_backend(
             ]
         else:
             scores = [
-                _score_candidate(module, candidate, case, warmup=warmup, repeats=repeats, seed=seed)
+                _score_candidate(
+                    module,
+                    candidate,
+                    case,
+                    warmup=warmup,
+                    repeats=repeats,
+                    trials=trials,
+                    seed=seed,
+                )
                 for case in cases
             ]
     else:
@@ -137,27 +173,57 @@ def _reference_sdpa(q, k, v, causal: bool):
 
 
 def _time_cuda(fn: Callable[[], object], warmup: int, repeats: int) -> float:
+    return _time_cuda_samples(fn, warmup=warmup, repeats=repeats, trials=1)[0]
+
+
+def _time_cuda_samples(
+    fn: Callable[[], object],
+    warmup: int,
+    repeats: int,
+    trials: int,
+) -> tuple[float, ...]:
+    if warmup < 0:
+        raise ValueError("warmup must be non-negative")
+    if repeats <= 0:
+        raise ValueError("repeats must be positive")
+    if trials <= 0:
+        raise ValueError("trials must be positive")
     torch = _require_torch()
     for _ in range(warmup):
         fn()
     torch.cuda.synchronize()
-    start = torch.cuda.Event(enable_timing=True)
-    end = torch.cuda.Event(enable_timing=True)
-    start.record()
-    for _ in range(repeats):
-        fn()
-    end.record()
-    torch.cuda.synchronize()
-    return float(start.elapsed_time(end)) / repeats
+    samples = []
+    for _ in range(trials):
+        start = torch.cuda.Event(enable_timing=True)
+        end = torch.cuda.Event(enable_timing=True)
+        start.record()
+        for _ in range(repeats):
+            fn()
+        end.record()
+        torch.cuda.synchronize()
+        samples.append(float(start.elapsed_time(end)) / repeats)
+    return tuple(samples)
 
 
-def _score_torch_sdpa(case: AttentionCase, warmup: int, repeats: int, seed: int) -> CaseScore:
+def _score_torch_sdpa(
+    case: AttentionCase,
+    warmup: int,
+    repeats: int,
+    trials: int,
+    seed: int,
+) -> CaseScore:
     try:
         q, k, v = _make_inputs(case, seed)
         output = _reference_sdpa(q, k, v, case.causal)
         if not output.isfinite().all().item():
             raise RuntimeError("reference output contains non-finite values")
-        milliseconds = _time_cuda(lambda: _reference_sdpa(q, k, v, case.causal), warmup, repeats)
+        timing_samples = _time_cuda_samples(
+            lambda: _reference_sdpa(q, k, v, case.causal),
+            warmup=warmup,
+            repeats=repeats,
+            trials=trials,
+        )
+        milliseconds = statistics.median(timing_samples)
         return CaseScore(
             backend="torch-sdpa",
             case=case,
@@ -165,6 +231,7 @@ def _score_torch_sdpa(case: AttentionCase, warmup: int, repeats: int, seed: int)
             milliseconds=milliseconds,
             tflops=tflops_from_ms(case, milliseconds),
             max_abs_error=0.0,
+            timing_samples_ms=timing_samples,
         )
     except Exception as exc:
         return CaseScore(
@@ -178,7 +245,13 @@ def _score_torch_sdpa(case: AttentionCase, warmup: int, repeats: int, seed: int)
         )
 
 
-def _score_flash_attn(case: AttentionCase, warmup: int, repeats: int, seed: int) -> CaseScore:
+def _score_flash_attn(
+    case: AttentionCase,
+    warmup: int,
+    repeats: int,
+    trials: int,
+    seed: int,
+) -> CaseScore:
     try:
         torch = _require_torch()
         from flash_attn import flash_attn_func
@@ -195,11 +268,13 @@ def _score_flash_attn(case: AttentionCase, warmup: int, repeats: int, seed: int)
         candidate = flash_attn_func(q, k, v, dropout_p=0.0, causal=case.causal)
         max_abs_error = float((candidate.float() - reference.float()).abs().max().item())
         correct = bool(torch.allclose(candidate.float(), reference.float(), atol=3e-2, rtol=3e-2))
-        milliseconds = _time_cuda(
+        timing_samples = _time_cuda_samples(
             lambda: flash_attn_func(q, k, v, dropout_p=0.0, causal=case.causal),
-            warmup,
-            repeats,
+            warmup=warmup,
+            repeats=repeats,
+            trials=trials,
         )
+        milliseconds = statistics.median(timing_samples)
         return CaseScore(
             backend="flash-attn",
             case=case,
@@ -207,6 +282,7 @@ def _score_flash_attn(case: AttentionCase, warmup: int, repeats: int, seed: int)
             milliseconds=milliseconds,
             tflops=tflops_from_ms(case, milliseconds) if correct else 0.0,
             max_abs_error=max_abs_error,
+            timing_samples_ms=timing_samples,
             error=None if correct else "flash-attn output failed tolerance check",
         )
     except Exception as exc:
@@ -242,6 +318,7 @@ def _score_candidate(
     case: AttentionCase,
     warmup: int,
     repeats: int,
+    trials: int,
     seed: int,
 ) -> CaseScore:
     try:
@@ -259,11 +336,13 @@ def _score_candidate(
             raise RuntimeError("candidate output contains non-finite values")
         max_abs_error = float((candidate.float() - reference.float()).abs().max().item())
         correct = bool(torch.allclose(candidate.float(), reference.float(), atol=3e-2, rtol=3e-2))
-        milliseconds = _time_cuda(
+        timing_samples = _time_cuda_samples(
             lambda: module.attention(q, k, v, case.causal),
-            warmup,
-            repeats,
+            warmup=warmup,
+            repeats=repeats,
+            trials=trials,
         )
+        milliseconds = statistics.median(timing_samples)
         return CaseScore(
             backend="candidate",
             case=case,
@@ -271,6 +350,7 @@ def _score_candidate(
             milliseconds=milliseconds,
             tflops=tflops_from_ms(case, milliseconds) if correct else 0.0,
             max_abs_error=max_abs_error,
+            timing_samples_ms=timing_samples,
             error=None if correct else f"{candidate_path} failed tolerance check",
         )
     except Exception as exc:
