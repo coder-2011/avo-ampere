@@ -190,6 +190,7 @@ class VariationDecision:
         _validate_candidate_edit_matches_patch(candidate_edit, candidate_patch)
         planning_text = "\n".join((hypothesis, candidate_edit, expected_effect, risk))
         _validate_candidate_patch_not_self_rejected(candidate_patch, planning_text)
+        _validate_candidate_patch_domain_sanity(candidate_patch)
         next_command = _validate_next_command(
             _require_string(normalized_payload, "next_command"),
             candidate_patch=candidate_patch,
@@ -550,6 +551,26 @@ def _validate_candidate_patch_not_self_rejected(
             "candidate_patch is described as known invalid by the decision itself; "
             "stale code is called out as requiring removal. Return a corrected patch "
             "or choose no-edit mode."
+        )
+
+
+def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
+    if not candidate_patch.strip():
+        return
+    added_text = "\n".join(
+        line[1:]
+        for line in candidate_patch.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    )
+    if "__pipeline_wait_prior<" in added_text:
+        raise ValueError(
+            "candidate_patch uses templated __pipeline_wait_prior; the public CUDA "
+            "pipeline primitive is __pipeline_wait_prior(prior)"
+        )
+    if "__pipeline_memcpy_async" in added_text and "sizeof(__nv_bfloat16)" in added_text:
+        raise ValueError(
+            "candidate_patch uses scalar BF16 __pipeline_memcpy_async copies; use "
+            "16-byte aligned groups for Ampere async copy patches"
         )
 
 

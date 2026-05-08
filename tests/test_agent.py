@@ -500,6 +500,48 @@ def test_parse_variation_decision_rejects_correctness_breaking_patch_warning() -
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+__pipeline_wait_prior<1>();\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="__pipeline_wait_prior"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_scalar_bf16_async_copy_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA async copy staging and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+__pipeline_memcpy_async(dst, src, sizeof(__nv_bfloat16));\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="16-byte aligned"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_stale_code_patch_warning() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA two-chunk QK and compile it."
