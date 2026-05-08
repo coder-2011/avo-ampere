@@ -373,6 +373,9 @@ def build_repo_context(root: Path) -> str:
         "head_dim 16, total_tokens <= 16, and num_heads 1, but that no-patch smoke is "
         "already recorded and should not be repeated. Larger seed scores need "
         "candidate_patch to update the wrapper/kernel.",
+        "For tiled scores outside the tiny validated smoke shape, changing only "
+        "candidates/cuda_tiled_attention_seed.py wrapper caps is not a fix; include a "
+        "kernel change for the known larger-shape correctness failure.",
         "Patched MMA shape extensions beyond head_dim 16 must run an avo compile "
         "build-check first; do not jump straight to score.",
     ]
@@ -583,6 +586,18 @@ def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
     ]
 
 
+def _candidate_patch_changed_paths(candidate_patch: str) -> set[str]:
+    paths: set[str] = set()
+    for line in candidate_patch.splitlines():
+        parts = line.split()
+        if len(parts) < 4 or parts[:2] != ["diff", "--git"]:
+            continue
+        for raw_path in parts[2:4]:
+            if raw_path.startswith(("a/", "b/")):
+                paths.add(raw_path[2:])
+    return paths
+
+
 def _candidate_patch_adds_only_unroll_pragmas(candidate_patch: str) -> bool:
     added_lines = [line.strip() for line in _candidate_patch_added_lines(candidate_patch)]
     meaningful_added_lines = [line for line in added_lines if line]
@@ -787,8 +802,6 @@ def _validate_known_candidate_score_shape(
     candidate: str,
     candidate_patch: str,
 ) -> None:
-    if candidate_patch.strip():
-        return
     seq_lens = _score_seq_lens(parts)
     head_dim = _score_head_dim(parts)
     total_tokens = _score_positive_int_option(
@@ -801,6 +814,23 @@ def _validate_known_candidate_score_shape(
         "--num-heads",
         default=DEFAULT_SCORE_NUM_HEADS,
     )
+    if candidate_patch.strip():
+        if (
+            candidate == TILED_SEED
+            and _is_outside_tiled_validated_cap(
+                seq_lens=seq_lens,
+                head_dim=head_dim,
+                total_tokens=total_tokens,
+                num_heads=num_heads,
+            )
+            and _candidate_patch_changed_paths(candidate_patch) <= {TILED_SEED}
+        ):
+            raise ValueError(
+                "next_command scores tiled outside the validated smoke shape after only "
+                "changing wrapper caps; include a kernel fix for the larger-shape "
+                "correctness failure"
+            )
+        return
     if candidate == WARP_ROWS_SEED:
         if (
             any(seq_len > 256 for seq_len in seq_lens)
@@ -826,11 +856,11 @@ def _validate_known_candidate_score_shape(
                 "include candidate_patch to update the wrapper/kernel first"
             )
     elif candidate == TILED_SEED:
-        if (
-            any(seq_len != 16 for seq_len in seq_lens)
-            or head_dim != 16
-            or total_tokens > 16
-            or num_heads != 1
+        if _is_outside_tiled_validated_cap(
+            seq_lens=seq_lens,
+            head_dim=head_dim,
+            total_tokens=total_tokens,
+            num_heads=num_heads,
         ):
             raise ValueError(
                 "next_command scores cuda_tiled_attention_seed.py outside its unpatched "
@@ -841,6 +871,21 @@ def _validate_known_candidate_score_shape(
             "next_command repeats the recorded no-patch tiled smoke score; include "
             "candidate_patch to fix or extend the tiled wrapper/kernel first"
         )
+
+
+def _is_outside_tiled_validated_cap(
+    *,
+    seq_lens: tuple[int, ...],
+    head_dim: int,
+    total_tokens: int,
+    num_heads: int,
+) -> bool:
+    return (
+        any(seq_len != 16 for seq_len in seq_lens)
+        or head_dim != 16
+        or total_tokens > 16
+        or num_heads != 1
+    )
 
 
 def _validate_patched_mma_score_is_compile_checked_first(

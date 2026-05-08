@@ -416,6 +416,28 @@ def test_parse_variation_decision_allows_patched_tiled_score_outside_cap() -> No
     assert decision.next_command == payload["next_command"]
 
 
+def test_parse_variation_decision_rejects_tiled_wrapper_cap_only_score() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Raise tiled wrapper caps and score a larger shape."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_tiled_attention_seed.py "
+        "b/candidates/cuda_tiled_attention_seed.py\n"
+        "--- a/candidates/cuda_tiled_attention_seed.py\n"
+        "+++ b/candidates/cuda_tiled_attention_seed.py\n"
+        "@@ -1 +1 @@\n"
+        "-MAX_SMOKE_SEQUENCE = 128\n"
+        "+MAX_SMOKE_SEQUENCE = 256\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_tiled_attention_seed.py "
+        "--seq-lens 64 --total-tokens 256 --num-heads 4 --head-dim 64"
+    )
+
+    with pytest.raises(ValueError, match="only changing wrapper caps"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_non_string_patch() -> None:
     payload = decision_payload()
     payload["candidate_patch"] = {"diff": "not-a-string"}
@@ -646,6 +668,10 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Unpatched seed score caps:" in context
     assert "total_tokens <= 1024" in context
     assert "cuda_tiled_attention_seed.py is only validated at seq_lens 16" in context
+    assert (
+        "changing only candidates/cuda_tiled_attention_seed.py wrapper caps is not a fix"
+        in context
+    )
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "Pragma-only or scheduler-only performance patches" in context
