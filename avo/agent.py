@@ -38,6 +38,17 @@ ENV_COMMAND_KEYWORDS = (
     "nvcc",
     "torch",
 )
+COMPILE_COMMAND_KEYWORDS = (
+    "build",
+    "compile",
+    "compilation",
+    "compiler",
+    "nvcc",
+    "object",
+    "ptxas",
+    "syntax",
+    "translation unit",
+)
 PATCH_REQUIRED_EDIT_VERBS = frozenset(
     {
         "add",
@@ -285,8 +296,10 @@ def build_variation_prompt(
         "starts with 'avo' and uses only one of: env, compile, score. Use valid CLI flags: "
         "compile requires --source SOURCE.cu and --out-dir DIR; candidate score requires "
         "--backend candidate and --candidate. Use env only for CUDA/build environment "
-        "diagnostics, not for source-file inspection. Do not use shell pipes, redirection, "
-        "command chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
+        "diagnostics, not for source-file inspection. Use compile only for CUDA build/"
+        "compilation diagnostics or to build-check a candidate_patch, not for source-file "
+        "inspection. Do not use shell pipes, redirection, command chaining, cat, head, "
+        "git, rm, or arbitrary shell commands.\n\n"
         f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}"
         f"{attempt_section}{context_section}\n"
     )
@@ -306,6 +319,8 @@ def build_repo_context(root: Path) -> str:
         "Available bounded commands: avo env; avo compile --source SOURCE.cu --out-dir DIR; "
         "avo score --backend BACKEND ...",
         "Use avo env only for CUDA/build environment diagnostics, not source-file inspection.",
+        "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
+        "candidate_patch, not source-file inspection.",
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
         "or empty.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
@@ -502,6 +517,10 @@ def _validate_subcommand_arguments(
     if subcommand == "env":
         _validate_env_command_context(planning_text)
     elif subcommand == "compile":
+        _validate_compile_command_context(
+            planning_text,
+            candidate_patch=candidate_patch,
+        )
         if _has_option(parts, "--candidate"):
             raise ValueError(
                 "next_command compile does not support --candidate; use --source and --out-dir"
@@ -661,6 +680,22 @@ def _validate_env_command_context(planning_text: str) -> None:
     raise ValueError(
         "next_command avo env is only for CUDA/build environment diagnostics, "
         "not source-file inspection"
+    )
+
+
+def _validate_compile_command_context(
+    planning_text: str,
+    *,
+    candidate_patch: str,
+) -> None:
+    if candidate_patch.strip():
+        return
+    normalized = " ".join(planning_text.lower().replace("_", " ").replace("-", " ").split())
+    if any(keyword in normalized for keyword in COMPILE_COMMAND_KEYWORDS):
+        return
+    raise ValueError(
+        "next_command avo compile is only for CUDA build/compilation diagnostics "
+        "or checking a candidate_patch, not source-file inspection"
     )
 
 

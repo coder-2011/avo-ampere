@@ -118,6 +118,7 @@ def test_parse_variation_decision_allows_env_for_cuda_environment_check() -> Non
 
 def test_parse_variation_decision_rejects_compile_candidate_option() -> None:
     payload = decision_payload()
+    payload["candidate_edit"] = "Compile the CUDA source to validate the build."
     payload["next_command"] = "avo compile --candidate candidates/cuda_mma_attention_seed.py"
 
     with pytest.raises(ValueError, match="compile does not support --candidate"):
@@ -126,14 +127,31 @@ def test_parse_variation_decision_rejects_compile_candidate_option() -> None:
 
 def test_parse_variation_decision_rejects_compile_without_required_paths() -> None:
     payload = decision_payload()
+    payload["candidate_edit"] = "Compile the CUDA source to validate the build."
     payload["next_command"] = "avo compile --source candidates/kernel.cu"
 
     with pytest.raises(ValueError, match="compile requires --out-dir"):
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_compile_for_source_inspection() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Inspect boundary handling and indexing logic in the kernel."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/inspect"
+    )
+
+    with pytest.raises(ValueError, match="only for CUDA build/compilation diagnostics"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_allows_compile_source_out_dir() -> None:
     payload = decision_payload()
+    payload["hypothesis"] = "The CUDA source may have a build regression."
+    payload["candidate_edit"] = "Compile the CUDA source to verify nvcc accepts it."
+    payload["expected_effect"] = "Confirm the translation unit still builds."
+    payload["risk"] = "Compilation may expose syntax or include-path issues."
     payload["next_command"] = (
         "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
         "--out-dir build/smoke"
@@ -146,12 +164,35 @@ def test_parse_variation_decision_allows_compile_source_out_dir() -> None:
 
 def test_parse_variation_decision_rejects_compile_python_source() -> None:
     payload = decision_payload()
+    payload["candidate_edit"] = "Compile the CUDA source to validate the build."
     payload["next_command"] = (
         "avo compile --source candidates/cuda_mma_attention_seed.py --out-dir build/smoke"
     )
 
     with pytest.raises(ValueError, match=r"--source must reference a \.cu file"):
         parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_patched_compile_build_check() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Fix kernel include usage and compile the patched source."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-#include <cuda_bf16.h>\n"
+        "+#include <cuda_bf16.h>\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/smoke"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command == payload["next_command"]
 
 
 def test_parse_variation_decision_rejects_candidate_score_without_candidate() -> None:
@@ -336,6 +377,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Unpatched seed score caps:" in context
     assert "total_tokens <= 512" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
+    assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
     assert "candidate_patch as a raw unified diff" in context
