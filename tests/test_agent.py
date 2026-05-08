@@ -1985,6 +1985,24 @@ def test_decision_feedback_explains_self_invalid_patch_error() -> None:
     assert "switch to No edit; mode" in content
 
 
+def test_decision_feedback_explains_must_not_be_scored_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "candidate_patch is described as known invalid by the decision itself; "
+            "found phrase 'must not be scored'"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "must not be scored" in content
+    assert "do not retry another compile-only skeleton" in content
+    assert "complete enough to score after a successful compile" in content
+    assert "No edit; mode" in content
+
+
 def test_decision_feedback_explains_compile_out_dir_error() -> None:
     kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
 

@@ -538,6 +538,14 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "no-edit mode. "
         )
     if "known invalid by the decision itself" in message:
+        if "must not be scored" in message:
+            return (
+                "The previous patch described itself as 'must not be scored', so do not "
+                "retry another compile-only skeleton. Choose exactly one valid mode: "
+                "edit mode with a raw diff that is complete enough to score after a "
+                "successful compile and whose risk text does not say it must not be "
+                "scored, or No edit; mode for a different already-bounded diagnostic. "
+            )
         return (
             "Do not retry a patch whose own hypothesis, expected_effect, or risk says it "
             "will fail compile, break correctness, is unused, cannot improve throughput, "

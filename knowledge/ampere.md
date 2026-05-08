@@ -907,3 +907,8 @@ source files.
   than the MMA direct-accumulation causal error but still accepted by the
   current correctness gate. Do not repeat this no-patch warp-row diagnostic;
   scoring that workload again needs a structural warp-row patch.
+  A later planner loop failed validation after three attempts because the
+  decision text kept describing the patch as `must not be scored`. Retry
+  feedback now explicitly says not to submit another compile-only skeleton with
+  that language; a compile-check patch must be complete enough to score after a
+  successful build, or the planner must choose a different no-edit diagnostic.
