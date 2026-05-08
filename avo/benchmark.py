@@ -2,14 +2,16 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import platform
 import statistics
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal
 
-from .config import AttentionCase
+from .config import AMPERE_A6000, AttentionCase
 
 BackendName = Literal["torch-sdpa", "flash-attn", "candidate"]
 
@@ -131,9 +133,44 @@ def score_backend(
     else:
         raise ValueError(f"unsupported backend: {backend}")
     summary = score_summary(backend, scores)
+    summary["benchmark"] = benchmark_metadata(
+        cases=cases,
+        warmup=warmup,
+        repeats=repeats,
+        trials=trials,
+        seed=seed,
+    )
     if backend == "candidate" and candidate is not None:
         summary["candidate_path"] = str(candidate)
     return summary
+
+
+def benchmark_metadata(
+    *,
+    cases: list[AttentionCase],
+    warmup: int,
+    repeats: int,
+    trials: int,
+    seed: int,
+) -> dict[str, Any]:
+    return {
+        "measured_at": datetime.now(UTC).isoformat(),
+        "settings": {
+            "warmup": warmup,
+            "repeats": repeats,
+            "trials": trials,
+            "seed": seed,
+            "case_count": len(cases),
+        },
+        "target": {
+            "name": AMPERE_A6000.name,
+            "compute_capability": list(AMPERE_A6000.compute_capability),
+            "compute": AMPERE_A6000.compute,
+            "sm": AMPERE_A6000.sm,
+            "nvcc_gencode": AMPERE_A6000.nvcc_gencode,
+        },
+        "environment": _benchmark_environment(),
+    }
 
 
 def _require_torch():
@@ -145,6 +182,44 @@ def _require_torch():
     if capability != (8, 6):
         raise RuntimeError(f"expected sm_86/A6000-like GPU, got compute capability {capability}")
     return torch
+
+
+def _benchmark_environment() -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "python": platform.python_version(),
+        "platform": platform.platform(),
+    }
+    try:
+        import torch
+    except ModuleNotFoundError as exc:
+        payload["torch"] = {
+            "installed": False,
+            "error": f"{type(exc).__name__}: {exc}",
+        }
+        return payload
+
+    torch_payload: dict[str, Any] = {
+        "installed": True,
+        "version": torch.__version__,
+        "cuda": torch.version.cuda,
+        "cuda_available": torch.cuda.is_available(),
+    }
+    payload["torch"] = torch_payload
+    if not torch.cuda.is_available():
+        return payload
+
+    device_index = torch.cuda.current_device()
+    props = torch.cuda.get_device_properties(device_index)
+    payload["gpu"] = {
+        "index": device_index,
+        "name": torch.cuda.get_device_name(device_index),
+        "compute_capability": list(torch.cuda.get_device_capability(device_index)),
+        "total_memory_bytes": props.total_memory,
+        "multi_processor_count": props.multi_processor_count,
+    }
+    if hasattr(torch.cuda, "is_bf16_supported"):
+        payload["gpu"]["bf16_supported"] = bool(torch.cuda.is_bf16_supported())
+    return payload
 
 
 def _make_inputs(case: AttentionCase, seed: int):

@@ -23,6 +23,10 @@ def test_candidate_backend_loads_attention_function(tmp_path: Path) -> None:
 
     assert summary["backend"] == "candidate"
     assert summary["candidate_path"] == str(candidate)
+    assert summary["benchmark"]["settings"]["warmup"] == 0
+    assert summary["benchmark"]["settings"]["repeats"] == 0
+    assert summary["benchmark"]["settings"]["trials"] == 1
+    assert summary["benchmark"]["target"]["sm"] == "sm_86"
 
 
 def test_candidate_backend_rejects_missing_attention(tmp_path: Path) -> None:

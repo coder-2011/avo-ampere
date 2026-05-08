@@ -35,7 +35,10 @@ variation steps.
 - Score records can use `--trials N` to collect replicate CUDA-event timings.
   Per-case TFLOPS is computed from the median sample, and the JSON includes
   samples, min, mean, median, and coefficient of variation so noisy runs are
-  visible instead of hidden.
+  visible instead of hidden. Score summaries also include benchmark settings,
+  the A6000/sm86 target, Python/PyTorch/CUDA versions, and visible GPU
+  properties so accepted lineage commits carry enough provenance for later
+  comparison.
 - FlashAttention-2 v2.8.3 has a device-specific block-size heuristic for sm8x
   that treats sm86/sm89 separately from sm80. For head dimension 128, it chooses
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for

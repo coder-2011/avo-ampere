@@ -11,7 +11,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Baseline: FlashAttention-2. FlashAttention-4 is intentionally excluded because its Blackwell path uses primitives that are not available on Ampere.
 - Candidate support: Python candidate modules plus a first CUDA-extension smoke candidate.
 - Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, and a candidate-only patch application substrate.
-- Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise in JSON.
+- Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, and environment metadata in JSON.
 - Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage and feed recent summaries back into later agent prompts.
 - Research state: infrastructure-first checkpoint. The code can score and gate candidates, but the repository does not yet contain a novel accepted attention kernel.
 
@@ -185,7 +185,10 @@ uv run --extra cuda python -m avo score \
 
 For noisier comparisons, add `--trials 5` or higher. Each case record will include
 the raw timing samples, min, median, mean, and coefficient of variation; the
-reported `milliseconds` and `tflops` use the median sample.
+reported `milliseconds` and `tflops` use the median sample. Each score summary
+also includes a `benchmark` block with warmup/repeat/trial settings, seed,
+A6000/sm86 target metadata, Python/PyTorch/CUDA versions, and visible GPU
+properties so accepted lineage commits can be audited later.
 
 Seed a FlashAttention-2 baseline lineage:
 

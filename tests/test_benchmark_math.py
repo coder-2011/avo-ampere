@@ -3,6 +3,7 @@ import pytest
 from avo.benchmark import (
     CaseScore,
     attention_forward_flops,
+    benchmark_metadata,
     geometric_mean,
     tflops_from_ms,
     timing_summary,
@@ -57,3 +58,25 @@ def test_case_score_serializes_empty_timing_stats() -> None:
         "mean_ms": None,
         "cv": None,
     }
+
+
+def test_benchmark_metadata_records_settings_and_target() -> None:
+    metadata = benchmark_metadata(
+        cases=[AttentionCase(seq_len=16, causal=False)],
+        warmup=1,
+        repeats=2,
+        trials=3,
+        seed=4,
+    )
+
+    assert metadata["settings"] == {
+        "warmup": 1,
+        "repeats": 2,
+        "trials": 3,
+        "seed": 4,
+        "case_count": 1,
+    }
+    assert metadata["target"]["sm"] == "sm_86"
+    assert metadata["target"]["nvcc_gencode"] == "-gencode=arch=compute_86,code=sm_86"
+    assert "measured_at" in metadata
+    assert "environment" in metadata
