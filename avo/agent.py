@@ -354,6 +354,8 @@ def build_repo_context(root: Path) -> str:
         "Use avo env only for CUDA/build environment diagnostics, not source-file inspection.",
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
         "candidate_patch, not source-file inspection.",
+        "Pragma-only or scheduler-only performance patches that leave correctness unchanged "
+        "should run a bounded candidate score instead of stopping at a compile-only check.",
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
         "or empty. Patch hunks must use exact current file context, apply cleanly, and avoid "
         "trailing whitespace.",
@@ -560,11 +562,7 @@ def _validate_candidate_patch_not_self_rejected(
 def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
     if not candidate_patch.strip():
         return
-    added_text = "\n".join(
-        line[1:]
-        for line in candidate_patch.splitlines()
-        if line.startswith("+") and not line.startswith("+++")
-    )
+    added_text = "\n".join(_candidate_patch_added_lines(candidate_patch))
     if "__pipeline_wait_prior<" in added_text:
         raise ValueError(
             "candidate_patch uses templated __pipeline_wait_prior; the public CUDA "
@@ -575,6 +573,22 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch uses scalar BF16 __pipeline_memcpy_async copies; use "
             "16-byte aligned groups for Ampere async copy patches"
         )
+
+
+def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
+    return [
+        line[1:]
+        for line in candidate_patch.splitlines()
+        if line.startswith("+") and not line.startswith("+++")
+    ]
+
+
+def _candidate_patch_adds_only_unroll_pragmas(candidate_patch: str) -> bool:
+    added_lines = [line.strip() for line in _candidate_patch_added_lines(candidate_patch)]
+    meaningful_added_lines = [line for line in added_lines if line]
+    return bool(meaningful_added_lines) and all(
+        line == "#pragma unroll" for line in meaningful_added_lines
+    )
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:
@@ -634,6 +648,11 @@ def _validate_subcommand_arguments(
             planning_text,
             candidate_patch=candidate_patch,
         )
+        if _candidate_patch_adds_only_unroll_pragmas(candidate_patch):
+            raise ValueError(
+                "next_command compile is not useful for a pragma-only performance patch; "
+                "run a bounded candidate score to measure correctness and TFLOPS"
+            )
         if _has_option(parts, "--candidate"):
             raise ValueError(
                 "next_command compile does not support --candidate; use --source and --out-dir"
