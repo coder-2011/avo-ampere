@@ -94,6 +94,28 @@ def test_parse_variation_decision_rejects_unsupported_avo_subcommand() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_env_for_source_inspection() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Inspect the warp-row wrapper cap before patching."
+    payload["next_command"] = "avo env"
+
+    with pytest.raises(ValueError, match="only for CUDA/build environment diagnostics"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_env_for_cuda_environment_check() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = "The CUDA build environment may be misconfigured."
+    payload["candidate_edit"] = "Check CUDA and nvcc environment."
+    payload["expected_effect"] = "Confirm whether torch and nvcc CUDA versions match."
+    payload["risk"] = "Build diagnostics may show flash-attn is still unavailable."
+    payload["next_command"] = "avo env"
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command == "avo env"
+
+
 def test_parse_variation_decision_rejects_compile_candidate_option() -> None:
     payload = decision_payload()
     payload["next_command"] = "avo compile --candidate candidates/cuda_mma_attention_seed.py"
@@ -313,6 +335,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/cuda_identity/identity_kernel.cu" in context
     assert "Unpatched seed score caps:" in context
     assert "total_tokens <= 512" in context
+    assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
     assert "candidate_patch as a raw unified diff" in context

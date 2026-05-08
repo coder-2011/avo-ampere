@@ -22,6 +22,22 @@ DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
 DEFAULT_SCORE_TOTAL_TOKENS = 32768
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
 MMA_SEED = "candidates/cuda_mma_attention_seed.py"
+ENV_COMMAND_KEYWORDS = (
+    "baseline",
+    "build",
+    "compiler",
+    "cuda",
+    "cuda home",
+    "cuda path",
+    "env",
+    "environment",
+    "flash attn",
+    "flash-attn",
+    "flash attention",
+    "install",
+    "nvcc",
+    "torch",
+)
 PATCH_REQUIRED_EDIT_VERBS = frozenset(
     {
         "add",
@@ -134,20 +150,25 @@ class VariationDecision:
         files = normalized_payload["files_to_inspect"]
         if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
             raise ValueError("files_to_inspect must be a list of strings")
+        hypothesis = _require_string(normalized_payload, "hypothesis")
         candidate_edit = _require_string(normalized_payload, "candidate_edit")
         candidate_patch = _validate_candidate_patch(normalized_payload, "candidate_patch")
+        expected_effect = _require_string(normalized_payload, "expected_effect")
+        risk = _require_string(normalized_payload, "risk")
         _validate_candidate_edit_matches_patch(candidate_edit, candidate_patch)
+        next_command = _validate_next_command(
+            _require_string(normalized_payload, "next_command"),
+            candidate_patch=candidate_patch,
+            planning_text="\n".join((hypothesis, candidate_edit, expected_effect, risk)),
+        )
         return cls(
-            hypothesis=_require_string(normalized_payload, "hypothesis"),
+            hypothesis=hypothesis,
             files_to_inspect=files,
             candidate_edit=candidate_edit,
             candidate_patch=candidate_patch,
-            expected_effect=_require_string(normalized_payload, "expected_effect"),
-            risk=_require_string(normalized_payload, "risk"),
-            next_command=_validate_next_command(
-                _require_string(normalized_payload, "next_command"),
-                candidate_patch=candidate_patch,
-            ),
+            expected_effect=expected_effect,
+            risk=risk,
+            next_command=next_command,
         )
 
     def as_dict(self) -> dict[str, Any]:
@@ -263,8 +284,9 @@ def build_variation_prompt(
         "Return exactly one decision. The next_command must be a single bounded command that "
         "starts with 'avo' and uses only one of: env, compile, score. Use valid CLI flags: "
         "compile requires --source SOURCE.cu and --out-dir DIR; candidate score requires "
-        "--backend candidate and --candidate. Do not use shell pipes, redirection, command "
-        "chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
+        "--backend candidate and --candidate. Use env only for CUDA/build environment "
+        "diagnostics, not for source-file inspection. Do not use shell pipes, redirection, "
+        "command chaining, cat, head, git, rm, or arbitrary shell commands.\n\n"
         f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}"
         f"{attempt_section}{context_section}\n"
     )
@@ -283,6 +305,7 @@ def build_repo_context(root: Path) -> str:
         "Do not propose upstream FlashAttention csrc paths unless they are present locally.",
         "Available bounded commands: avo env; avo compile --source SOURCE.cu --out-dir DIR; "
         "avo score --backend BACKEND ...",
+        "Use avo env only for CUDA/build environment diagnostics, not source-file inspection.",
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
         "or empty.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
@@ -441,7 +464,12 @@ def _candidate_edit_requires_patch(candidate_edit: str) -> bool:
     return any(word in PATCH_REQUIRED_EDIT_VERBS for word in words)
 
 
-def _validate_next_command(command: str, *, candidate_patch: str = "") -> str:
+def _validate_next_command(
+    command: str,
+    *,
+    candidate_patch: str = "",
+    planning_text: str = "",
+) -> str:
     try:
         parts = shlex.split(command)
     except ValueError as exc:
@@ -456,13 +484,24 @@ def _validate_next_command(command: str, *, candidate_patch: str = "") -> str:
         raise ValueError(
             f"next_command uses unsupported avo subcommand '{subcommand}'; allowed: {allowed}"
         )
-    _validate_subcommand_arguments(parts, candidate_patch=candidate_patch)
+    _validate_subcommand_arguments(
+        parts,
+        candidate_patch=candidate_patch,
+        planning_text=planning_text,
+    )
     return command
 
 
-def _validate_subcommand_arguments(parts: list[str], *, candidate_patch: str = "") -> None:
+def _validate_subcommand_arguments(
+    parts: list[str],
+    *,
+    candidate_patch: str = "",
+    planning_text: str = "",
+) -> None:
     subcommand = parts[1]
-    if subcommand == "compile":
+    if subcommand == "env":
+        _validate_env_command_context(planning_text)
+    elif subcommand == "compile":
         if _has_option(parts, "--candidate"):
             raise ValueError(
                 "next_command compile does not support --candidate; use --source and --out-dir"
@@ -613,6 +652,16 @@ def _validate_known_candidate_score_shape(
                 "seq_len 16/32, head_dim 16, total_tokens<=32, and num_heads=1 cap; "
                 "include candidate_patch to update the wrapper/kernel first"
             )
+
+
+def _validate_env_command_context(planning_text: str) -> None:
+    normalized = " ".join(planning_text.lower().replace("_", " ").replace("-", " ").split())
+    if any(keyword in normalized for keyword in ENV_COMMAND_KEYWORDS):
+        return
+    raise ValueError(
+        "next_command avo env is only for CUDA/build environment diagnostics, "
+        "not source-file inspection"
+    )
 
 
 def _score_seq_lens(parts: list[str]) -> tuple[int, ...]:
