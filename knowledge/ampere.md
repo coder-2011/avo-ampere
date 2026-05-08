@@ -207,6 +207,11 @@ variation steps.
   0.2576601941393183 TFLOPS, noncausal 0.32998084031335845 TFLOPS, causal
   0.20118978902189197 TFLOPS. Do not repeat pragma-only performance patches;
   the planner now rejects patches whose only added lines are `#pragma unroll`.
+  A follow-up dynamic shared-memory double-buffer skeleton moved K/V tiles to flat
+  `scalar_t*` buffers but did not update the existing 2D `[key][dim]` access sites,
+  so compile failed with `no operator []` errors. Its own risk text said the
+  doubled buffers were unused, could not improve throughput, and indexing had to
+  be updated before scoring; the planner now treats those phrases as self-invalid.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
