@@ -924,3 +924,12 @@ source files.
   seed on supported `16x16x16` WMMA fragments; larger query tiles require
   multiple 16-row fragments or a different implementation strategy, not direct
   M=32 WMMA fragment instantiation.
+  A later MMA warp-reduction helper patch inserted `__device__ __forceinline__`
+  helper definitions between the `__global__ void mma_attention_kernel(` token
+  and the existing parameter list, duplicating the kernel declaration and making
+  NVCC report "invalid specifier on a parameter". Its own risk text said the
+  patch would cause NVCC to fail and "Do not apply this patch". The planner now
+  treats that wording as self-invalid before applying candidate diffs. CUDA
+  helper functions are fine, but they must be complete declarations placed
+  before the kernel declaration or after the kernel body, not spliced into a
+  function signature.

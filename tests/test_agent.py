@@ -1675,6 +1675,32 @@ def test_parse_variation_decision_rejects_patch_described_as_nvcc_compile_failur
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_patch_marked_do_not_apply() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add MMA warp reduction helpers and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = (
+        "The helper functions are inserted inside the kernel signature. This will cause "
+        "NVCC to fail with syntax errors. Do not apply this patch; correct the helper "
+        "placement first."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="do not apply this patch"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_stray_probability_frag_statement() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA PV probability preload and compile it."
