@@ -78,16 +78,18 @@ variation steps.
 - Candidate source patching now has a bounded manual substrate:
   `avo apply-patch PATCH --dry-run` accepts only ordinary unified diffs under
   `candidates/`, rejects path traversal, symlink-mode patches, binary patches,
-  renames, deletes, and mode changes, and runs `git apply --check` before any
-  real apply. Anthropic decisions also include `candidate_patch`: a non-empty
-  patch is applied through the same validator before the bounded `next_command`
-  runs. This does not stage, commit, score, or expand the `next_command`
-  allowlist beyond `avo env`, `avo compile`, and `avo score`. If `evolve-once`
-  applies a patch and the step is not accepted, it attempts a checked reverse
-  apply so rejected edits do not leak into later attempts. If a candidate step
-  is accepted, the lineage commit stores snapshots of the scored candidate
-  module and companion source directory under `sources/latest/`; patched accepted
-  steps also store the raw patch under `patches/latest.patch`.
+  renames, deletes, and mode changes, and runs `git apply --recount --check`
+  before any real apply. Anthropic decisions also include `candidate_patch`: a
+  non-empty patch is applied through the same validator before the bounded
+  `next_command` runs. Planner prompts include bounded excerpts of current
+  candidate sources so raw diffs can use real file context. This does not stage,
+  commit, score, or expand the `next_command` allowlist beyond `avo env`,
+  `avo compile`, and `avo score`. If `evolve-once` applies a patch and the step
+  is not accepted, it attempts a checked reverse apply so rejected edits do not
+  leak into later attempts. If a candidate step is accepted, the lineage commit
+  stores snapshots of the scored candidate module and companion source directory
+  under `sources/latest/`; patched accepted steps also store the raw patch under
+  `patches/latest.patch`.
 
 ## Search Space
 
@@ -123,6 +125,13 @@ variation steps.
   with max_abs_error `0.485504150390625` noncausal and `1.4482421875` causal.
   Do not score larger tiled shapes without a patch that fixes or extends the
   tiled kernel first.
+- The naive seed is useful only as a correctness reference. A no-patch BF16
+  score at `seq_len=128`, `head_dim=128`, `total_tokens=512`, and `num_heads=4`
+  passed both causal modes, but it was much slower than the warp-row best:
+  noncausal `0.0010531516927932967` TFLOPS, causal `0.000930790492895549`
+  TFLOPS, geomean `0.000990082614345315` TFLOPS. The gate rejected this versus
+  the current `0.10830947571120902` best, so do not repeat naive no-patch
+  scoring as a candidate-improving step.
 - NVIDIA's CUTLASS CuTeDSL Ampere FlashAttention v2 example is useful search
   evidence for the direction from the warp-row seed toward FA2-like structure:
   it combines 128-bit `cp.async` Q/K/V global-to-shared copies, Ampere BF16/FP16
