@@ -969,6 +969,9 @@ def _patch_status(patch_result: Any) -> str:
     reason = _shorten(str(patch_result.get("rejected_reason") or ""), 120)
     if ok:
         return f"patch ok paths={paths}"
+    detail = _result_detail(patch_result)
+    if detail:
+        return f"patch rejected reason={reason} detail={detail}"
     return f"patch rejected reason={reason}"
 
 
@@ -979,7 +982,17 @@ def _patch_cleanup_status(cleanup_result: Any) -> str:
     reason = _shorten(str(cleanup_result.get("rejected_reason") or ""), 120)
     if ok:
         return "patch cleanup ok"
+    detail = _result_detail(cleanup_result)
+    if detail:
+        return f"patch cleanup failed reason={reason} detail={detail}"
     return f"patch cleanup failed reason={reason}"
+
+
+def _result_detail(result: dict[str, Any]) -> str:
+    detail = str(result.get("stderr_tail") or result.get("stdout_tail") or "").strip()
+    if not detail:
+        return ""
+    return _shorten(" ".join(detail.split()), 180)
 
 
 def _gate_status(gate_decision: Any) -> str:

@@ -684,6 +684,37 @@ def test_summarize_attempt_history_flags_repeated_unaccepted_attempts(tmp_path: 
     assert "materially different optimization direction" in summary
 
 
+def test_summarize_attempt_history_includes_patch_failure_detail(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    patch_result = PatchResult(
+        ok=False,
+        patch_paths=["candidates/seed.py"],
+        returncode=1,
+        stdout_tail="",
+        stderr_tail="error: corrupt patch at line 53\n",
+        rejected_reason="git apply --check failed",
+    )
+    attempt = VariationAttempt(
+        decision=decision("avo compile --source candidates/seed.cu --out-dir build/seed"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=None,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="candidate patch rejected: git apply --check failed",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=patch_result,
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "patch rejected reason=git apply --check failed" in summary
+    assert "error: corrupt patch at line 53" in summary
+
+
 def test_summarize_attempt_history_normalizes_compile_out_dir(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     source = "candidates/cuda_tiled_attention/attention_kernel.cu"
