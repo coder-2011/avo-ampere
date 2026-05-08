@@ -187,6 +187,15 @@ variation steps.
   only handles a `head_dim == 16` BF16 score path for `warp_id == 0`, does not
   integrate the WMMA scores into the existing online softmax/output accumulation
   for all rows, and would leave that branch without a final output update.
+  A later scalar fallback unroll patch was rejected before compile because its
+  context did not match the current source and it referenced `qv`, `kv`, and
+  `inner` outside the packed branch where those names are defined. The fixed
+  benchmark head dimension is 128, so the current dot-product path takes the
+  divisible-by-4 packed branch, not the scalar fallback. Do not spend another
+  candidate on scalar fallback unrolling unless the benchmark suite includes an
+  odd/non-packed head dimension. NVIDIA CUTLASS guidance also frames unrolling
+  as most useful for loops with compile-time-known trip counts; the scalar
+  fallback loop uses runtime `head_dim`.
   NVIDIA's CUDA Programming Guide says the mapping of matrix elements into
   WMMA fragment internal storage is unspecified and can change across
   architectures. Do not infer row/column positions from `fragment.x[]`; apply
@@ -322,6 +331,8 @@ variation steps.
   https://github.com/NVIDIA/cuda-samples/blob/master/Samples/3_CUDA_Features/bf16TensorCoreGemm/bf16TensorCoreGemm.cu
 - NVIDIA CUDA C++ Programming Guide, Warp Matrix Functions:
   https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#warp-matrix-functions
+- NVIDIA CUTLASS programming guidelines, loop unrolling:
+  https://docs.nvidia.com/cutlass/4.4.0/media/docs/cpp/programming_guidelines.html#loop-unrolling
 
 ## Gate
 
