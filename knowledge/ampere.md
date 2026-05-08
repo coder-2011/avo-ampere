@@ -231,6 +231,14 @@ variation steps.
   causal hit a misaligned-address error. Keep the threshold at 64 unless a patch
   also fixes the head_dim128 shared-path alignment/layout issue; the planner now
   rejects direct threshold-only changes to 128.
+  The likely local cause is the interaction between the `kMaxHeadDim + 1` skew
+  and the vectorized `dot_product`: BF16 row stride becomes 129 elements / 258
+  bytes, so most rows are not aligned for the `ScalarPack4` reinterpret path.
+  NVIDIA/CUTLASS guidance also emphasizes 16-byte alignment for vectorized shared
+  memory IO. A future head_dim128 shared path should use a stride that preserves
+  pack alignment (for example a multiple of 4 BF16 elements for the current
+  `ScalarPack4`, or 8 BF16 elements for 16-byte alignment) or explicitly fall
+  back to scalar loads before enabling shared staging at head_dim128.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
@@ -525,6 +533,8 @@ variation steps.
   https://docs.nvidia.com/cutlass/4.4.0/media/docs/cpp/programming_guidelines.html#loop-unrolling
 - NVIDIA CUTLASS functionality tables, WMMA and TensorOp layouts:
   https://docs.nvidia.com/cutlass/4.4.0/media/docs/cpp/functionality.html
+- NVIDIA cuBLASDx performance guidance, alignment and shared-memory layouts:
+  https://docs.nvidia.com/cuda/archive/13.0.1/cublasdx/performance.html
 
 ## Gate
 
