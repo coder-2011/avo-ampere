@@ -120,6 +120,12 @@ variation steps.
   source-size/zero-fill argument for partial copies, and asserts shared/global address spaces plus
   4/8/16-byte alignment. A future cp.async attempt can first add `#include <cuda_pipeline_primitives.h>`
   and compile a tiny candidate-local smoke before restructuring the warp-row loop.
+  That tiny compile smoke has now succeeded on the warp-row source for sm86: adding the header plus
+  unused wrappers around `__pipeline_memcpy_async`, `__pipeline_commit`, and
+  `__pipeline_wait_prior` compiled with no spills. NVCC warned only that the commit/wait wrappers
+  were unused. This proves header/API availability, not performance. The next cp.async attempt must
+  still add a real double-buffered overlap and must keep 16-byte groups aligned and disjoint from
+  scalar tail writes.
 - Shared-memory layouts and bank-conflict reduction.
 - Register pressure and spill avoidance.
 - Warp-level online softmax reductions.
