@@ -47,6 +47,10 @@ variation steps.
 ## Search Space
 
 - `cp.async` pipeline depth and staging.
+- A first inline `cp.async.cg.shared.global` staging attempt on the warp-row seed compiled to
+  `LDGSTS.E.BYPASS.128` on sm86 and passed correctness, but regressed the tiny 64x64 BF16
+  smoke versus synchronous shared staging. Do not re-enable a single-stage cp.async copy without
+  adding actual overlap, double buffering, or profiler evidence.
 - Shared-memory layouts and bank-conflict reduction.
 - Register pressure and spill avoidance.
 - Warp-level online softmax reductions.
