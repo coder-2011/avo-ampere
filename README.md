@@ -193,8 +193,10 @@ properties so accepted lineage commits can be audited later.
 Seed a FlashAttention-2 baseline lineage:
 
 ```bash
+uv run --extra cuda python -m avo env
+
 FLASH_ATTN_CUDA_ARCHS=80 MAX_JOBS=1 NVCC_THREADS=1 \
-  uv run --extra baseline python -m pip install flash-attn --no-build-isolation
+  uv pip install flash-attn --no-build-isolation
 
 uv run --extra cuda --extra baseline python -m avo seed-baseline ./lineage \
   --backend flash-attn \
@@ -202,6 +204,10 @@ uv run --extra cuda --extra baseline python -m avo seed-baseline ./lineage \
   --repeats 3 \
   --warmup 1
 ```
+
+Check the `baseline_build` block from `avo env` before installing FA2. Source builds need
+`ok_for_torch_extension_build: true`; a major `torch_cuda`/`nvcc_cuda` mismatch will fail inside
+PyTorch extension setup before any attention benchmark can run.
 
 ## Agent workflow
 

@@ -6,7 +6,19 @@ from types import SimpleNamespace
 import pytest
 
 from avo.agent import VariationDecision
-from avo.cli import _agent_status, _baseline_build_env, _evolve_loop, _evolve_once, _score, main
+from avo.cli import (
+    _agent_status,
+    _baseline_build_env,
+    _baseline_build_status,
+    _cuda_build_compatibility,
+    _evolve_loop,
+    _evolve_once,
+    _nvcc_path_from_env,
+    _parse_nvcc_release,
+    _score,
+    _seed_baseline,
+    main,
+)
 from avo.evolve import CommandResult, VariationAttempt, apply_candidate_patch
 
 
@@ -54,6 +66,45 @@ def test_baseline_build_env_preserves_explicit_parallelism_limits() -> None:
     assert updated["NVCC_THREADS"] == "2"
 
 
+def test_parse_nvcc_release() -> None:
+    output = "Cuda compilation tools, release 12.9, V12.9.86"
+
+    assert _parse_nvcc_release(output) == "12.9"
+    assert _parse_nvcc_release("not nvcc output") is None
+
+
+def test_cuda_build_compatibility() -> None:
+    assert _cuda_build_compatibility("13.0", "13.0") == ("exact", None)
+
+    minor_status, minor_warning = _cuda_build_compatibility("13.0", "13.1")
+    assert minor_status == "minor_mismatch"
+    assert "may warn" in minor_warning
+
+    major_status, major_warning = _cuda_build_compatibility("13.0", "12.9")
+    assert major_status == "major_mismatch"
+    assert "will fail" in major_warning
+
+
+def test_nvcc_path_prefers_cuda_home() -> None:
+    assert _nvcc_path_from_env({"CUDA_HOME": "/opt/cuda", "PATH": "/bin"}) == (
+        "/opt/cuda/bin/nvcc"
+    )
+
+
+def test_baseline_build_status_reports_cuda_mismatch(monkeypatch) -> None:
+    monkeypatch.setattr("avo.cli._nvcc_path_from_env", lambda env: "/usr/local/cuda/bin/nvcc")
+    monkeypatch.setattr("avo.cli._nvcc_cuda_version", lambda nvcc_path, env: ("12.9", None))
+    monkeypatch.setattr("avo.cli.importlib.util.find_spec", lambda name: None)
+
+    status = _baseline_build_status({"PATH": "/usr/bin"}, torch_cuda="13.0")
+
+    assert status["flash_attn_installed"] is False
+    assert status["settings"]["FLASH_ATTN_CUDA_ARCHS"] == "80"
+    assert status["compatibility"] == "major_mismatch"
+    assert status["ok_for_torch_extension_build"] is False
+    assert "torch was compiled with CUDA 13.0" in status["warning"]
+
+
 def test_score_command_forwards_trial_count(monkeypatch) -> None:
     captured = {}
 
@@ -90,6 +141,46 @@ def test_score_command_forwards_trial_count(monkeypatch) -> None:
     assert exit_code == 0
     assert "--trials" in captured["args"]
     assert captured["args"][captured["args"].index("--trials") + 1] == "3"
+
+
+def test_seed_baseline_rejects_missing_flash_attn_when_cuda_build_blocked(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr("avo.cli.importlib.util.find_spec", lambda name: None)
+    monkeypatch.setattr(
+        "avo.cli._baseline_build_status",
+        lambda env: {
+            "ok_for_torch_extension_build": False,
+            "warning": "PyTorch extension builds will fail",
+        },
+    )
+
+    def fail_run_json_worker(*args, **kwargs):
+        raise AssertionError("score worker should not run")
+
+    monkeypatch.setattr("avo.cli.run_json_worker", fail_run_json_worker)
+
+    with pytest.raises(RuntimeError, match="baseline source-build environment is not ready"):
+        _seed_baseline(
+            SimpleNamespace(
+                backend="flash-attn",
+                candidate=None,
+                seq_lens="16",
+                causal="false",
+                head_dim=16,
+                num_heads=1,
+                total_tokens=16,
+                dtype="bf16",
+                warmup=1,
+                repeats=1,
+                trials=1,
+                timeout_s=10,
+                path=tmp_path / "lineage",
+                message="seed baseline",
+                force=False,
+            )
+        )
 
 
 def test_apply_patch_command_reports_dry_run_result(tmp_path: Path, capsys) -> None:

@@ -33,6 +33,10 @@ variation steps.
   `FLASH_ATTN_CUDA_ARCHS=80` (the upstream build script’s Ampere-family target)
   and cap build parallelism with conservative `MAX_JOBS=1` and `NVCC_THREADS=1`
   defaults on this 32 GB host.
+- Run `avo env` before FA2 installation and inspect `baseline_build`. If
+  `torch_cuda` and `nvcc_cuda` have different major versions, PyTorch extension
+  setup will fail; fix `CUDA_HOME`/`CUDA_PATH`/`PATH` or use a torch build that
+  matches the available toolkit before retrying the baseline.
 - Score records can use `--trials N` to collect replicate CUDA-event timings.
   Per-case TFLOPS is computed from the median sample, and the JSON includes
   samples, min, mean, median, and coefficient of variation so noisy runs are

@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
+import importlib.util
 import json
 import os
+import re
+import shutil
+import subprocess
 from pathlib import Path
 
 from .agent import (
@@ -169,6 +173,7 @@ def add_attempt_history_args(parser: argparse.ArgumentParser) -> None:
 
 
 def _env(args: argparse.Namespace) -> int:
+    torch_cuda: str | None = None
     payload = {
         "target": {
             "name": AMPERE_A6000.name,
@@ -187,6 +192,7 @@ def _env(args: argparse.Namespace) -> int:
             "cuda": torch.version.cuda,
             "cuda_available": torch.cuda.is_available(),
         }
+        torch_cuda = torch.version.cuda
         if torch.cuda.is_available():
             payload["gpu"] = {
                 "name": torch.cuda.get_device_name(0),
@@ -194,6 +200,10 @@ def _env(args: argparse.Namespace) -> int:
             }
     except Exception as exc:
         payload["torch_error"] = f"{type(exc).__name__}: {exc}"
+    payload["baseline_build"] = _baseline_build_status(
+        os.environ.copy(),
+        torch_cuda=torch_cuda,
+    )
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
 
@@ -294,6 +304,13 @@ def _seed_baseline(args: argparse.Namespace) -> int:
     if args.candidate:
         worker_args.extend(["--candidate", str(args.candidate)])
     baseline_env = _baseline_build_env(os.environ.copy())
+    if args.backend == "flash-attn" and importlib.util.find_spec("flash_attn") is None:
+        build_status = _baseline_build_status(baseline_env)
+        if not build_status["ok_for_torch_extension_build"]:
+            raise RuntimeError(
+                "flash-attn is not installed and the baseline source-build "
+                f"environment is not ready: {build_status['warning']}"
+            )
     result = run_json_worker(
         worker_args,
         timeout_s=args.timeout_s,
@@ -468,3 +485,117 @@ def _baseline_build_env(env: dict[str, str]) -> dict[str, str]:
     env.setdefault("MAX_JOBS", "1")
     env.setdefault("NVCC_THREADS", "1")
     return env
+
+
+def _baseline_build_status(
+    env: dict[str, str],
+    *,
+    torch_cuda: str | None = None,
+) -> dict[str, object]:
+    baseline_env = _baseline_build_env(dict(env))
+    if torch_cuda is None:
+        try:
+            import torch
+        except Exception:
+            torch_cuda = None
+        else:
+            torch_cuda = torch.version.cuda
+    nvcc_path = _nvcc_path_from_env(baseline_env)
+    nvcc_cuda, nvcc_error = _nvcc_cuda_version(nvcc_path, baseline_env)
+    compatibility, warning = _cuda_build_compatibility(torch_cuda, nvcc_cuda)
+    return {
+        "flash_attn_installed": importlib.util.find_spec("flash_attn") is not None,
+        "settings": {
+            "FLASH_ATTN_CUDA_ARCHS": baseline_env["FLASH_ATTN_CUDA_ARCHS"],
+            "MAX_JOBS": baseline_env["MAX_JOBS"],
+            "NVCC_THREADS": baseline_env["NVCC_THREADS"],
+        },
+        "torch_cuda": torch_cuda,
+        "nvcc_path": nvcc_path,
+        "nvcc_cuda": nvcc_cuda,
+        "nvcc_error": nvcc_error,
+        "compatibility": compatibility,
+        "ok_for_torch_extension_build": compatibility in {"exact", "minor_mismatch"},
+        "warning": warning,
+    }
+
+
+def _nvcc_path_from_env(env: dict[str, str]) -> str | None:
+    cuda_home = env.get("CUDA_HOME") or env.get("CUDA_PATH")
+    if cuda_home:
+        executable = "nvcc.exe" if os.name == "nt" else "nvcc"
+        return str(Path(cuda_home) / "bin" / executable)
+    return shutil.which("nvcc", path=env.get("PATH"))
+
+
+def _nvcc_cuda_version(
+    nvcc_path: str | None,
+    env: dict[str, str],
+) -> tuple[str | None, str | None]:
+    if nvcc_path is None:
+        return None, "nvcc was not found in CUDA_HOME, CUDA_PATH, or PATH"
+    try:
+        completed = subprocess.run(
+            [nvcc_path, "--version"],
+            check=True,
+            capture_output=True,
+            env=env,
+            text=True,
+            timeout=10,
+        )
+    except FileNotFoundError:
+        return None, f"nvcc was not found at {nvcc_path}"
+    except subprocess.TimeoutExpired:
+        return None, f"{nvcc_path} --version timed out"
+    except subprocess.CalledProcessError as exc:
+        output = (exc.stdout or exc.stderr or "").strip()
+        suffix = f": {output}" if output else ""
+        return None, f"{nvcc_path} --version failed{suffix}"
+    output = f"{completed.stdout}\n{completed.stderr}"
+    version = _parse_nvcc_release(output)
+    if version is None:
+        return None, f"could not parse CUDA release from {nvcc_path} --version"
+    return version, None
+
+
+def _parse_nvcc_release(output: str) -> str | None:
+    match = re.search(r"release\s+(\d+\.\d+)", output)
+    if match is None:
+        return None
+    return match.group(1)
+
+
+def _cuda_build_compatibility(
+    torch_cuda: str | None,
+    nvcc_cuda: str | None,
+) -> tuple[str, str | None]:
+    if torch_cuda is None:
+        return "missing_torch_cuda", "torch.version.cuda is unavailable"
+    if nvcc_cuda is None:
+        return "missing_nvcc", "nvcc CUDA version is unavailable"
+    torch_version = _cuda_major_minor(torch_cuda)
+    nvcc_version = _cuda_major_minor(nvcc_cuda)
+    if torch_version is None:
+        return "unparseable_torch_cuda", f"could not parse torch CUDA version {torch_cuda!r}"
+    if nvcc_version is None:
+        return "unparseable_nvcc_cuda", f"could not parse nvcc CUDA version {nvcc_cuda!r}"
+    if torch_version == nvcc_version:
+        return "exact", None
+    if torch_version[0] == nvcc_version[0]:
+        return (
+            "minor_mismatch",
+            "PyTorch extension builds may warn: "
+            f"nvcc reports CUDA {nvcc_cuda} but torch was compiled with CUDA {torch_cuda}",
+        )
+    return (
+        "major_mismatch",
+        "PyTorch extension builds will fail: "
+        f"nvcc reports CUDA {nvcc_cuda} but torch was compiled with CUDA {torch_cuda}",
+    )
+
+
+def _cuda_major_minor(version: str) -> tuple[int, int] | None:
+    match = re.match(r"^\s*(\d+)\.(\d+)", version)
+    if match is None:
+        return None
+    return int(match.group(1)), int(match.group(2))
