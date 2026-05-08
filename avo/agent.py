@@ -88,9 +88,12 @@ NO_EDIT_PHRASES = (
 )
 SELF_REJECTING_PATCH_PHRASES = (
     "cannot affect correctness or throughput",
+    "cannot improve throughput",
     "not ready to apply",
     "not yet called",
     "stub is empty",
+    "must be updated before scoring",
+    "unused doubled buffers",
     "would break correctness",
     "will cause a compile error",
     "will break correctness",

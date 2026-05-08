@@ -610,6 +610,31 @@ def test_parse_variation_decision_rejects_would_break_correctness_warning() -> N
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_unused_non_improving_structural_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch dynamic shared K/V buffers and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+extern __shared__ char dyn_shared[];\n"
+    )
+    payload["risk"] = (
+        "The patch introduces unused doubled buffers, cannot improve throughput, "
+        "and the existing single-buffer indexing must be updated before scoring."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/warp"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
