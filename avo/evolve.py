@@ -220,6 +220,7 @@ def apply_candidate_patch(
     check = _run_git_apply(
         cwd,
         patch_text,
+        "--recount",
         "--check",
         "--whitespace=error",
     )
@@ -245,6 +246,7 @@ def apply_candidate_patch(
     applied = _run_git_apply(
         cwd,
         patch_text,
+        "--recount",
         "--whitespace=error",
     )
     return PatchResult(
@@ -279,6 +281,7 @@ def revert_candidate_patch(
     check = _run_git_apply(
         cwd,
         patch_text,
+        "--recount",
         "--reverse",
         "--check",
         "--whitespace=error",
@@ -305,6 +308,7 @@ def revert_candidate_patch(
     reverted = _run_git_apply(
         cwd,
         patch_text,
+        "--recount",
         "--reverse",
         "--whitespace=error",
     )

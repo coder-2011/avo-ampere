@@ -86,6 +86,25 @@ def test_apply_candidate_patch_updates_candidate_file(tmp_path: Path) -> None:
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
+def test_apply_candidate_patch_recounts_llm_hunk_lengths(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    patch = dedent(
+        """\
+        diff --git a/candidates/seed.py b/candidates/seed.py
+        --- a/candidates/seed.py
+        +++ b/candidates/seed.py
+        @@ -1,3 +1,3 @@
+        -VALUE = 1
+        +VALUE = 2
+        """
+    )
+
+    result = apply_candidate_patch(patch, cwd=tmp_path)
+
+    assert result.ok
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
 def test_revert_candidate_patch_restores_candidate_file(tmp_path: Path) -> None:
     seed = write_seed_candidate(tmp_path)
     apply_result = apply_candidate_patch(candidate_value_patch(), cwd=tmp_path)
