@@ -577,6 +577,18 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch is a pragma-only performance patch; recorded warp-row "
             "unroll scoring regressed throughput, so include a substantive code change"
         )
+    meaningful_added_lines = [
+        line.strip() for line in _candidate_patch_added_lines(candidate_patch) if line.strip()
+    ]
+    if (
+        len(meaningful_added_lines) == 1
+        and "can_stage_shared" in meaningful_added_lines[0]
+        and "head_dim <= 128" in meaningful_added_lines[0]
+    ):
+        raise ValueError(
+            "candidate_patch directly enables the warp-row shared path for head_dim 128; "
+            "the recorded threshold-only change triggered CUDA misaligned-address failures"
+        )
     added_text = "\n".join(_candidate_patch_added_lines(candidate_patch))
     if "__pipeline_wait_prior<" in added_text:
         raise ValueError(

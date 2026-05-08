@@ -659,6 +659,30 @@ def test_parse_variation_decision_rejects_standalone_dynamic_kv_migration() -> N
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_direct_head_dim128_shared_threshold() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Raise the warp-row shared path threshold to head_dim 128."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-const bool can_stage_shared = head_dim <= 64 && "
+        "block_query + kRowsPerBlock <= seq_len;\n"
+        "+const bool can_stage_shared = head_dim <= 128 && "
+        "block_query + kRowsPerBlock <= seq_len;\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_warp_rows_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="head_dim 128"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
