@@ -225,6 +225,12 @@ variation steps.
   0.42179242571503833 TFLOPS, causal 0.24919370741961078 TFLOPS. Do not repeat
   dynamic-shared K/V migration by itself; only revisit dynamic shared memory when
   adding real async-copy or double-buffering logic that can offset the overhead.
+  A direct threshold-only change from `head_dim <= 64` to `head_dim <= 128` for
+  `can_stage_shared` is unsafe. The generated patch was corrupt, and a manual
+  one-line score check failed correctness: noncausal hit a CUDA unknown error and
+  causal hit a misaligned-address error. Keep the threshold at 64 unless a patch
+  also fixes the head_dim128 shared-path alignment/layout issue; the planner now
+  rejects direct threshold-only changes to 128.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
