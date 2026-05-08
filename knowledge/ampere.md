@@ -191,6 +191,13 @@ variation steps.
   (`16xhead_dim`), size `pv_tile`/`output_acc` for the maximum supported head
   dimension, use `head_dim` for runtime row/dim indexing and global strides, and
   avoid duplicate local declarations in the final store loop.
+  A later two-chunk patch compiled and ran, but failed tolerance badly
+  (`max_abs_error` about `86.64` noncausal and `218.83` causal). That patch
+  widened `pv_tile` to `kTile*kHeadDim` but left `output_acc` at `kTileElements`
+  while loops wrote `kTile*head_dim`, likely corrupting shared memory. The next
+  correctness attempt must widen both `pv_tile` and `output_acc`, keep score and
+  probability tiles at `16x16`, and verify the PV store offsets for each
+  16-wide output chunk.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
