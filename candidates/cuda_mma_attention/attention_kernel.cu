@@ -13,7 +13,7 @@ namespace {
 using namespace nvcuda;
 
 constexpr int kTile = 16;
-constexpr int kMaxSeqLen = 128;
+constexpr int kMaxSeqLen = 256;
 constexpr int kHeadDim = 128;
 constexpr int kScoreElements = kTile * kTile;
 constexpr int kOutputElements = kTile * kHeadDim;
@@ -179,9 +179,9 @@ torch::Tensor attention_cuda(torch::Tensor q,
   TORCH_CHECK(v.scalar_type() == at::ScalarType::BFloat16, "v must be bf16");
   const int seq_len = static_cast<int>(q.size(2));
   TORCH_CHECK(
-      seq_len == kTile || seq_len == kMaxSeqLen / 4 || seq_len == kMaxSeqLen / 2 ||
-          seq_len == kMaxSeqLen,
-      "seq_len must be 16, 32, 64, or 128");
+      seq_len == kTile || seq_len == 2 * kTile || seq_len == 4 * kTile ||
+          seq_len == 8 * kTile || seq_len == kMaxSeqLen,
+      "seq_len must be 16, 32, 64, 128, or 256");
   TORCH_CHECK(q.size(3) == kHeadDim, "head_dim must be 128");
 
   auto output = torch::empty_like(q);

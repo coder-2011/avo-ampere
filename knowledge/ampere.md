@@ -57,7 +57,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for 16/32/64/128-token, head-dim 128
+  `candidates/cuda_mma_attention_seed.py` for 16/32/64/128/256-token, head-dim 128
   BF16 tensor-core QK/PV smokes
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
@@ -461,8 +461,8 @@ variation steps.
   with `error: corrupt patch at line 120`. It also introduced undefined
   `head_dim` identifiers inside the CUDA kernel and still used unsupported
   WMMA fragment template shapes. The validator now rejects patched MMA scores
-  beyond the current head_dim128 smoke unless the next command is a compile
-  build-check first.
+  beyond the current seq256/head_dim128 smoke unless the next command is a
+  compile build-check first.
   A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
   to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as
   `fragment<matrix_a, 16, 16, 32, ...>` and `fragment<accumulator, 16, 32, 16,
@@ -615,11 +615,24 @@ variation steps.
   0.00390625 with median 0.8828799724578857 ms /
   `0.1520226216326391` TFLOPS; causal max error was 0.0078125 with median
   0.7715200185775757 ms / `0.08698266070104863` TFLOPS. Geomean was
-  `0.1149927481033293` TFLOPS. The current MMA seed now supports seq_lens
+  `0.1149927481033293` TFLOPS. This extended the MMA seed to seq_lens
   16/32/64/128 with head_dim128, total_tokens up to 512, and num_heads up to 4.
-  Do not repeat the exact no-patch seq128 score as a candidate-improving step;
-  future MMA work should patch toward seq256 support or change the kernel
-  structure.
+  Do not repeat the exact no-patch seq128 score as a candidate-improving step.
+  A later generated seq256 MMA patch changed only `kMaxSeqLen` and the smoke
+  sequence cap from 128 to 256. The generated runtime check dropped seq32, so
+  the manual version used an explicit 16/32/64/128/256 check. It compiled on
+  sm86 with no spills, 40 registers, 1 barrier, and the same 18112 bytes shared
+  memory. A fresh lineage score at seq_len 256, total_tokens 1024, num_heads 4,
+  head_dim 128, BF16, both causal modes passed correctness and was accepted over
+  the prior seq256 warp-row best. Noncausal max error was 0.001953125 with
+  median 0.7603840231895447 ms / `0.7060523309629976` TFLOPS; causal max error
+  was 0.0078125 with median 0.7816960215568542 ms /
+  `0.3434013332514782` TFLOPS. Geomean was `0.4924015757468769` TFLOPS versus
+  the prior best `0.43185073056556733`. The current MMA seed now supports
+  seq_lens 16/32/64/128/256 with head_dim128, total_tokens up to 1024, and
+  num_heads up to 4. Do not repeat the exact no-patch seq256 score as a
+  candidate-improving step; future MMA work should change the kernel structure
+  or compile-check a shape extension beyond seq256 before scoring.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.

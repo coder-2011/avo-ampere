@@ -9,7 +9,7 @@ from avo.cuda_env import prepare_torch_extension_env
 prepare_torch_extension_env(os.environ, max_jobs="2")
 
 SOURCE_DIR = Path(__file__).resolve().parent / "cuda_mma_attention"
-SMOKE_SEQUENCES = {16, 32, 64, 128}
+SMOKE_SEQUENCES = {16, 32, 64, 128, 256}
 SMOKE_HEAD_DIM = 128
 
 
@@ -35,7 +35,8 @@ def attention(q, k, v, causal: bool):
     head_dim = q.shape[3]
     if seq_len not in SMOKE_SEQUENCES or head_dim != SMOKE_HEAD_DIM:
         raise RuntimeError(
-            "cuda_mma_attention_seed is a 16/32/64/128-token, head_dim128 BF16 tensor-core seed; "
+            "cuda_mma_attention_seed is a 16/32/64/128/256-token, "
+            "head_dim128 BF16 tensor-core seed; "
             f"got seq_len={seq_len}, head_dim={head_dim}"
         )
     if str(q.dtype) != "torch.bfloat16":

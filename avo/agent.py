@@ -373,7 +373,7 @@ def build_repo_context(root: Path) -> str:
         "candidates/cuda_tiled_attention/attention_kernel.cu; compile those sources only "
         "when build-checking a candidate_patch.",
         "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
-        "seq_lens 16, 32, 64, or 128 with head_dim 128, total_tokens <= 512, "
+        "seq_lens 16, 32, 64, 128, or 256 with head_dim 128, total_tokens <= 1024, "
         "and num_heads <= 4; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
         "head_dim <= 128 with total_tokens <= 1024 and num_heads <= 4; "
@@ -394,7 +394,9 @@ def build_repo_context(root: Path) -> str:
         "recorded as structural progress; do not repeat it without a new candidate_patch.",
         "The unpatched MMA seq128/head_dim128 score passed correctness but is already "
         "recorded as structural progress; do not repeat it without a new candidate_patch.",
-        "Patched MMA shape extensions beyond the current head_dim128 smoke must run "
+        "The unpatched MMA seq256/head_dim128 score passed correctness and was accepted "
+        "into lineage; do not repeat it without a structural candidate_patch.",
+        "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
         "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
         "and leaves four 16-wide chunks covers only 64 dimensions; do not repeat it.",
@@ -1021,14 +1023,14 @@ def _validate_known_candidate_score_shape(
             )
     elif candidate == MMA_SEED:
         if (
-            any(seq_len not in {16, 32, 64, 128} for seq_len in seq_lens)
+            any(seq_len not in {16, 32, 64, 128, 256} for seq_len in seq_lens)
             or head_dim != 128
-            or total_tokens > 512
+            or total_tokens > 1024
             or num_heads > 4
         ):
             raise ValueError(
                 "next_command scores cuda_mma_attention_seed.py outside its unpatched "
-                "seq_len 16/32/64/128, head_dim 128, total_tokens<=512, and "
+                "seq_len 16/32/64/128/256, head_dim 128, total_tokens<=1024, and "
                 "num_heads<=4 cap; "
                 "include candidate_patch to update the wrapper/kernel first"
             )
@@ -1073,10 +1075,28 @@ def _validate_patched_mma_score_is_compile_checked_first(
 ) -> None:
     if not candidate_patch.strip() or candidate != MMA_SEED:
         return
-    if _score_head_dim(parts) == 128:
+    seq_lens = _score_seq_lens(parts)
+    head_dim = _score_head_dim(parts)
+    total_tokens = _score_positive_int_option(
+        parts,
+        "--total-tokens",
+        default=DEFAULT_SCORE_TOTAL_TOKENS,
+    )
+    num_heads = _score_positive_int_option(
+        parts,
+        "--num-heads",
+        default=DEFAULT_SCORE_NUM_HEADS,
+    )
+    if (
+        all(seq_len in {16, 32, 64, 128, 256} for seq_len in seq_lens)
+        and head_dim == 128
+        and total_tokens <= 1024
+        and num_heads <= 4
+    ):
         return
     raise ValueError(
-        "next_command scores a patched MMA shape extension beyond the current head_dim128 smoke; "
+        "next_command scores a patched MMA shape extension beyond the current "
+        "seq256/head_dim128 smoke; "
         "first run avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
         "--out-dir build/<name> to build-check the candidate_patch"
     )
@@ -1212,7 +1232,7 @@ def _preferred_candidate_score_command(candidates: list[str]) -> str:
         return (
             "avo score --backend candidate "
             "--candidate candidates/cuda_mma_attention_seed.py "
-            "--seq-lens 128 --total-tokens 512 --num-heads 4 --head-dim 128 "
+            "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128 "
             "--dtype bf16 --causal both --repeats 1 --warmup 1 --timeout-s 300"
         )
     if "candidates/cuda_warp_rows_attention_seed.py" in candidates:
