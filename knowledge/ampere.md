@@ -152,6 +152,16 @@ variation steps.
   due timing noise. The lineage gate now rejects unchanged source snapshots when
   no candidate patch is present, so identical-source reruns cannot advance the
   lineage solely by sampling a faster timing.
+  A compile-first patched warp-row WMMA attempt applied and compiled on sm86
+  with no spills: BF16 used 48 registers, 1 barrier, and 17984 bytes shared
+  memory; FP16 used 48 registers and 16896 bytes shared memory; FP32 used 56
+  registers and 33280 bytes shared memory. The patch is not scoreable as-is: it
+  only handles a `head_dim == 16` BF16 score path for `warp_id == 0`, does not
+  integrate the WMMA scores into the existing online softmax/output accumulation
+  for all rows, and would leave that branch without a final output update.
+  Future warp-row WMMA work should either keep the normal path intact and compile
+  an isolated helper, or fully route all rows through a correct online-softmax
+  path before scoring.
 - The tiled seed compiles cleanly on sm86 with no spills. Its ptxas diagnostics
   report 40 registers and 1 barrier for BF16/Half/FP32 entry points, and 48
   registers and 1 barrier for the double entry point. The ptxas output did not
