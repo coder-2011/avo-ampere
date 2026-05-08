@@ -159,6 +159,12 @@ variation steps.
   only handles a `head_dim == 16` BF16 score path for `warp_id == 0`, does not
   integrate the WMMA scores into the existing online softmax/output accumulation
   for all rows, and would leave that branch without a final output update.
+  NVIDIA's CUDA Programming Guide says the mapping of matrix elements into
+  WMMA fragment internal storage is unspecified and can change across
+  architectures. Do not infer row/column positions from `fragment.x[]`; apply
+  only uniform per-element transforms there, or use `wmma::store_matrix_sync`
+  into shared/register-backed memory with an explicit row/column layout before
+  consuming selected rows or columns.
   Future warp-row WMMA work should either keep the normal path intact and compile
   an isolated helper, or fully route all rows through a correct online-softmax
   path before scoring.
@@ -286,6 +292,8 @@ variation steps.
   https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/flash_fwd.py
 - NVIDIA CUDA Samples BF16 Tensor Core GEMM:
   https://github.com/NVIDIA/cuda-samples/blob/master/Samples/3_CUDA_Features/bf16TensorCoreGemm/bf16TensorCoreGemm.cu
+- NVIDIA CUDA C++ Programming Guide, Warp Matrix Functions:
+  https://docs.nvidia.com/cuda/cuda-c-programming-guide/index.html#warp-matrix-functions
 
 ## Gate
 
