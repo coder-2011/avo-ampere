@@ -574,6 +574,13 @@ variation steps.
   seq256/head_dim128 warp-row best. The planner now treats head_dim64 as the
   current unpatched MMA smoke cap and requires compile-first validation for
   patched MMA scores beyond that cap.
+  A later generated head_dim128 MMA patch applied and compiled on sm86 with no
+  spills, 40 registers, 1 barrier, and 18112 bytes shared memory, but it was
+  self-invalid: it changed `kHeadDim` and `SMOKE_HEAD_DIM` to 128 while leaving
+  the QK/PV chunk loops at four 16-wide chunks, so it covered only 64 of 128
+  dimensions. The decision risk explicitly said it would fail correctness if
+  scored. Cleanup succeeded. The planner now rejects that partial head_dim128
+  pattern and any patch whose own decision text says it will fail correctness.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
