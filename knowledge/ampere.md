@@ -264,6 +264,12 @@ variation steps.
   because it was compile-only. The planner now also rejects non-empty patches
   whose decision text says either `will break correctness` or
   `reject this direction`.
+  A later no-edit run repeated the already-known tiny tiled smoke at
+  `seq_len=16`, `head_dim=16`, `total_tokens=16`, and `num_heads=1`. It passed
+  correctness with geomean `1.5149841720005358e-05` TFLOPS but was gate-rejected
+  because its case signature differs from the current warp-row best. The planner
+  now rejects unpatched repeats of that tiled smoke; future tiled scores need a
+  `candidate_patch` that fixes or extends the kernel/wrapper.
 - The naive seed is useful only as a correctness reference. A no-patch BF16
   score at `seq_len=128`, `head_dim=128`, `total_tokens=512`, and `num_heads=4`
   passed both causal modes, but it was much slower than the warp-row best:
