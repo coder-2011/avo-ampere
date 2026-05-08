@@ -875,3 +875,12 @@ source files.
   repeat compile-only WMMA skeletons; a build-check patch must wire the new
   fragments into real dataflow and be intended for bounded scoring after
   compile.
+  A later PV probability-fragment preload patch tried to add
+  `probability_frag_next` around the eight 16-column PV chunks, but the generated
+  diff duplicated the `probability_frag;` declaration statement and left a stale
+  `wmma::store_matrix_sync(&output_acc[chunk_offset], output_frag, ...)` outside
+  the chunk scope. NVCC failed with undefined `chunk_offset`/`output_frag` and
+  parsing errors. The decision risk text already called this a duplicate store
+  line and said it would cause NVCC compile failure, so the planner now treats
+  that wording and the stray `probability_frag;` preload shape as invalid before
+  patch application.

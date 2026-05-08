@@ -1537,6 +1537,57 @@ def test_parse_variation_decision_rejects_unused_wmma_compile_skeleton() -> None
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_patch_described_as_nvcc_compile_failure() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA PV preload and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = (
+        "The duplicate store line is a diff structure error and will cause NVCC compile "
+        "failure."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_stray_probability_frag_statement() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA PV probability preload and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,8 @@\n"
+        "-old\n"
+        "+wmma::fragment<wmma::matrix_a, kTile, 16, kTile, __nv_bfloat16, "
+        "wmma::row_major> probability_frag_next;\n"
+        "+wmma::load_matrix_sync(probability_frag_next, probabilities, kTile);\n"
+        "+probability_frag;\n"
+        "+probability_frag = probability_frag_next;\n"
+        "+wmma::mma_sync(output_frag, probability_frag, v_frag, output_frag);\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="stray probability_frag statement"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_bf16_score_tiles_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Convert warp-row score_tiles shared memory to BF16."

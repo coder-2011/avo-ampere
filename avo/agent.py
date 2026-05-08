@@ -97,8 +97,11 @@ SELF_REJECTING_PATCH_PHRASES = (
     "must be updated before scoring",
     "unused doubled buffers",
     "diff is incomplete",
+    "diff structure error",
+    "duplicate store line",
     "would break correctness",
     "will cause a compile error",
+    "will cause nvcc compile failure",
     "will fail compile",
     "will fail compilation",
     "will break correctness",
@@ -785,6 +788,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch adds a WMMA compile skeleton without any MMA or online-softmax "
             "dataflow; compile-only WMMA skeletons do not affect correctness or throughput"
         )
+    if _candidate_patch_adds_stray_mma_probability_fragment_statement(added_text):
+        raise ValueError(
+            "candidate_patch adds a stray probability_frag statement in a PV preload patch; "
+            "remove duplicate fragment declaration lines before compile-checking"
+        )
     if _candidate_patch_repeats_mma_qk_fragment_preload_chain(added_text):
         raise ValueError(
             "candidate_patch repeats the MMA QK k_frag_next preload chain; "
@@ -1028,6 +1036,15 @@ def _candidate_patch_adds_unused_wmma_compile_skeleton(added_text: str) -> bool:
         or "wmma::fragment<wmma::matrix_b" in compact
     )
     return adds_wmma_fragment and "wmma::fill_fragment" in compact and "mma_sync(" not in compact
+
+
+def _candidate_patch_adds_stray_mma_probability_fragment_statement(added_text: str) -> bool:
+    stripped_lines = {line.strip() for line in added_text.splitlines()}
+    return (
+        "probability_frag_next" in added_text
+        and "probability_frag = probability_frag_next;" in added_text
+        and "probability_frag;" in stripped_lines
+    )
 
 
 def _candidate_patch_repeats_sync_mma_q_staging(added_text: str) -> bool:
