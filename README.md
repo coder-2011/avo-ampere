@@ -59,6 +59,13 @@ set -a && source /home/ubuntu/avo/.env.local && set +a
 uv run python -m avo agent-plan --lineage ./lineage --knowledge knowledge/ampere.md
 ```
 
-The initial agent command produces a structured plan. Code-editing tools and
-autonomous mutation loops should be added only after scoring and lineage gates
-are stable.
+The initial agent command produces a structured plan. Persist that JSON before
+execution, then run a bounded allowlisted command from it:
+
+```bash
+uv run python -m avo run-decision decision.json --attempt-json attempts/latest.json
+```
+
+`run-decision` accepts only selected `avo ...` subcommands and executes them as
+`python -m avo ...` without a shell. Code-editing tools and autonomous mutation
+loops should be added only after scoring and lineage gates are stable.

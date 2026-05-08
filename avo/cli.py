@@ -5,10 +5,11 @@ import json
 import os
 from pathlib import Path
 
-from .agent import load_env_file, request_variation_decision
+from .agent import VariationDecision, load_env_file, request_variation_decision
 from .benchmark import score_backend, sleep_score
 from .compile import compile_cuda_source
 from .config import AMPERE_A6000, cases_from_cli
+from .evolve import run_decision_command, write_attempt
 from .isolation import module_worker_args, print_result, run_json_worker
 from .lineage import commit_score, init_lineage_repo, seed_baseline
 
@@ -56,6 +57,12 @@ def main(argv: list[str] | None = None) -> int:
     agent_parser.add_argument("--env-file", type=Path, default=None)
     agent_parser.add_argument("--model", default="claude-sonnet-4-20250514")
 
+    run_decision_parser = subparsers.add_parser("run-decision")
+    run_decision_parser.add_argument("decision_json", type=Path)
+    run_decision_parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    run_decision_parser.add_argument("--timeout-s", type=int, default=900)
+    run_decision_parser.add_argument("--attempt-json", type=Path, default=None)
+
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -81,6 +88,8 @@ def main(argv: list[str] | None = None) -> int:
         return 0 if decision.accepted else 2
     if args.command == "agent-plan":
         return _agent_plan(args)
+    if args.command == "run-decision":
+        return _run_decision(args)
     raise AssertionError(args.command)
 
 
@@ -203,6 +212,23 @@ def _agent_plan(args: argparse.Namespace) -> int:
     )
     print(json.dumps(decision.as_dict(), indent=2, sort_keys=True))
     return 0
+
+
+def _run_decision(args: argparse.Namespace) -> int:
+    payload = json.loads(args.decision_json.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict):
+        raise ValueError("decision JSON must be an object")
+    decision = VariationDecision.from_mapping(payload)
+    attempt = run_decision_command(
+        decision,
+        cwd=args.cwd,
+        timeout_s=args.timeout_s,
+        env=os.environ.copy(),
+    )
+    if args.attempt_json:
+        write_attempt(args.attempt_json, attempt)
+    print(json.dumps(attempt.as_dict(), indent=2, sort_keys=True))
+    return 0 if attempt.command_result.ok else 2
 
 
 def _lineage_summary(path: Path) -> str:
