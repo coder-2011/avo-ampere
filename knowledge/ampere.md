@@ -170,6 +170,12 @@ variation steps.
   triggering cascading syntax errors. The decision text admitted the patch could
   not affect correctness or throughput; the planner now treats that no-op/stub
   language as self-invalid for non-empty patches.
+  A later warp-row V-accumulation unroll patch added only `#pragma unroll` before
+  two fixed-trip `key_inner` loops. It compiled cleanly for sm86 with the same
+  register and shared-memory counts as the baseline, but the agent stopped after
+  `avo compile` and produced no correctness or TFLOPS score. Pragma-only or
+  scheduler-only performance patches should run a bounded candidate score instead
+  of a compile-only check; the planner now rejects pragma-only compile commands.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
