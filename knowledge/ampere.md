@@ -228,6 +228,14 @@ variation steps.
   with max_abs_error `0.485504150390625` noncausal and `1.4482421875` causal.
   Do not score larger tiled shapes without a patch that fixes or extends the
   tiled kernel first.
+  A generated tiled online-softmax rescale patch was rejected before compile
+  because its context did not match the current source. More importantly, its
+  own risk text noted that it removed `tile_scale` while leaving a stale
+  `row_sum` reference that would cause a compile error. The planner now rejects
+  non-empty patches that describe themselves as known invalid before execution.
+  Future tiled fixes should keep the online-softmax invariant explicit:
+  `output_acc = output_acc * old_scale + tile_acc * tile_scale`, with
+  `row_sum = row_sum * old_scale + tile_sum * tile_scale`.
 - The naive seed is useful only as a correctness reference. A no-patch BF16
   score at `seq_len=128`, `head_dim=128`, `total_tokens=512`, and `num_heads=4`
   passed both causal modes, but it was much slower than the warp-row best:
