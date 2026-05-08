@@ -160,6 +160,12 @@ variation steps.
   `wmma::fragment<wmma::matrix_a, ...>` declaration line, leaving stray template
   arguments and an undefined `q_frag`. The planner now rejects patches that add
   templated `__pipeline_wait_prior<...>` or scalar BF16 async copies.
+  A later warp-row async-copy API proof patch added only wrappers plus an empty
+  `async_copy_tile_kv` stub that was not called. It still failed compile after
+  introducing a `scalar_t` helper outside the templated kernel context and
+  triggering cascading syntax errors. The decision text admitted the patch could
+  not affect correctness or throughput; the planner now treats that no-op/stub
+  language as self-invalid for non-empty patches.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
