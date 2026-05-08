@@ -785,6 +785,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "keep the score fragment K at 16 and accumulate two 16-wide chunks "
             "into a 16x16 accumulator"
         )
+    if _candidate_patch_uses_unsupported_mma_m32_fragment(added_text):
+        raise ValueError(
+            "candidate_patch uses unsupported WMMA M=32 fragment shapes; "
+            "Ampere WMMA BF16 paths in this kernel must stay on 16x16x16 fragments"
+        )
     if _candidate_patch_uses_generic_scalar_wmma_fragments(added_text):
         raise ValueError(
             "candidate_patch uses scalar_t as a WMMA matrix fragment element; "
@@ -935,6 +940,24 @@ def _candidate_patch_uses_unsupported_mma_score_k32(added_text: str) -> bool:
         )
     )
     return (sets_khead32 and symbolic_score) or literal_score
+
+
+def _candidate_patch_uses_unsupported_mma_m32_fragment(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    explicit_m32 = bool(
+        re.search(
+            r"fragment<(?:nvcuda::)?wmma::(?:accumulator|matrix_[ab]),32,16,16,",
+            compact,
+        )
+    )
+    sets_ktile32 = "kTile=32" in compact or "kTile=32;" in compact
+    symbolic_m32 = bool(
+        re.search(
+            r"fragment<(?:nvcuda::)?wmma::(?:accumulator|matrix_[ab]),kTile,16,16,",
+            compact,
+        )
+    )
+    return explicit_m32 or (sets_ktile32 and symbolic_m32)
 
 
 def _candidate_patch_converts_warp_score_tiles_to_bf16(added_text: str) -> bool:

@@ -918,3 +918,9 @@ source files.
   RTX A6000 target `compute_86/sm_86`. Do not spend loop steps on another
   generic environment-stability check unless a concrete build or CUDA
   environment failure occurs.
+  A later 32-row MMA query-tile probe changed `kTile` to 32 and tried
+  `wmma::fragment` shapes such as accumulator/matrix_a/matrix_b `32x16x16`.
+  NVCC rejected those Ampere WMMA BF16 fragments as incomplete types. Keep this
+  seed on supported `16x16x16` WMMA fragments; larger query tiles require
+  multiple 16-row fragments or a different implementation strategy, not direct
+  M=32 WMMA fragment instantiation.

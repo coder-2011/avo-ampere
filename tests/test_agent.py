@@ -897,6 +897,52 @@ def test_parse_variation_decision_rejects_literal_mma_score_k32_fragment() -> No
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_literal_mma_m32_fragment() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA 32-row fragment shape and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,3 @@\n"
+        "-old\n"
+        "+wmma::fragment<wmma::accumulator, 32, 16, 16, float> score_frag;\n"
+        "+wmma::fragment<wmma::matrix_a, 32, 16, 16, __nv_bfloat16, "
+        "wmma::row_major> q_frag;\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="unsupported WMMA M=32"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_symbolic_mma_m32_fragment() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA tile size to 32 rows and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,4 @@\n"
+        "-constexpr int kTile = 16;\n"
+        "+constexpr int kTile = 32;\n"
+        "+wmma::fragment<wmma::matrix_a, kTile, 16, 16, __nv_bfloat16, "
+        "wmma::row_major> q_frag;\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="unsupported WMMA M=32"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_partial_mma_head_dim128_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Extend the MMA seed to head_dim128 and compile it."
