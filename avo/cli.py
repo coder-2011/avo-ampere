@@ -32,7 +32,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="avo")
     subparsers = parser.add_subparsers(dest="command", required=True)
 
-    subparsers.add_parser("env")
+    env_parser = subparsers.add_parser("env")
+    env_parser.add_argument("--env-file", type=Path, default=None)
 
     compile_parser = subparsers.add_parser("compile")
     compile_parser.add_argument("--source", type=Path, required=True)
@@ -92,7 +93,7 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     if args.command == "env":
-        return _env()
+        return _env(args)
     if args.command == "compile":
         return _compile(args)
     if args.command == "score":
@@ -144,7 +145,7 @@ def add_attempt_history_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--attempt-limit", type=int, default=DEFAULT_ATTEMPT_HISTORY_LIMIT)
 
 
-def _env() -> int:
+def _env(args: argparse.Namespace) -> int:
     payload = {
         "target": {
             "name": AMPERE_A6000.name,
@@ -152,7 +153,8 @@ def _env() -> int:
             "compute": AMPERE_A6000.compute,
             "sm": AMPERE_A6000.sm,
             "nvcc_gencode": AMPERE_A6000.nvcc_gencode,
-        }
+        },
+        "agent": _agent_status(args.env_file),
     }
     try:
         import torch
@@ -171,6 +173,28 @@ def _env() -> int:
         payload["torch_error"] = f"{type(exc).__name__}: {exc}"
     print(json.dumps(payload, indent=2, sort_keys=True))
     return 0
+
+
+def _agent_status(env_file: Path | None) -> dict[str, object]:
+    env_file_loaded = False
+    if env_file is not None:
+        env_file_loaded = env_file.exists()
+        load_env_file(env_file)
+
+    payload: dict[str, object] = {
+        "anthropic_api_key_present": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "env_file": str(env_file) if env_file is not None else None,
+        "env_file_loaded": env_file_loaded,
+    }
+    try:
+        import anthropic
+    except ModuleNotFoundError as exc:
+        payload["anthropic_installed"] = False
+        payload["anthropic_error"] = f"{type(exc).__name__}: {exc}"
+    else:
+        payload["anthropic_installed"] = True
+        payload["anthropic_version"] = getattr(anthropic, "__version__", "unknown")
+    return payload
 
 
 def _compile(args: argparse.Namespace) -> int:

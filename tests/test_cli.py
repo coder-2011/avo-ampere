@@ -1,7 +1,31 @@
 from pathlib import Path
 from types import SimpleNamespace
 
-from avo.cli import _baseline_build_env, _score
+from avo.cli import _agent_status, _baseline_build_env, _score
+
+
+def test_agent_status_reports_missing_key_without_secret(monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+
+    status = _agent_status(None)
+
+    assert status["anthropic_api_key_present"] is False
+    assert status["env_file"] is None
+    assert status["env_file_loaded"] is False
+    assert "ANTHROPIC_API_KEY" not in repr(status)
+
+
+def test_agent_status_loads_env_file_without_printing_value(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    env_file = tmp_path / ".env.local"
+    env_file.write_text("ANTHROPIC_API_KEY=test-secret\n", encoding="utf-8")
+
+    status = _agent_status(env_file)
+
+    assert status["anthropic_api_key_present"] is True
+    assert status["env_file"] == str(env_file)
+    assert status["env_file_loaded"] is True
+    assert "test-secret" not in repr(status)
 
 
 def test_baseline_build_env_targets_flash_attn_ampere() -> None:

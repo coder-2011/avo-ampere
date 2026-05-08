@@ -73,6 +73,7 @@ Install development dependencies with `uv`, then run the checks relevant to the 
 uv run --extra dev pytest
 uv run python -m avo compile --source kernels/smoke.cu --out-dir /tmp/avo-build
 uv run --extra cuda python -m avo env
+uv run --extra agent --extra cuda python -m avo env --env-file ../avo/.env.local
 ```
 
 Score the PyTorch seed backend:
@@ -182,8 +183,11 @@ uv run --extra cuda --extra baseline python -m avo seed-baseline ./lineage \
 ## Agent workflow
 
 The agent wrapper uses the Anthropic API and expects `ANTHROPIC_API_KEY` in the environment.
+Use `avo env --env-file PATH` to check the Anthropic SDK import and key presence without printing
+the key value.
 
 ```bash
+uv run --extra agent python -m avo env --env-file ../avo/.env.local
 uv run python -m avo agent-plan \
   --lineage ./lineage \
   --knowledge knowledge/ampere.md \
