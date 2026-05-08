@@ -116,8 +116,12 @@ variation steps.
   head dimension is divisible by 4, with a scalar fallback for odd smoke shapes.
   It stages K/V tiles in shared memory only for head dimensions up to 64 and
   same-head CTAs; head dimension 128 and boundary CTAs use the global packed path.
-  The wrapper currently caps smoke scoring at sequence length 128 and head
-  dimension 128. This is still far from FA2: it does not use `mma.sync` or
+  The wrapper currently caps smoke scoring at sequence length 256 and head
+  dimension 128. The accepted 256-token BF16 smoke at `seq_len=256`,
+  `head_dim=128`, `total_tokens=1024`, and `num_heads=4` reached
+  `0.4933314507556887` TFLOPS noncausal, `0.3264049909158355` TFLOPS causal,
+  and `0.4012802607933843` geomean TFLOPS. This is the current best lineage
+  score. It is still far from FA2: it does not use `mma.sync` or
   `cp.async`. With `--ptxas-options=-v`, the current warp-row kernel reports no
   spills; BF16/Half entry points use 48 registers, 1 barrier, and 16896 bytes
   shared memory, while the FP32 entry point uses 56 registers, 1 barrier, and
@@ -137,7 +141,7 @@ variation steps.
   passed both causal modes, but it was much slower than the warp-row best:
   noncausal `0.0010531516927932967` TFLOPS, causal `0.000930790492895549`
   TFLOPS, geomean `0.000990082614345315` TFLOPS. The gate rejected this versus
-  the current `0.10830947571120902` best, so do not repeat naive no-patch
+  the then-current `0.10830947571120902` best, so do not repeat naive no-patch
   scoring as a candidate-improving step.
 - NVIDIA's CUTLASS CuTeDSL Ampere FlashAttention v2 example is useful search
   evidence for the direction from the warp-row seed toward FA2-like structure:
@@ -165,7 +169,7 @@ variation steps.
   A no-patch score at the maximum supported smoke shape (`seq_len=32`,
   `head_dim=16`, `total_tokens=32`, `num_heads=1`, BF16, both causal modes)
   passed correctness but was gate-rejected at `6.539498372773744e-05` geomean
-  TFLOPS versus the current `0.10830947571120902` best, so do not repeat that
+  TFLOPS versus the then-current `0.10830947571120902` best, so do not repeat that
   baseline score as a candidate-improving step.
   A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
   to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as

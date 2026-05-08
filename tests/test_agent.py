@@ -221,14 +221,14 @@ def test_parse_variation_decision_rejects_candidate_score_without_candidate() ->
 
 def test_parse_variation_decision_rejects_unpatched_warp_rows_score_outside_cap() -> None:
     payload = decision_payload()
-    payload["candidate_edit"] = "Score the existing warp-row seed at seq 256."
+    payload["candidate_edit"] = "Score the existing warp-row seed at seq 512."
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_warp_rows_attention_seed.py "
-        "--seq-lens 256 --total-tokens 256 --num-heads 1 --head-dim 128"
+        "--seq-lens 512 --total-tokens 512 --num-heads 1 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="outside its unpatched seq_len<=128"):
+    with pytest.raises(ValueError, match="outside its unpatched seq_len<=256"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -238,10 +238,10 @@ def test_parse_variation_decision_rejects_unpatched_warp_rows_workload_scaling()
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_warp_rows_attention_seed.py "
-        "--seq-lens 128 --total-tokens 1024 --num-heads 8 --head-dim 128"
+        "--seq-lens 256 --total-tokens 2048 --num-heads 4 --head-dim 128"
     )
 
-    with pytest.raises(ValueError, match="total_tokens<=512"):
+    with pytest.raises(ValueError, match="total_tokens<=1024"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -251,7 +251,7 @@ def test_parse_variation_decision_allows_unpatched_warp_rows_smoke_cap() -> None
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_warp_rows_attention_seed.py "
-        "--seq-lens 128 --total-tokens 512 --num-heads 4 --head-dim 128"
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
     decision = parse_decision_text(json.dumps(payload))
@@ -261,20 +261,20 @@ def test_parse_variation_decision_allows_unpatched_warp_rows_smoke_cap() -> None
 
 def test_parse_variation_decision_allows_patched_warp_rows_score_outside_cap() -> None:
     payload = decision_payload()
-    payload["candidate_edit"] = "Extend the warp-row wrapper cap for seq 256."
+    payload["candidate_edit"] = "Extend the warp-row wrapper cap for seq 512."
     payload["candidate_patch"] = (
         "diff --git a/candidates/cuda_warp_rows_attention_seed.py "
         "b/candidates/cuda_warp_rows_attention_seed.py\n"
         "--- a/candidates/cuda_warp_rows_attention_seed.py\n"
         "+++ b/candidates/cuda_warp_rows_attention_seed.py\n"
         "@@ -1 +1 @@\n"
-        "-MAX_SMOKE_SEQUENCE = 128\n"
-        "+MAX_SMOKE_SEQUENCE = 256\n"
+        "-MAX_SMOKE_SEQUENCE = 256\n"
+        "+MAX_SMOKE_SEQUENCE = 512\n"
     )
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_warp_rows_attention_seed.py "
-        "--seq-lens 256 --total-tokens 256 --num-heads 1 --head-dim 128"
+        "--seq-lens 512 --total-tokens 512 --num-heads 1 --head-dim 128"
     )
 
     decision = parse_decision_text(json.dumps(payload))
@@ -447,7 +447,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/cuda_mma_attention/attention_kernel.cu" in context
     assert "candidates/cuda_identity/identity_kernel.cu" in context
     assert "Unpatched seed score caps:" in context
-    assert "total_tokens <= 512" in context
+    assert "total_tokens <= 1024" in context
     assert "cuda_tiled_attention_seed.py is only validated at seq_lens 16" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context

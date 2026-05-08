@@ -9,7 +9,7 @@ from avo.cuda_env import prepare_torch_extension_env
 prepare_torch_extension_env(os.environ, max_jobs="2")
 
 SOURCE_DIR = Path(__file__).resolve().parent / "cuda_warp_rows_attention"
-MAX_SMOKE_SEQUENCE = 128
+MAX_SMOKE_SEQUENCE = 256
 MAX_SMOKE_HEAD_DIM = 128
 
 

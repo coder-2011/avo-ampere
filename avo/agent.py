@@ -346,8 +346,8 @@ def build_repo_context(root: Path) -> str:
         "when build-checking a candidate_patch.",
         "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
         "seq_lens 16 or 32 with head_dim 16, total_tokens <= 32, and num_heads 1; "
-        "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 128 and "
-        "head_dim <= 128 with total_tokens <= 512 and num_heads <= 4; "
+        "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
+        "head_dim <= 128 with total_tokens <= 1024 and num_heads <= 4; "
         "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
         "head_dim 16, total_tokens <= 16, and num_heads 1. Larger seed scores need "
         "candidate_patch to update the wrapper/kernel.",
@@ -716,14 +716,14 @@ def _validate_known_candidate_score_shape(
     )
     if candidate == WARP_ROWS_SEED:
         if (
-            any(seq_len > 128 for seq_len in seq_lens)
+            any(seq_len > 256 for seq_len in seq_lens)
             or head_dim > 128
-            or total_tokens > 512
+            or total_tokens > 1024
             or num_heads > 4
         ):
             raise ValueError(
                 "next_command scores cuda_warp_rows_attention_seed.py outside its "
-                "unpatched seq_len<=128/head_dim<=128/total_tokens<=512/num_heads<=4 "
+                "unpatched seq_len<=256/head_dim<=128/total_tokens<=1024/num_heads<=4 "
                 "cap; include candidate_patch to update the wrapper/kernel first"
             )
     elif candidate == MMA_SEED:
