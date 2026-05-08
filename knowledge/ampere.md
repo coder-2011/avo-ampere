@@ -107,7 +107,9 @@ variation steps.
   head dimension is divisible by 4, with a scalar fallback for odd smoke shapes.
   It stages K/V tiles in shared memory only for head dimensions up to 64 and
   same-head CTAs; head dimension 128 and boundary CTAs use the global packed path.
-  This is still far from FA2: it does not use `mma.sync` or `cp.async`.
+  The wrapper currently caps smoke scoring at sequence length 128 and head
+  dimension 128. This is still far from FA2: it does not use `mma.sync` or
+  `cp.async`.
 - The tiny MMA seed uses CUDA WMMA on sm86 to compute 16x16 BF16 QK score tiles
   and BF16 PV output tiles with tensor cores. It stores unnormalized softmax
   probabilities as BF16 between the two MMA operations and keeps FP32 online
