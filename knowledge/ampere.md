@@ -212,6 +212,14 @@ variation steps.
   so compile failed with `no operator []` errors. Its own risk text said the
   doubled buffers were unused, could not improve throughput, and indexing had to
   be updated before scoring; the planner now treats those phrases as self-invalid.
+  A corrected dynamic-shared migration then compiled cleanly by keeping only
+  `score_tiles` static, moving K/V tiles to flat `extern __shared__` buffers, and
+  replacing 2D K/V accesses with `key * (kMaxHeadDim + 1) + dim` indexing. Ptxas
+  reported 512 bytes static shared memory, no spills, 48 registers for BF16/Half,
+  and 56 registers for FP32. This was compile-only and cleaned up; before adding
+  double buffering or `cp.async`, rerun that flat dynamic K/V migration as a
+  bounded score on the current seq256/head_dim128 BF16 suite to prove correctness
+  and throughput.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
