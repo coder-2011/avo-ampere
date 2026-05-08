@@ -110,6 +110,13 @@ variation steps.
   The wrapper currently caps smoke scoring at sequence length 128 and head
   dimension 128. This is still far from FA2: it does not use `mma.sync` or
   `cp.async`.
+- NVIDIA's CUTLASS CuTeDSL Ampere FlashAttention v2 example is useful search
+  evidence for the direction from the warp-row seed toward FA2-like structure:
+  it combines 128-bit `cp.async` Q/K/V global-to-shared copies, Ampere BF16/FP16
+  tensor-core MMA via `MmaF16BF16Op(..., (16, 8, 16))`, register pipelining for
+  shared-to-register copies, online softmax with output rescaling, and head-dim
+  padding to multiples of 32. It uses default 128x128 m/n tiles with 128 threads,
+  but smaller smoke tiles are still appropriate here until correctness is stable.
 - The tiny MMA seed uses CUDA WMMA on sm86 to compute 16x16 BF16 QK score tiles
   and BF16 PV output tiles with tensor cores. It stores unnormalized softmax
   probabilities as BF16 between the two MMA operations and keeps FP32 online
@@ -133,6 +140,8 @@ variation steps.
 - PyTorch benchmark utilities guidance on warmups, replicates, and median
   statistics:
   https://docs.pytorch.org/docs/stable/benchmark_utils.html
+- NVIDIA CUTLASS CuTeDSL Ampere FlashAttention v2 example:
+  https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/ampere/flash_attention_v2.py
 
 ## Gate
 
