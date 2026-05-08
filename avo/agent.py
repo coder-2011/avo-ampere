@@ -87,7 +87,10 @@ NO_EDIT_PHRASES = (
     "without any edit",
 )
 SELF_REJECTING_PATCH_PHRASES = (
+    "cannot affect correctness or throughput",
     "not ready to apply",
+    "not yet called",
+    "stub is empty",
     "will cause a compile error",
     "will break correctness",
     "reject this direction",

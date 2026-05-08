@@ -542,6 +542,31 @@ def test_parse_variation_decision_rejects_scalar_bf16_async_copy_patch() -> None
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_noop_async_copy_stub_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch warp-row async copy helper and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+__device__ void async_copy_tile_kv() {}\n"
+    )
+    payload["risk"] = (
+        "Compile-only step; the async_copy_tile_kv stub is empty and not yet called, "
+        "so this cannot affect correctness or throughput."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "--out-dir build/warp"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_stale_code_patch_warning() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA two-chunk QK and compile it."
