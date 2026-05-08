@@ -813,3 +813,8 @@ source files.
   to score `cuda_mma_attention_seed.py` with no `candidate_patch`. Retry
   feedback now explicitly says not to repeat no-edit MMA seed scores; scoring
   that candidate again requires a structural raw diff or a different diagnostic.
+  A later PV-preload patch applied but failed compile because it used
+  `chunk_offset` after moving the declaration into an `else` block and
+  referenced `chunk` outside the PV chunk loop. Its own risk text said it would
+  fail compilation and not to score the patch as-is. The planner now treats
+  those self-invalid warnings as a hard rejection before patch application.

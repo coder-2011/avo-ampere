@@ -622,6 +622,31 @@ def test_parse_variation_decision_rejects_do_not_use_this_diff_warning() -> None
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_do_not_score_self_invalid_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA PV preload and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = (
+        "The patch references chunk outside the loop and will fail compilation. "
+        "Do not score this patch as-is."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_pv_preload"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_correctness_breaking_patch_warning() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch tiled online softmax rescaling and compile it."
