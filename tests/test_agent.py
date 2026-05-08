@@ -476,6 +476,31 @@ def test_parse_variation_decision_rejects_self_rejected_patch() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_stale_code_patch_warning() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA two-chunk QK and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["risk"] = (
+        "Main risk: stale QK load lines after the two-chunk loop may reference undeclared "
+        "fragments. The patch must remove those lines."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="stale code"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_decision_tool_uses_strict_schema() -> None:
     tool = decision_tool()
     assert tool["name"] == DECISION_TOOL_NAME

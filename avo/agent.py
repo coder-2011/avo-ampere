@@ -542,6 +542,12 @@ def _validate_candidate_patch_not_self_rejected(
                 "candidate_patch is described as known invalid by the decision itself; "
                 f"found phrase {phrase!r}. Return a corrected patch or choose no-edit mode."
             )
+    if "stale" in normalized and ("must remove" in normalized or "undeclared" in normalized):
+        raise ValueError(
+            "candidate_patch is described as known invalid by the decision itself; "
+            "stale code is called out as requiring removal. Return a corrected patch "
+            "or choose no-edit mode."
+        )
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:
