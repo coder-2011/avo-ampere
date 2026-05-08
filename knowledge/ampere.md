@@ -33,6 +33,11 @@ variation steps.
   `FLASH_ATTN_CUDA_ARCHS=80` (the upstream build script’s Ampere-family target)
   and cap build parallelism with conservative `MAX_JOBS=1` and `NVCC_THREADS=1`
   defaults on this 32 GB host.
+- Do not put `flash-attn` directly in the `baseline` optional dependency group:
+  `uv run --extra baseline ...` resolves dependencies before AVO can apply the
+  sm86/Ampere build environment, so upstream setup falls back to its broad
+  default arch list. Install FA2 explicitly with the pinned environment, then
+  run `seed-baseline` from the existing CUDA environment.
 - Run `avo env` before FA2 installation and inspect `baseline_build`. If
   `torch_cuda` and `nvcc_cuda` have different major versions, PyTorch extension
   setup will fail; fix `CUDA_HOME`/`CUDA_PATH`/`PATH` or use a torch build that

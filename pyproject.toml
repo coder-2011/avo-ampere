@@ -19,7 +19,6 @@ cuda = [
     "torch>=2.2",
 ]
 baseline = [
-    "flash-attn>=2.7.0",
     "ninja>=1.11",
     "numpy>=1.26",
     "nvidia-cuda-cccl==13.0.85; sys_platform == 'linux'",

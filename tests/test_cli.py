@@ -1,4 +1,5 @@
 import json
+import tomllib
 from pathlib import Path
 from textwrap import dedent
 from types import SimpleNamespace
@@ -35,6 +36,13 @@ def test_agent_status_reports_missing_key_without_secret(monkeypatch) -> None:
     assert status["env_file"] is None
     assert status["env_file_loaded"] is False
     assert "ANTHROPIC_API_KEY" not in repr(status)
+
+
+def test_baseline_extra_does_not_auto_install_flash_attn() -> None:
+    pyproject = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))
+    baseline_deps = pyproject["project"]["optional-dependencies"]["baseline"]
+
+    assert all(not dependency.startswith("flash-attn") for dependency in baseline_deps)
 
 
 def test_agent_status_loads_env_file_without_printing_value(tmp_path: Path, monkeypatch) -> None:
