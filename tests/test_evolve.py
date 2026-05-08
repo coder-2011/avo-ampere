@@ -660,6 +660,38 @@ def test_summarize_attempt_history_reports_recent_steps(tmp_path: Path) -> None:
     assert "bad.json" not in summary
 
 
+def test_summarize_attempt_history_ignores_loop_and_score_json(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    attempt = VariationAttempt(
+        decision=decision("avo compile --source candidates/seed.cu --out-dir build/seed"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+    (attempts / "zz_loop_after_probe.json").write_text(
+        json.dumps({"accepted": False, "steps": []}),
+        encoding="utf-8",
+    )
+    (attempts / "zz_manual_score.json").write_text(
+        json.dumps({"ok": True, "payload": {"geomean_tflops": 1.0}}),
+        encoding="utf-8",
+    )
+
+    summary = summarize_attempt_history(attempts, limit=1)
+
+    assert "avo compile --source candidates/seed.cu" in summary
+    assert "zz_loop_after_probe.json" not in summary
+    assert "zz_manual_score.json" not in summary
+    assert "<missing command>" not in summary
+
+
 def test_summarize_attempt_history_flags_repeated_unaccepted_attempts(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     for index in range(3):

@@ -484,17 +484,19 @@ def summarize_attempt_history(
 ) -> str:
     if directory is None or limit <= 0 or not directory.exists():
         return ""
-    paths = sorted(path for path in directory.glob("*.json") if path.is_file())
-    records = []
-    payloads = []
-    for path in paths[-limit:]:
+    paths = []
+    for path in sorted(path for path in directory.glob("*.json") if path.is_file()):
         try:
             payload = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError):
             continue
-        if isinstance(payload, dict):
-            payloads.append(payload)
-            records.append(_summarize_step_payload(path.name, payload))
+        if isinstance(payload, dict) and _is_step_payload(payload):
+            paths.append((path, payload))
+    records = []
+    payloads = []
+    for path, payload in paths[-limit:]:
+        payloads.append(payload)
+        records.append(_summarize_step_payload(path.name, payload))
     if not records:
         return ""
     summary = "Recent attempts, oldest to newest:\n" + "\n".join(
@@ -504,6 +506,16 @@ def summarize_attempt_history(
     if supervisor_signal:
         summary = f"{summary}\n{supervisor_signal}"
     return summary
+
+
+def _is_step_payload(payload: dict[str, Any]) -> bool:
+    attempt = payload.get("attempt")
+    if not isinstance(attempt, dict):
+        return False
+    return isinstance(attempt.get("decision"), dict) and isinstance(
+        attempt.get("command_result"),
+        dict,
+    )
 
 
 def _extract_score_payload(stdout: str) -> dict[str, Any] | None:
