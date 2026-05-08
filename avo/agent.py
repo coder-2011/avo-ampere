@@ -588,6 +588,18 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch uses scalar BF16 __pipeline_memcpy_async copies; use "
             "16-byte aligned groups for Ampere async copy patches"
         )
+    if (
+        "extern __shared__" in added_text
+        and "k_tiles" in added_text
+        and "v_tiles" in added_text
+        and "memcpy_async" not in added_text
+        and "cp.async" not in added_text
+    ):
+        raise ValueError(
+            "candidate_patch is a standalone dynamic shared-memory K/V migration; "
+            "the recorded version preserved correctness but regressed throughput, "
+            "so include real async-copy or double-buffering logic"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:

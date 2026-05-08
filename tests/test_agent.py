@@ -635,6 +635,30 @@ def test_parse_variation_decision_rejects_unused_non_improving_structural_patch(
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_standalone_dynamic_kv_migration() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Move K/V tiles to dynamic shared memory and score it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1,4 @@\n"
+        "-old\n"
+        "+extern __shared__ char shared_buffer[];\n"
+        "+scalar_t* k_tiles = reinterpret_cast<scalar_t*>(shared_buffer);\n"
+        "+scalar_t* v_tiles = k_tiles + kTileKeys * (kMaxHeadDim + 1);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_warp_rows_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="standalone dynamic shared-memory"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
