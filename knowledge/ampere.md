@@ -187,6 +187,14 @@ variation steps.
   also admitted an early return would break correctness if scored. The planner
   now rejects candidate patches with trailing whitespace in added diff lines and
   treats `would break correctness` as self-invalid language for non-empty patches.
+  A WMMA source refresh found that CUTLASS lists SM80+ BF16 TensorOp support and
+  WMMA 16x16x16 shapes, while NVIDIA's BF16 WMMA sample stages A/B tiles in
+  shared memory, uses 16-byte vectorized copies plus skew/padding to satisfy
+  WMMA alignment and bank-conflict constraints, and uses explicit
+  `__nv_bfloat16` fragments. Future warp-row WMMA work should first build a
+  small aligned shared-memory tile path without early returns or dead score tiles;
+  direct global-load skeletons that do not integrate with online softmax are not
+  useful progress.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
@@ -479,6 +487,8 @@ variation steps.
   https://developer.download.nvidia.com/video/gputechconf/gtc/2020/presentations/s21170-cuda-on-nvidia-ampere-gpu-architecture-taking-your-algorithms-to-the-next-level-of-performance.pdf
 - NVIDIA CUTLASS programming guidelines, loop unrolling:
   https://docs.nvidia.com/cutlass/4.4.0/media/docs/cpp/programming_guidelines.html#loop-unrolling
+- NVIDIA CUTLASS functionality tables, WMMA and TensorOp layouts:
+  https://docs.nvidia.com/cutlass/4.4.0/media/docs/cpp/functionality.html
 
 ## Gate
 
