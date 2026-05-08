@@ -176,6 +176,12 @@ variation steps.
   `avo compile` and produced no correctness or TFLOPS score. Pragma-only or
   scheduler-only performance patches should run a bounded candidate score instead
   of a compile-only check; the planner now rejects pragma-only compile commands.
+  A later tiled reset attempt changed only `cuda_tiled_attention_seed.py` wrapper
+  caps and scored seq64/head_dim64 BF16. Both noncausal and causal cases failed
+  correctness (`max_abs_error` 0.6171875 and 0.2646484375). Raising tiled wrapper
+  caps alone is not a correctness fix; larger tiled scores must include a kernel
+  change for the known larger-shape failure, and the planner now rejects
+  wrapper-cap-only tiled larger-shape scores.
   Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
