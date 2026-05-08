@@ -390,6 +390,11 @@ variation steps.
   because its case signature differs from the current warp-row best. The planner
   now rejects unpatched repeats of that tiled smoke; future tiled scores need a
   `candidate_patch` that fixes or extends the kernel/wrapper.
+  A later tiled reduction-bound guard patch initialized out-of-tile reduction
+  lanes to `-inf` for max and `0.0f` for sum, but it still failed the
+  seq128/head_dim128 BF16 correctness check: max_abs_error `0.672119140625`
+  noncausal and `0.927734375` causal, with geomean zero. Do not repeat that
+  exact `reduce[tid] = score/shifted` guard patch; the planner now rejects it.
 - The naive seed is useful only as a correctness reference. A no-patch BF16
   score at `seq_len=128`, `head_dim=128`, `total_tokens=512`, and `num_heads=4`
   passed both causal modes, but it was much slower than the warp-row best:
