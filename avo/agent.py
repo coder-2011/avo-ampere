@@ -111,7 +111,8 @@ DECISION_SCHEMA: dict[str, Any] = {
             "description": (
                 "Raw git-style unified diff for one small candidate edit under candidates/, "
                 "starting with 'diff --git', or empty string when the next step is inspection/"
-                "scoring only. Do not use markdown fences."
+                "scoring only. Use exact file context and whitespace-clean hunks. Do not use "
+                "markdown fences."
             ),
         },
         "expected_effect": {
@@ -303,7 +304,10 @@ def build_variation_prompt(
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
         "Use one of exactly two edit modes. Edit mode: candidate_patch is one small raw "
         "git-style unified diff under candidates/ starting with 'diff --git', and "
-        "candidate_edit summarizes that diff. No-edit mode: candidate_patch is exactly the "
+        "candidate_edit summarizes that diff. The diff must apply cleanly with git apply: "
+        "use exact current file context, keep hunk structure valid, and avoid trailing "
+        "whitespace-only added lines. Prefer a smaller compile-checkable patch when the "
+        "full change is uncertain. No-edit mode: candidate_patch is exactly the "
         "empty string \"\", candidate_edit starts with \"No edit; \", and next_command is only "
         "a bounded score, compile, or environment diagnostic for existing files. Do not include "
         "markdown fences or commentary in candidate_patch. Do not describe extending, updating, "
@@ -339,7 +343,8 @@ def build_repo_context(root: Path) -> str:
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
         "candidate_patch, not source-file inspection.",
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
-        "or empty.",
+        "or empty. Patch hunks must use exact current file context, apply cleanly, and avoid "
+        "trailing whitespace.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compile diagnostics are already recorded for "
         "candidates/cuda_mma_attention/attention_kernel.cu, "

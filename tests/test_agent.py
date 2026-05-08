@@ -468,6 +468,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "No-patch compile diagnostics are already recorded" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
+    assert "Patch hunks must use exact current file context" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
     assert "candidate_patch as a raw unified diff" in context
@@ -539,6 +540,8 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "Local repo context:" in prompt
     assert "candidate_patch" in prompt
     assert "No-edit mode" in prompt
+    assert "The diff must apply cleanly with git apply" in prompt
+    assert "avoid trailing whitespace-only added lines" in prompt
     assert 'candidate_edit starts with "No edit; "' in prompt
     assert "candidates/cuda_identity_seed.py" in prompt
 

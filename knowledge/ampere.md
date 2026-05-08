@@ -208,6 +208,13 @@ variation steps.
   source change or score a candidate. The planner/validator now blocks repeated
   no-patch compiles of that recorded MMA source; future MMA compiles should
   build-check a non-empty candidate patch.
+  A later head-dimension-32 MMA attempt proposed the right broad direction
+  (two 16-wide QK chunks, widened `pv_tile`/`output_acc`, and PV stores at
+  `&pv_tile[chunk * 16]`), but the candidate patch was rejected before compile:
+  `git apply --check` reported trailing whitespace and a corrupt hunk. Future
+  MMA patches should be smaller, use exact current file context, avoid
+  whitespace-only added lines, and compile-check the first structural slice
+  before bundling QK, PV, wrapper, and score-shape changes together.
   A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
   to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as
   `fragment<matrix_a, 16, 16, 32, ...>` and `fragment<accumulator, 16, 32, 16,
@@ -261,6 +268,8 @@ variation steps.
   https://github.com/NVIDIA/cutlass/blob/main/examples/python/CuTeDSL/ampere/flash_attention_v2.py
 - Dao-AILab CuTe FlashAttention forward implementation:
   https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/flash_fwd.py
+- NVIDIA CUDA Samples BF16 Tensor Core GEMM:
+  https://github.com/NVIDIA/cuda-samples/blob/master/Samples/3_CUDA_Features/bf16TensorCoreGemm/bf16TensorCoreGemm.cu
 
 ## Gate
 
