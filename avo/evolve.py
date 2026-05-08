@@ -382,10 +382,19 @@ def finalize_attempt(
     attempt: VariationAttempt,
     *,
     message: str = "evolve: accept candidate",
+    source_root: Path | None = None,
 ) -> EvolutionStep:
     gate_decision = None
     if attempt.score_payload is not None:
-        gate_decision = commit_score(lineage, attempt.score_payload, message=message)
+        source_files = _candidate_source_snapshot(source_root, attempt.patch_result)
+        candidate_patch = attempt.decision.candidate_patch if source_files else None
+        gate_decision = commit_score(
+            lineage,
+            attempt.score_payload,
+            message=message,
+            source_files=source_files,
+            candidate_patch=candidate_patch,
+        )
     return EvolutionStep(attempt=attempt, gate_decision=gate_decision)
 
 
@@ -485,6 +494,18 @@ def _maybe_apply_candidate_patch(decision: VariationDecision, *, cwd: Path) -> P
     if not decision.candidate_patch.strip():
         return None
     return apply_candidate_patch(decision.candidate_patch, cwd=cwd)
+
+
+def _candidate_source_snapshot(
+    source_root: Path | None,
+    patch_result: PatchResult | None,
+) -> dict[str, str] | None:
+    if source_root is None or patch_result is None or not patch_result.ok:
+        return None
+    return {
+        path: (source_root / path).read_text(encoding="utf-8")
+        for path in patch_result.patch_paths
+    }
 
 
 def _patch_failure_summary(result: PatchResult) -> str:

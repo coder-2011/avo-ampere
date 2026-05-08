@@ -178,3 +178,85 @@ def test_evolve_once_cleans_up_nonaccepted_candidate_patch(
     assert exit_code == 0
     assert payload["patch_cleanup_result"]["ok"] is True
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_evolve_once_snapshots_accepted_candidate_patch(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    decision = VariationDecision(
+        hypothesis="test source snapshot",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value",
+        expected_effect="exercise snapshot",
+        risk="mock score only",
+        next_command="avo score --backend candidate",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = 2
+            """
+        ),
+    )
+
+    def fake_request_variation_decision(**kwargs):
+        return decision
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env):
+        patch_result = apply_candidate_patch(decision.candidate_patch, cwd=cwd)
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="{}",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:00+00:00",
+            completed_at="2026-05-08T00:00:01+00:00",
+            score_payload={
+                "backend": "mock",
+                "all_correct": True,
+                "geomean_tflops": 3.0,
+                "cases": [{}],
+            },
+            patch_result=patch_result,
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    exit_code = _evolve_once(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            step_json=None,
+            env_file=None,
+            model="claude",
+            attempts_dir=None,
+            attempt_limit=5,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["gate_decision"]["accepted"] is True
+    assert payload["patch_cleanup_result"] is None
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+    assert (tmp_path / "lineage" / "sources" / "latest" / "candidates" / "seed.py").read_text(
+        encoding="utf-8"
+    ) == "VALUE = 2\n"

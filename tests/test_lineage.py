@@ -61,6 +61,55 @@ def test_commit_score_records_payload(tmp_path) -> None:
     assert '"geomean_tflops": 12.5' in latest
 
 
+def test_commit_score_records_accepted_source_artifacts(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    candidate = {"backend": "mock", "all_correct": True, "geomean_tflops": 12.5, "cases": [{}]}
+    patch = "diff --git a/candidates/seed.py b/candidates/seed.py\n"
+
+    decision = commit_score(
+        repo,
+        candidate,
+        source_files={"candidates/seed.py": "VALUE = 2\n"},
+        candidate_patch=patch,
+    )
+
+    assert decision.accepted
+    source = subprocess.check_output(
+        ["git", "show", "HEAD:sources/latest/candidates/seed.py"],
+        cwd=repo,
+        text=True,
+    )
+    stored_patch = subprocess.check_output(
+        ["git", "show", "HEAD:patches/latest.patch"],
+        cwd=repo,
+        text=True,
+    )
+    assert source == "VALUE = 2\n"
+    assert stored_patch == patch
+
+
+def test_commit_score_does_not_record_source_for_rejected_candidate(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    baseline = {"backend": "mock", "all_correct": True, "geomean_tflops": 12.5, "cases": [{}]}
+    regression = {"backend": "mock", "all_correct": True, "geomean_tflops": 1.0, "cases": [{}]}
+    commit_score(repo, baseline)
+    head_before = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+
+    decision = commit_score(
+        repo,
+        regression,
+        source_files={"candidates/seed.py": "VALUE = 2\n"},
+        candidate_patch="diff --git a/candidates/seed.py b/candidates/seed.py\n",
+    )
+
+    head_after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+    assert not decision.accepted
+    assert head_after == head_before
+    assert not (repo / "sources").exists()
+
+
 def test_seed_baseline_records_json(tmp_path) -> None:
     repo = tmp_path / "lineage"
     init_lineage_repo(repo)

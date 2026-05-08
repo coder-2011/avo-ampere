@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import json
 import math
+import shutil
 import subprocess
+from collections.abc import Mapping
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 
@@ -104,6 +106,9 @@ def commit_score(
     path: Path,
     candidate: dict[str, Any],
     message: str = "evolve: accept candidate",
+    *,
+    source_files: Mapping[str, str] | None = None,
+    candidate_patch: str | None = None,
 ) -> GateDecision:
     init_lineage_repo(path)
     best = best_geomean(path)
@@ -113,7 +118,12 @@ def commit_score(
 
     score_path = path / "scores" / "latest.json"
     score_path.write_text(json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
-    _git(path, "add", "scores/latest.json")
+    _write_source_artifacts(
+        path,
+        source_files=source_files,
+        candidate_patch=candidate_patch,
+    )
+    _git(path, "add", "-A")
     commit_message = f"{message}\n\nAVO-Score: {json.dumps(decision.as_dict(), sort_keys=True)}"
     _git(path, "commit", "-m", commit_message)
     return decision
@@ -141,6 +151,47 @@ def _has_commits(path: Path) -> bool:
         stderr=subprocess.DEVNULL,
         check=False,
     ).returncode == 0
+
+
+def _write_source_artifacts(
+    path: Path,
+    *,
+    source_files: Mapping[str, str] | None,
+    candidate_patch: str | None,
+) -> None:
+    source_root = path / "sources" / "latest"
+    patch_path = path / "patches" / "latest.patch"
+    if source_root.exists():
+        shutil.rmtree(source_root)
+    if patch_path.exists():
+        patch_path.unlink()
+
+    if source_files:
+        for relative, content in sorted(source_files.items()):
+            dest = source_root / _validate_candidate_source_path(relative)
+            dest.parent.mkdir(parents=True, exist_ok=True)
+            dest.write_text(content, encoding="utf-8")
+
+    if candidate_patch:
+        patch_path.parent.mkdir(parents=True, exist_ok=True)
+        patch_path.write_text(candidate_patch, encoding="utf-8")
+
+
+def _validate_candidate_source_path(path: str) -> PurePosixPath:
+    if not path:
+        raise ValueError("source path is empty")
+    if "\x00" in path or "\\" in path:
+        raise ValueError("source path contains unsupported characters")
+    posix_path = PurePosixPath(path)
+    if posix_path.is_absolute():
+        raise ValueError("absolute source paths are not supported")
+    if any(part in {"", ".", ".."} for part in posix_path.parts):
+        raise ValueError("source path traversal is not supported")
+    if ".git" in posix_path.parts:
+        raise ValueError("source path must not contain .git")
+    if not posix_path.as_posix().startswith("candidates/"):
+        raise ValueError("source paths must be under candidates/")
+    return posix_path
 
 
 def _git(path: Path, *args: str) -> None:

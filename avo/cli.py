@@ -374,7 +374,7 @@ def _evolve_once(args: argparse.Namespace) -> int:
         timeout_s=args.timeout_s,
         env=os.environ.copy(),
     )
-    step = finalize_attempt(args.lineage, attempt)
+    step = finalize_attempt(args.lineage, attempt, source_root=args.cwd)
     step = cleanup_rejected_candidate_patch(step, cwd=args.cwd)
     if args.step_json:
         write_step(args.step_json, step)

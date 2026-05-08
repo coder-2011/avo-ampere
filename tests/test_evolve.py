@@ -349,6 +349,43 @@ def test_cleanup_rejected_candidate_patch_keeps_accepted_patch(tmp_path: Path) -
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
+def test_finalize_attempt_snapshots_accepted_patch_sources(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+    attempt = run_decision_command(
+        decision("avo worker-sleep --seconds 0", candidate_patch=candidate_value_patch()),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+    accepted_attempt = VariationAttempt(
+        decision=attempt.decision,
+        command_result=attempt.command_result,
+        started_at=attempt.started_at,
+        completed_at=attempt.completed_at,
+        score_payload={
+            "backend": "mock",
+            "all_correct": True,
+            "geomean_tflops": 3.0,
+            "cases": [{}],
+        },
+        patch_result=attempt.patch_result,
+    )
+
+    step = finalize_attempt(tmp_path / "lineage", accepted_attempt, source_root=tmp_path)
+
+    assert step.accepted
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+    assert (tmp_path / "lineage" / "sources" / "latest" / "candidates" / "seed.py").read_text(
+        encoding="utf-8"
+    ) == "VALUE = 2\n"
+    assert (tmp_path / "lineage" / "patches" / "latest.patch").read_text(
+        encoding="utf-8"
+    ) == candidate_value_patch()
+
+
 def test_write_attempt_records_json(tmp_path: Path) -> None:
     attempt = run_decision_command(
         decision("avo worker-sleep --seconds 0"),
