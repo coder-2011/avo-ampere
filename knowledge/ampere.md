@@ -133,6 +133,15 @@ variation steps.
   entry point is instantiated. Future double-buffering must either avoid doubling the FP32 static
   buffers, reduce the staged tile footprint, split dtype-specific kernels, or move above-48KB use to
   dynamic shared memory with the required launch attribute.
+  NVIDIA's Ampere tuning guide confirms the general rule for sm86: static shared memory remains
+  limited to 48 KB for architectural compatibility, while devices with compute capability 8.6 can
+  address up to 99 KB per thread block only through dynamic shared memory with explicit opt-in.
+  CUDA's function attributes also constrain the requested dynamic shared memory plus static shared
+  memory to the device opt-in limit. Do not propose a static shared-memory allocation above 48 KB.
+  Do not change `kTileKeys` above `kWarpSize` in the warp-row kernel unless the score and V
+  accumulation loops are also changed to map multiple key columns per lane. With the current
+  one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
+  the tile by 64, skipping half the keys and breaking correctness.
 - Shared-memory layouts and bank-conflict reduction.
 - Register pressure and spill avoidance.
 - Warp-level online softmax reductions.
