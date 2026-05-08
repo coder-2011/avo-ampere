@@ -203,6 +203,14 @@ variation steps.
   or `linear / kHeadDim` when `kHeadDim` is the runtime stride. A later generated
   patch with `linear / kTile` was rejected before compile due corrupt diff
   structure, but the indexing direction itself was also wrong.
+  A subsequent two-chunk patch compiled and ran with widened `pv_tile` and
+  `output_acc`, but still failed tolerance (`max_abs_error` about `1.748`
+  noncausal and `2.547` causal). That patch stored the second 16-wide PV output
+  chunk at `&pv_tile[chunk * kTile * 16]` while using a row stride of
+  `kHeadDim == 32`, which treats chunk 1 as a later row block and writes past the
+  16x32 tile. For row-major widened output tiles, each 16-wide PV chunk should
+  store at the column offset, e.g. `&pv_tile[chunk * 16]`, with leading dimension
+  `kHeadDim`.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
