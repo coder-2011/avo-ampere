@@ -1313,6 +1313,30 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     assert "Do not mention fixing" in content
 
 
+def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
+    kwargs = {
+        "messages": [
+            {
+                "role": "user",
+                "content": "Base prompt.",
+            }
+        ]
+    }
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "candidate_patch uses scalar BF16 __pipeline_memcpy_async copies; use "
+            "16-byte aligned groups for Ampere async copy patches"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not retry scalar sizeof(__nv_bfloat16) async copies" in content
+    assert "8 BF16 elements per copy" in content
+    assert "choose a materially different non-async candidate patch" in content
+
+
 def test_parse_variation_decision_response_prefers_tool_use() -> None:
     payload = decision_payload()
     response = SimpleNamespace(

@@ -503,6 +503,14 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "Do not mention fixing, extending, updating, modifying, or implementing code in "
             "no-edit mode. "
         )
+    if "scalar BF16 __pipeline_memcpy_async" in message:
+        return (
+            "Do not retry scalar sizeof(__nv_bfloat16) async copies. A valid Ampere "
+            "async-copy patch must copy aligned 16-byte groups, which is 8 BF16 elements "
+            "per copy, and keep any scalar tail path separate after the pipeline wait. "
+            "If you cannot express that cleanly as a small diff, choose a materially "
+            "different non-async candidate patch. "
+        )
     return ""
 
 
