@@ -374,7 +374,7 @@ def test_parse_variation_decision_rejects_empty_patch_for_code_edit() -> None:
     payload["candidate_edit"] = "Extend the CUDA kernel and update the wrapper for head_dim 32."
     payload["candidate_patch"] = ""
 
-    with pytest.raises(ValueError, match="candidate_patch must be non-empty"):
+    with pytest.raises(ValueError, match="candidate_edit was"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -408,6 +408,12 @@ def test_decision_tool_uses_strict_schema() -> None:
     assert tool["strict"] is True
     assert tool["input_schema"]["additionalProperties"] is False
     assert "candidate_patch" in tool["input_schema"]["required"]
+    assert "must start with 'No edit;'" in tool["input_schema"]["properties"]["candidate_edit"][
+        "description"
+    ]
+    assert "starting with 'diff --git'" in tool["input_schema"]["properties"]["candidate_patch"][
+        "description"
+    ]
 
 
 def test_default_agent_model_supports_structured_outputs_family() -> None:
@@ -487,6 +493,8 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "Lineage:\nNo accepted candidates yet." in prompt
     assert "Local repo context:" in prompt
     assert "candidate_patch" in prompt
+    assert "No-edit mode" in prompt
+    assert 'candidate_edit starts with "No edit; "' in prompt
     assert "candidates/cuda_identity_seed.py" in prompt
 
 
@@ -518,9 +526,11 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "candidate_patch must be a raw unified diff" in content
-    assert "No edit; ..." in content
+    assert "candidate_patch must be a raw git-style unified diff" in content
+    assert "Choose exactly one valid mode" in content
+    assert "'No edit;'" in content
     assert "diff --git" in content
+    assert "Do not mention fixing" in content
 
 
 def test_parse_variation_decision_response_prefers_tool_use() -> None:

@@ -92,13 +92,17 @@ DECISION_SCHEMA: dict[str, Any] = {
         },
         "candidate_edit": {
             "type": "string",
-            "description": "Small proposed change or inspection step before editing.",
+            "description": (
+                "Small proposed change or inspection step. If candidate_patch is empty, "
+                "this must start with 'No edit;' and describe only a bounded diagnostic."
+            ),
         },
         "candidate_patch": {
             "type": "string",
             "description": (
-                "Raw unified diff for one small candidate edit under candidates/, or empty string "
-                "when the next step is inspection/scoring only. Do not use markdown fences."
+                "Raw git-style unified diff for one small candidate edit under candidates/, "
+                "starting with 'diff --git', or empty string when the next step is inspection/"
+                "scoring only. Do not use markdown fences."
             ),
         },
         "expected_effect": {
@@ -288,11 +292,14 @@ def build_variation_prompt(
     return (
         "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
-        "Use candidate_patch for exactly one small repo-local unified diff under candidates/. "
-        "If no edit is needed, candidate_patch must be exactly the empty string \"\". Do not "
-        "include markdown fences or commentary in candidate_patch. If candidate_edit describes "
-        "a code change such as extending, updating, modifying, or fixing a candidate, "
-        "candidate_patch must contain the raw diff for that change.\n"
+        "Use one of exactly two edit modes. Edit mode: candidate_patch is one small raw "
+        "git-style unified diff under candidates/ starting with 'diff --git', and "
+        "candidate_edit summarizes that diff. No-edit mode: candidate_patch is exactly the "
+        "empty string \"\", candidate_edit starts with \"No edit; \", and next_command is only "
+        "a bounded score, compile, or environment diagnostic for existing files. Do not include "
+        "markdown fences or commentary in candidate_patch. Do not describe extending, updating, "
+        "modifying, fixing, or implementing code unless candidate_patch contains the raw diff "
+        "for that change.\n"
         "Return exactly one decision. The next_command must be a single bounded command that "
         "starts with 'avo' and uses only one of: env, compile, score. Use valid CLI flags: "
         "compile requires --source SOURCE.cu and --out-dir DIR; candidate score requires "
@@ -409,10 +416,12 @@ def _validation_feedback_hint(error: ValueError) -> str:
     message = str(error)
     if "candidate_patch must be non-empty" in message:
         return (
-            "If the next step changes code, candidate_patch must be a raw unified diff "
-            "starting with 'diff --git'. If no code changes are needed, candidate_edit "
-            "must say 'No edit; ...' and describe only the bounded score/compile/env "
-            "diagnostic to run. "
+            "Choose exactly one valid mode. Edit mode: candidate_patch must be a raw "
+            "git-style unified diff under candidates/ starting with 'diff --git'. No-edit "
+            "mode: candidate_patch must be exactly '' and candidate_edit must start with "
+            "'No edit;' followed only by the bounded score/compile/env diagnostic to run. "
+            "Do not mention fixing, extending, updating, modifying, or implementing code in "
+            "no-edit mode. "
         )
     return ""
 
@@ -484,8 +493,16 @@ def _validate_candidate_edit_matches_patch(candidate_edit: str, candidate_patch:
     if candidate_patch.strip() or not _candidate_edit_requires_patch(candidate_edit):
         return
     raise ValueError(
-        "candidate_patch must be non-empty when candidate_edit describes a code change"
+        "candidate_patch must be non-empty when candidate_edit describes a code change; "
+        f"candidate_edit was {_validation_excerpt(candidate_edit)!r}"
     )
+
+
+def _validation_excerpt(value: str, *, max_length: int = 160) -> str:
+    normalized = " ".join(value.split())
+    if len(normalized) <= max_length:
+        return normalized
+    return f"{normalized[: max_length - 3]}..."
 
 
 def _candidate_edit_requires_patch(candidate_edit: str) -> bool:
