@@ -384,6 +384,8 @@ def build_repo_context(root: Path) -> str:
         "kernel change for the known larger-shape correctness failure.",
         "The current tiled kernel already uses the online-softmax output recurrence "
         "output_acc * old_scale + tile_acc * tile_scale; do not repeat that stale fix.",
+        "The warp-row BF16 score_tiles shared-memory conversion preserved correctness "
+        "but regressed throughput; do not repeat that buffer-precision change.",
         "Patched MMA shape extensions beyond the current head_dim32 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
     ]
@@ -627,6 +629,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "the recorded version preserved correctness but regressed throughput, "
             "so include real async-copy or double-buffering logic"
         )
+    if _candidate_patch_converts_warp_score_tiles_to_bf16(added_text):
+        raise ValueError(
+            "candidate_patch repeats the regressed warp-row BF16 score_tiles conversion; "
+            "the recorded score preserved correctness but reduced geomean throughput"
+        )
     if _candidate_patch_uses_unsupported_mma_score_k32(added_text):
         raise ValueError(
             "candidate_patch uses unsupported WMMA accumulator shape 16x16x32; "
@@ -687,6 +694,13 @@ def _candidate_patch_uses_unsupported_mma_score_k32(added_text: str) -> bool:
         )
     )
     return (sets_khead32 and symbolic_score) or literal_score
+
+
+def _candidate_patch_converts_warp_score_tiles_to_bf16(added_text: str) -> bool:
+    return (
+        "__shared__ __nv_bfloat16 score_tiles" in added_text
+        and "__bfloat162float(scores" in added_text
+    )
 
 
 def _candidate_patch_uses_generic_scalar_wmma_fragments(added_text: str) -> bool:

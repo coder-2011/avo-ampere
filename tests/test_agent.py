@@ -882,6 +882,31 @@ def test_parse_variation_decision_rejects_noop_async_copy_stub_patch() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_bf16_score_tiles_patch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Convert warp-row score_tiles shared memory to BF16."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1,3 +1,3 @@\n"
+        "-__shared__ float score_tiles[kRowsPerBlock][kTileKeys];\n"
+        "+__shared__ __nv_bfloat16 score_tiles[kRowsPerBlock][kTileKeys];\n"
+        "-tile_acc += scores[key_inner] * static_cast<float>(v_tiles[key_inner][dim]);\n"
+        "+tile_acc += __bfloat162float(scores[key_inner]) * "
+        "static_cast<float>(v_tiles[key_inner][dim]);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_warp_rows_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="BF16 score_tiles conversion"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_stale_code_patch_warning() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA two-chunk QK and compile it."
@@ -969,6 +994,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
         in context
     )
     assert "current tiled kernel already uses the online-softmax output recurrence" in context
+    assert "BF16 score_tiles shared-memory conversion" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "Standalone pragma-only performance patches" in context
