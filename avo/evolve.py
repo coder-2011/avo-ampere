@@ -444,6 +444,8 @@ def cleanup_rejected_candidate_patch(step: EvolutionStep, *, cwd: Path) -> Evolu
     if patch_result is None or not patch_result.ok:
         return step
     cleanup_result = revert_candidate_patch(step.attempt.decision.candidate_patch, cwd=cwd)
+    if cleanup_result.ok:
+        cleanup_result = _verify_rejected_patch_cleanup(cwd, cleanup_result)
     return EvolutionStep(
         attempt=step.attempt,
         gate_decision=step.gate_decision,
@@ -764,6 +766,50 @@ def _patch_failure_summary(result: PatchResult) -> str:
     if result.stderr_tail:
         return f"candidate patch failed: {result.stderr_tail}"
     return "candidate patch failed"
+
+
+def _verify_rejected_patch_cleanup(cwd: Path, result: PatchResult) -> PatchResult:
+    failure = _patch_cleanup_failure_reason(cwd, result.patch_paths)
+    if failure is None:
+        return result
+    return PatchResult(
+        ok=False,
+        patch_paths=result.patch_paths,
+        returncode=result.returncode,
+        stdout_tail=result.stdout_tail,
+        stderr_tail=_tail("\n".join(part for part in (result.stderr_tail, failure) if part)),
+        rejected_reason=failure,
+    )
+
+
+def _patch_cleanup_failure_reason(cwd: Path, patch_paths: list[str]) -> str | None:
+    if not patch_paths or not _is_inside_git_worktree(cwd):
+        return None
+    status = subprocess.run(
+        ["git", "status", "--porcelain", "--untracked-files=all", "--", *patch_paths],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    if status.returncode != 0:
+        detail = _tail(status.stderr) or f"git status returned {status.returncode}"
+        return f"candidate patch cleanup status check failed: {detail}"
+    dirty = "\n".join(line.strip() for line in status.stdout.splitlines() if line.strip())
+    if dirty:
+        return f"candidate patch cleanup left paths dirty: {_tail(dirty)}"
+    return None
+
+
+def _is_inside_git_worktree(cwd: Path) -> bool:
+    result = subprocess.run(
+        ["git", "rev-parse", "--is-inside-work-tree"],
+        cwd=cwd,
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+    return result.returncode == 0 and result.stdout.strip() == "true"
 
 
 def _contains_rejected_patch_marker(line: str) -> bool:

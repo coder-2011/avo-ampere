@@ -1,5 +1,6 @@
 import json
 import os
+import subprocess
 import sys
 from pathlib import Path
 from textwrap import dedent
@@ -337,6 +338,32 @@ def test_cleanup_rejected_candidate_patch_reverts_nonaccepted_patch(tmp_path: Pa
     assert cleaned.patch_cleanup_result is not None
     assert cleaned.patch_cleanup_result.ok
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_cleanup_rejected_candidate_patch_rejects_dirty_patch_path(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    seed.write_text("VALUE = 1\nOTHER = 1\n", encoding="utf-8")
+    init_git_repo(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+    patch = candidate_value_patch_with_context()
+    attempt = run_decision_command(
+        decision("avo worker-sleep --seconds 0", candidate_patch=patch),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+    seed.write_text("VALUE = 2\nOTHER = 1\nEXTRA = 3\n", encoding="utf-8")
+    step = EvolutionStep(attempt=attempt, gate_decision=None)
+
+    cleaned = cleanup_rejected_candidate_patch(step, cwd=tmp_path)
+
+    assert cleaned.patch_cleanup_result is not None
+    assert not cleaned.patch_cleanup_result.ok
+    assert cleaned.patch_cleanup_result.rejected_reason is not None
+    assert "left paths dirty" in cleaned.patch_cleanup_result.rejected_reason
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\nOTHER = 1\nEXTRA = 3\n"
 
 
 def test_cleanup_rejected_candidate_patch_keeps_accepted_patch(tmp_path: Path) -> None:
@@ -715,6 +742,26 @@ def write_seed_candidate(root: Path) -> Path:
     return seed
 
 
+def init_git_repo(root: Path) -> None:
+    subprocess.run(["git", "init"], cwd=root, check=True, capture_output=True)
+    subprocess.run(["git", "add", "candidates/seed.py"], cwd=root, check=True)
+    subprocess.run(
+        [
+            "git",
+            "-c",
+            "user.name=AVO Test",
+            "-c",
+            "user.email=avo-test@example.com",
+            "commit",
+            "-m",
+            "seed candidate",
+        ],
+        cwd=root,
+        check=True,
+        capture_output=True,
+    )
+
+
 def candidate_value_patch() -> str:
     return dedent(
         """\
@@ -724,6 +771,20 @@ def candidate_value_patch() -> str:
         @@ -1 +1 @@
         -VALUE = 1
         +VALUE = 2
+        """
+    )
+
+
+def candidate_value_patch_with_context() -> str:
+    return dedent(
+        """\
+        diff --git a/candidates/seed.py b/candidates/seed.py
+        --- a/candidates/seed.py
+        +++ b/candidates/seed.py
+        @@ -1,2 +1,2 @@
+        -VALUE = 1
+        +VALUE = 2
+         OTHER = 1
         """
     )
 
