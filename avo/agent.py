@@ -404,6 +404,9 @@ def build_repo_context(root: Path) -> str:
         "The corrected synchronous full-K MMA staging path preserved correctness but "
         "regressed throughput; do not repeat static k_shared staging unless adding "
         "real async-copy or double-buffered overlap.",
+        "The synchronous double-buffered MMA V staging path preserved correctness but "
+        "regressed throughput; do not repeat static v_shared[2] staging unless adding "
+        "real async-copy overlap.",
         "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke must run "
         "an avo compile build-check first; do not jump straight to score.",
         "A partial MMA head_dim128 extension that changes only kHeadDim/SMOKE_HEAD_DIM "
@@ -696,6 +699,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "the recorded score preserved correctness but regressed throughput, "
             "so add real async-copy or double-buffered overlap before revisiting"
         )
+    if _candidate_patch_repeats_sync_mma_v_staging(added_text):
+        raise ValueError(
+            "candidate_patch repeats synchronous double-buffered MMA V shared-memory staging; "
+            "the recorded score preserved correctness but regressed throughput, "
+            "so add real async-copy overlap before revisiting"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -812,6 +821,15 @@ def _candidate_patch_repeats_sync_mma_k_staging(added_text: str) -> bool:
     return (
         "__shared__ __nv_bfloat16 k_shared[kTile * kHeadDim]" in added_text
         and bool(re.search(r"\bk_shared\s*\+\s*chunk_offset\b", added_text))
+        and "cp.async" not in added_text
+        and "memcpy_async" not in added_text
+    )
+
+
+def _candidate_patch_repeats_sync_mma_v_staging(added_text: str) -> bool:
+    return (
+        "__shared__ __nv_bfloat16 v_shared[2][kTile * kHeadDim]" in added_text
+        and "v_shared[current_buffer][chunk_offset]" in added_text
         and "cp.async" not in added_text
         and "memcpy_async" not in added_text
     )

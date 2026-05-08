@@ -937,6 +937,29 @@ def test_parse_variation_decision_rejects_sync_mma_k_staging_repeat() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_sync_mma_v_staging_repeat() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Stage the MMA V tile in double-buffered shared memory."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,4 @@\n"
+        "-old\n"
+        "+__shared__ __nv_bfloat16 v_shared[2][kTile * kHeadDim];\n"
+        "+wmma::load_matrix_sync(v_frag, &v_shared[current_buffer][chunk_offset], kHeadDim);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="synchronous double-buffered MMA V"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
@@ -1130,6 +1153,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "The unpatched MMA seq256/head_dim128 score passed correctness" in context
     assert "k_shared + key_start * kHeadDim + chunk_offset" in context
     assert "synchronous full-K MMA staging path preserved correctness but regressed" in context
+    assert "synchronous double-buffered MMA V staging path preserved correctness" in context
     assert "Patched MMA shape extensions beyond the current seq256/head_dim128 smoke" in context
     assert "partial MMA head_dim128 extension" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context

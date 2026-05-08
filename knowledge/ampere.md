@@ -661,6 +661,17 @@ variation steps.
   at median 1.2412480115890503 ms; causal was `0.2166535380479405` TFLOPS at
   median 1.2390079498291016 ms. Do not repeat synchronous static `k_shared`
   staging without real async-copy or double-buffered overlap.
+  A follow-up loop proposed static double-buffered V staging in the MMA seed:
+  `v_shared[2][kTile * kHeadDim]`, cooperative warp loads of the current and
+  next 16x128 V tiles, and PV `wmma::load_matrix_sync` from
+  `v_shared[current_buffer]`. It compiled with no spills, 40 registers, 1
+  barrier, and 26304 bytes shared memory, then passed correctness when manually
+  scored. Throughput still regressed to geomean `0.31531656344385717` TFLOPS
+  versus best `0.4924015757468769`: noncausal `0.4066415256706702` TFLOPS at
+  median 1.320255994796753 ms, causal `0.24450167753542637` TFLOPS at median
+  1.0978879928588867 ms. Do not repeat static synchronous `v_shared[2]`
+  staging; revisit V staging only with real async-copy overlap or a materially
+  different scheduling strategy.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
