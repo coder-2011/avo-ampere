@@ -1552,6 +1552,19 @@ def test_decision_feedback_explains_self_invalid_patch_error() -> None:
     assert "switch to No edit; mode" in content
 
 
+def test_decision_feedback_explains_compile_out_dir_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("next_command --out-dir must be under: build"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "--out-dir to a repo-relative build subdirectory" in content
+    assert "Do not write compiler outputs under candidates/" in content
+
+
 def test_decision_feedback_explains_sync_mma_k_staging_error() -> None:
     kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
 

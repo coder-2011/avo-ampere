@@ -792,3 +792,7 @@ when they should inform future variation decisions.
 Agent compile commands should write build artifacts under `build/`, not under
 `candidates/`, so rejected compile-only steps do not leave object files beside
 source files.
+A later planner loop still retried an invalid compile output path after this
+guard, failing validation after three attempts with `--out-dir must be under:
+build`. Retry feedback now explicitly tells the agent to use `build/<name>` and
+not write compiler artifacts under `candidates/`.

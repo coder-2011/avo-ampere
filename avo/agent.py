@@ -517,6 +517,12 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "corrected raw diff that no longer has the called-out flaw, or switch to "
             "No edit; mode for a bounded diagnostic. "
         )
+    if "--out-dir must be under: build" in message:
+        return (
+            "For compile checks, set --out-dir to a repo-relative build subdirectory such "
+            "as build/mma_probe. Do not write compiler outputs under candidates/ or beside "
+            "source files. "
+        )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
             "Do not retry scalar sizeof(__nv_bfloat16) async copies. A valid Ampere "
