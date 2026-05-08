@@ -130,6 +130,13 @@ def commit_score(
     decision = decide_gate(candidate, best, best_payload=best_payload)
     if not decision.accepted:
         return decision
+    if not (candidate_patch or "").strip() and _source_snapshot_matches_latest(path, source_files):
+        return GateDecision(
+            False,
+            "candidate source is unchanged from current best",
+            decision.candidate_geomean,
+            decision.best_geomean,
+        )
 
     score_path = path / "scores" / "latest.json"
     score_path.write_text(json.dumps(candidate, indent=2, sort_keys=True) + "\n", encoding="utf-8")
@@ -214,6 +221,33 @@ def _write_source_artifacts(
     if candidate_patch:
         patch_path.parent.mkdir(parents=True, exist_ok=True)
         patch_path.write_text(candidate_patch, encoding="utf-8")
+
+
+def _source_snapshot_matches_latest(
+    path: Path,
+    source_files: Mapping[str, str] | None,
+) -> bool:
+    if not source_files:
+        return False
+    try:
+        tracked = _git_capture(path, "ls-tree", "-r", "--name-only", "HEAD", "sources/latest")
+    except subprocess.CalledProcessError:
+        return False
+    latest_paths = sorted(
+        line.removeprefix("sources/latest/")
+        for line in tracked.splitlines()
+        if line.startswith("sources/latest/")
+    )
+    if latest_paths != sorted(source_files):
+        return False
+    for relative, content in source_files.items():
+        try:
+            latest_content = _git_capture(path, "show", f"HEAD:sources/latest/{relative}")
+        except subprocess.CalledProcessError:
+            return False
+        if latest_content != content:
+            return False
+    return True
 
 
 def _validate_candidate_source_path(path: str) -> PurePosixPath:

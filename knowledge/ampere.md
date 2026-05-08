@@ -147,6 +147,11 @@ variation steps.
   because the benchmark signature differed from the seq256 best. Do not treat
   larger-shape TFLOPS as a gate improvement unless the benchmark suite is
   deliberately reseeded.
+  A later no-edit rerun of the exact same seq256/head_dim128 warp-row source
+  measured faster (`0.460232249967343` geomean TFLOPS) and was briefly accepted
+  due timing noise. The lineage gate now rejects unchanged source snapshots when
+  no candidate patch is present, so identical-source reruns cannot advance the
+  lineage solely by sampling a faster timing.
 - The tiled seed compiles cleanly on sm86 with no spills. Its ptxas diagnostics
   report 40 registers and 1 barrier for BF16/Half/FP32 entry points, and 48
   registers and 1 barrier for the double entry point. The ptxas output did not

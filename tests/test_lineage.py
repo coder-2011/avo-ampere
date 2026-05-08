@@ -88,6 +88,31 @@ def test_commit_score_rejects_changed_benchmark_shape(tmp_path) -> None:
     assert best_geomean(repo) == 1.0
 
 
+def test_commit_score_rejects_unchanged_source_rerun(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    source = {"candidates/seed.py": "VALUE = 1\n"}
+    commit_score(
+        repo,
+        score_payload(seq_len=128, geomean=1.0),
+        source_files=source,
+        candidate_patch="diff --git a/candidates/seed.py b/candidates/seed.py\n",
+    )
+    head_before = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+
+    decision = commit_score(
+        repo,
+        score_payload(seq_len=128, geomean=2.0),
+        source_files=source,
+    )
+
+    head_after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+    assert not decision.accepted
+    assert "source is unchanged" in decision.reason
+    assert head_after == head_before
+    assert best_geomean(repo) == 1.0
+
+
 def test_commit_score_records_accepted_source_artifacts(tmp_path) -> None:
     repo = tmp_path / "lineage"
     init_lineage_repo(repo)
