@@ -57,7 +57,8 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for 16/32-token BF16 tensor-core QK/PV smokes
+  `candidates/cuda_mma_attention_seed.py` for 16/32-token, head-dim 16
+  BF16 tensor-core QK/PV smokes
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
   `cuda_naive_attention_seed.py` is the simpler one-thread-per-row attention
@@ -111,8 +112,10 @@ variation steps.
   and BF16 PV output tiles with tensor cores. It stores unnormalized softmax
   probabilities as BF16 between the two MMA operations and keeps FP32 online
   row-max, row-sum, and output accumulators across up to two key tiles. It is only
-  a correctness foothold for tensor-core attention: it does not yet scale beyond
-  32 tokens or use production layouts.
+  a correctness foothold for tensor-core attention: the wrapper currently accepts
+  only sequence lengths 16 or 32 with head dimension 16, and it does not yet use
+  production layouts. Do not score head dimension 32 or larger unless the
+  candidate patch updates the wrapper and CUDA kernel to support that shape first.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
