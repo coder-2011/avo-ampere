@@ -640,6 +640,12 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "does not support, so use explicit CUDA WMMA element types in "
             "dtype-specific code"
         )
+    if _candidate_patch_leaves_orphan_mma_k_fragment(added_text):
+        raise ValueError(
+            "candidate_patch leaves an orphan post-QK WMMA k_frag block after "
+            "storing scores; remove old single-chunk QK fragment declarations "
+            "completely"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -698,6 +704,18 @@ def _candidate_patch_repeats_stale_tiled_rescale_fix(candidate_patch: str) -> bo
     return (
         "-output_acc=tile_acc*tile_scale;" in compact
         and "+output_acc=output_acc*old_scale+tile_acc*tile_scale;" in compact
+    )
+
+
+def _candidate_patch_leaves_orphan_mma_k_fragment(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return bool(
+        re.search(
+            r"store_matrix_sync\(scores,score_frag,[^)]*\);"
+            r"\}__syncthreads\(\);if\(threadIdx\.x<warpSize\)\{"
+            r"wmma::fragment<wmma::matrix_b,[^>]*>k_frag;",
+            compact,
+        )
     )
 
 

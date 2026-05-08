@@ -774,6 +774,33 @@ def test_parse_variation_decision_rejects_scalar_t_wmma_matrix_fragment() -> Non
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_orphan_mma_k_fragment_block() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA two-chunk QK and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,10 @@\n"
+        "-old\n"
+        "+wmma::store_matrix_sync(scores, score_frag, kTile, wmma::mem_row_major);\n"
+        "+}\n"
+        "+__syncthreads();\n"
+        "+if (threadIdx.x < warpSize) {\n"
+        "+  wmma::fragment<wmma::matrix_b, kTile, kTile, 16, __nv_bfloat16, "
+        "wmma::col_major> k_frag;\n"
+        "+}\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="orphan post-QK WMMA k_frag"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy wait and compile it."
