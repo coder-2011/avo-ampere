@@ -984,6 +984,32 @@ def test_parse_variation_decision_rejects_regressed_mma_qk_preload_chain() -> No
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_regressed_mma_q_preload_chain() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA Q fragment preload chain and score it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,9 @@\n"
+        "-old\n"
+        "+wmma::fragment<wmma::matrix_a, kTile, kTile, 16, "
+        "__nv_bfloat16, wmma::row_major> q_frag_next;\n"
+        "+q_frag = q_frag_next;\n"
+        "+const int next_chunk_offset = (chunk + 1) * 16;\n"
+        "+wmma::load_matrix_sync(q_frag_next, q + next_chunk_offset, kHeadDim);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="q_frag_next preload chain"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_orphan_mma_k_fragment_block() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA two-chunk QK and compile it."

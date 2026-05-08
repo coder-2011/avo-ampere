@@ -856,3 +856,8 @@ source files.
   geomean to `0.5257029292160739` TFLOPS. Do not repeat this exact stride-20
   probability skew; simple probability padding has repeatedly failed to improve
   the direct-accumulation MMA kernel.
+  A later Q-fragment software-pipeline patch added `q_frag_next`, assigned
+  `q_frag = q_frag_next`, and loaded the next Q fragment at the end of each QK
+  chunk. It passed correctness but regressed geomean to
+  `0.4215966561800913` TFLOPS versus the accepted
+  `0.5772885607891738`. Do not repeat this exact Q-fragment preload chain.
