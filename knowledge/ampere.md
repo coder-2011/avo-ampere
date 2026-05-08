@@ -274,6 +274,14 @@ variation steps.
   source change or score a candidate. The planner/validator now blocks repeated
   no-patch compiles of that recorded MMA source; future MMA compiles should
   build-check a non-empty candidate patch.
+  A small patch adding `#pragma unroll` before several MMA seed helper loops
+  applied and compiled on sm86 with no spills and unchanged diagnostics:
+  40 registers, 1 barrier, and 3776 bytes shared memory. This is not a useful
+  lineage candidate by itself because the MMA wrapper is still limited to the
+  tiny seq32/head_dim16 case signature, which differs from the current seq256/
+  head_dim128 warp-row best. Do not repeat this as another compile-only step;
+  any future MMA unroll score should be paired with a deliberately reseeded MMA
+  benchmark or a wrapper/kernel extension that can compete on the target suite.
   A later head-dimension-32 MMA attempt proposed the right broad direction
   (two 16-wide QK chunks, widened `pv_tile`/`output_acc`, and PV stores at
   `&pv_tile[chunk * 16]`), but the candidate patch was rejected before compile:
