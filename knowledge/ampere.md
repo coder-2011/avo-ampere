@@ -57,7 +57,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for the accepted seq4096 head-dim 128
+  `candidates/cuda_mma_attention_seed.py` for the accepted seq8192 head-dim 128
   BF16 tensor-core QK/PV lane
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
@@ -1116,3 +1116,13 @@ source files.
   geomean `7.527287085824243` TFLOPS, noncausal `10.59316564199843` TFLOPS,
   and causal `5.348736419996861` TFLOPS. Runtime source now carries
   `kMaxSeqLen=4096` and wrapper `SMOKE_SEQUENCES` includes 4096.
+  A subsequent bounded loop graduated to seq8192 with the same two-step cap
+  transform (`kMaxSeqLen=8192`, add `8192` to `SMOKE_SEQUENCES`). Compile again
+  passed with no spills, 40 registers, 1 barrier, and 9920 bytes shared memory.
+  The follow-up score was accepted as nested lineage commit `b6622ab`: seq_len
+  8192, total_tokens 32768, num_heads 16, head_dim 128, BF16, both causal
+  modes, three timing trials, geomean `7.367549615485977` TFLOPS, noncausal
+  `10.405911846727314` TFLOPS, causal `5.216341262175792` TFLOPS. Runtime
+  source now carries `kMaxSeqLen=8192` and wrapper `SMOKE_SEQUENCES` includes
+  8192. This is correctness and lane-establishment progress, not yet evidence
+  of beating FA2.
