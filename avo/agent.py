@@ -355,8 +355,8 @@ def build_repo_context(root: Path) -> str:
         "Use avo env only for CUDA/build environment diagnostics, not source-file inspection.",
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
         "candidate_patch, not source-file inspection.",
-        "Pragma-only or scheduler-only performance patches that leave correctness unchanged "
-        "should run a bounded candidate score instead of stopping at a compile-only check.",
+        "Standalone pragma-only performance patches are already recorded as regressed noise; "
+        "if using unroll, pair it with a substantive code change and run a bounded score.",
         "Available edit channel: candidate_patch as a raw unified diff under candidates/, "
         "or empty. Patch hunks must use exact current file context, apply cleanly, and avoid "
         "trailing whitespace.",
@@ -569,6 +569,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
     for added_line in _candidate_patch_added_lines(candidate_patch):
         if added_line.rstrip(" \t") != added_line:
             raise ValueError("candidate_patch added lines must not contain trailing whitespace")
+    if _candidate_patch_adds_only_unroll_pragmas(candidate_patch):
+        raise ValueError(
+            "candidate_patch is a pragma-only performance patch; recorded warp-row "
+            "unroll scoring regressed throughput, so include a substantive code change"
+        )
     added_text = "\n".join(_candidate_patch_added_lines(candidate_patch))
     if "__pipeline_wait_prior<" in added_text:
         raise ValueError(

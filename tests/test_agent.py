@@ -248,6 +248,29 @@ def test_parse_variation_decision_rejects_pragma_only_compile_check() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_pragma_only_score() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add unroll pragmas and score the warp-row kernel."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_warp_rows_attention/attention_kernel.cu "
+        "b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_warp_rows_attention/attention_kernel.cu\n"
+        "@@ -1 +1,2 @@\n"
+        " old\n"
+        "+#pragma unroll\n"
+        "+#pragma unroll\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_warp_rows_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="pragma-only performance patch"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_candidate_score_without_candidate() -> None:
     payload = decision_payload()
     payload["next_command"] = "avo score --backend candidate"
@@ -717,7 +740,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     )
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
-    assert "Pragma-only or scheduler-only performance patches" in context
+    assert "Standalone pragma-only performance patches" in context
     assert "No-patch compile diagnostics are already recorded" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
     assert "Patch hunks must use exact current file context" in context
