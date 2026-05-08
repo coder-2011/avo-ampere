@@ -1249,6 +1249,31 @@ def test_parse_variation_decision_rejects_probability_stride_skew_2d_repeat() ->
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_probability_stride20_skew_repeat() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Skew the MMA probability tile with a stride-20 layout."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,8 @@\n"
+        "-old\n"
+        "+constexpr int kProbabilityStride = 20;\n"
+        "+__shared__ __nv_bfloat16 probabilities[kTile][kProbabilityStride];\n"
+        "+wmma::load_matrix_sync(\n"
+        "+    probability_frag, &probabilities[0][0], kProbabilityStride);\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="stride-20 MMA probability-buffer skew"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_2d_probability_index_without_declaration() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Skew the MMA score tile and compile it."

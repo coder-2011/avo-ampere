@@ -850,3 +850,9 @@ source files.
   `0.5374411946079206` TFLOPS versus the accepted `0.5772885607891738`.
   Do not repeat this exact score-tile stride-24 skew without a materially
   different score/softmax dataflow or profiler evidence.
+  A later probability-buffer stride-20 patch used
+  `probabilities[kTile][kProbabilityStride]` with `kProbabilityStride = 20` and
+  loaded `&probabilities[0][0]` for PV WMMA. It passed correctness but regressed
+  geomean to `0.5257029292160739` TFLOPS. Do not repeat this exact stride-20
+  probability skew; simple probability padding has repeatedly failed to improve
+  the direct-accumulation MMA kernel.

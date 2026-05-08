@@ -808,6 +808,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch repeats the stride-24 MMA probability-buffer skew; "
             "the recorded score preserved correctness but regressed geomean throughput"
         )
+    if _candidate_patch_repeats_mma_probability_stride20_skew(added_text):
+        raise ValueError(
+            "candidate_patch repeats the stride-20 MMA probability-buffer skew; "
+            "the recorded score preserved correctness but regressed geomean throughput"
+        )
     if _candidate_patch_uses_2d_probability_index_without_2d_declaration(added_text):
         raise ValueError(
             "candidate_patch uses probabilities[row][key] but does not declare "
@@ -1032,6 +1037,16 @@ def _candidate_patch_repeats_mma_probability_stride_skew(added_text: str) -> boo
             or "load_matrix_sync(probability_frag,&probabilities[0][0],kProbabilityStride)"
             in compact
         )
+    )
+
+
+def _candidate_patch_repeats_mma_probability_stride20_skew(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return (
+        "kProbabilityStride=20" in compact
+        and "__shared____nv_bfloat16probabilities[kTile][kProbabilityStride]" in compact
+        and "load_matrix_sync(probability_frag,&probabilities[0][0],kProbabilityStride)"
+        in compact
     )
 
 
