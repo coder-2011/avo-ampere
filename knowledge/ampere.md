@@ -725,6 +725,10 @@ variation steps.
   per-thread arrays, then used `row / blockDim.x` in output-scaling/final-store loops where threads
   did not own the row state. Do not repeat this per-thread register-state mapping; any register
   row-state patch must keep all row consumers on the owning thread or publish state safely.
+  A later QK software-pipeline skeleton added `k_frag_next` and loaded the next key tile's first
+  WMMA fragment, but never consumed the preloaded fragment in `mma_sync`. It compiled with unchanged
+  resource counts and was cleaned up as a compile-only no-op. Do not repeat unused WMMA preload
+  skeletons; wire the preloaded fragment into real QK/PV dataflow before compile-checking.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
@@ -779,3 +783,6 @@ also contain at least one scored case and a finite positive geomean, so malforme
 empty score records cannot become lineage commits. Failed attempts remain in the
 agent run log, not the committed lineage. Persist them in an attempts directory
 when they should inform future variation decisions.
+Agent compile commands should write build artifacts under `build/`, not under
+`candidates/`, so rejected compile-only steps do not leave object files beside
+source files.

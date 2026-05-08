@@ -727,6 +727,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "later uses row / blockDim.x from other threads; the recorded score failed "
             "correctness with non-finite outputs"
         )
+    if _candidate_patch_adds_unused_mma_preload_fragment(added_text):
+        raise ValueError(
+            "candidate_patch adds an MMA preload fragment that is loaded but never consumed; "
+            "compile-only unused preload skeletons do not affect correctness or throughput"
+        )
     if _candidate_patch_uses_global_offset_for_shared_k_tile(added_text):
         raise ValueError(
             "candidate_patch stages an MMA K tile in shared memory but loads it "
@@ -896,6 +901,15 @@ def _candidate_patch_uses_thread_local_mma_row_state_for_cross_thread_rows(
     )
 
 
+def _candidate_patch_adds_unused_mma_preload_fragment(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    return (
+        "k_frag_next" in compact
+        and "load_matrix_sync(k_frag_next," in compact
+        and "mma_sync" not in compact
+    )
+
+
 def _candidate_patch_repeats_sync_mma_q_staging(added_text: str) -> bool:
     return (
         "__shared__ __nv_bfloat16 q_shared[kTile * kHeadDim]" in added_text
@@ -1043,7 +1057,7 @@ def _validate_subcommand_arguments(
                 candidate_patch=candidate_patch,
             )
         if out_dir is not None:
-            _validate_command_path(out_dir, "--out-dir")
+            _validate_command_path(out_dir, "--out-dir", allowed_roots=("build/",))
     elif subcommand == "score":
         backend = _single_option_value(parts, "--backend")
         if backend is None:

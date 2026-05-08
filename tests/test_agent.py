@@ -163,6 +163,30 @@ def test_parse_variation_decision_allows_compile_source_out_dir() -> None:
     assert decision.next_command == payload["next_command"]
 
 
+def test_parse_variation_decision_rejects_compile_out_dir_under_candidates() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = "Compile the patched CUDA source."
+    payload["candidate_edit"] = "Compile the CUDA source to verify nvcc accepts it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["expected_effect"] = "Confirm the translation unit still builds."
+    payload["risk"] = "Compilation may expose syntax or include-path issues."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir candidates/cuda_mma_attention"
+    )
+
+    with pytest.raises(ValueError, match="--out-dir must be under: build"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_recorded_no_patch_compile_baseline() -> None:
     payload = decision_payload()
     payload["hypothesis"] = "The warp-row ptxas baseline may show a new opportunity."
@@ -939,6 +963,32 @@ def test_parse_variation_decision_rejects_thread_local_mma_row_state() -> None:
     )
 
     with pytest.raises(ValueError, match="per-thread registers"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_unused_mma_preload_fragment() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Preload the next MMA K fragment and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,6 @@\n"
+        "-old\n"
+        "+wmma::fragment<wmma::matrix_b, kTile, kTile, 16, __nv_bfloat16, "
+        "wmma::col_major> k_frag_next;\n"
+        "+if (key_start + kTile < seq_len) {\n"
+        "+  wmma::load_matrix_sync(k_frag_next, k + base + next_key_start * kHeadDim, "
+        "kHeadDim);\n"
+        "+}\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_preload"
+    )
+
+    with pytest.raises(ValueError, match="preload fragment"):
         parse_decision_text(json.dumps(payload))
 
 
