@@ -416,7 +416,8 @@ def build_variation_prompt(
         "You are the AVO variation operator for an Ampere sm_86 attention kernel.\n"
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
         "Use one of exactly three modes. Preferred edit mode: candidate_transform is one "
-        "tiny structured operation under candidates/ and candidate_patch is empty. "
+        "tiny structured operation under candidates/ and candidate_patch is exactly the "
+        "empty string \"\". "
         "Supported ops are replace_once, insert_before_once, insert_after_once, and "
         "set_constexpr_int; the orchestrator materializes and preflights the patch. "
         "Legacy edit mode: candidate_patch is one small raw git-style unified diff under "
@@ -622,6 +623,19 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "bounded score/compile/env diagnostic to run. "
             "Do not mention fixing, extending, updating, modifying, or implementing code in "
             "no-edit mode. "
+        )
+    if "candidate_patch and candidate_transform are mutually exclusive" in message:
+        return (
+            "Choose one edit channel only. For preferred structured-transform mode, set "
+            "candidate_transform to the operation object and set candidate_patch to exactly "
+            "the empty string ''. For legacy raw-diff mode, set candidate_patch to the "
+            "unified diff and omit candidate_transform. "
+        )
+    if "no-edit mode but includes an edit payload" in message:
+        return (
+            "No-edit mode cannot include candidate_transform or candidate_patch. Either "
+            "remove the edit payload and run only the bounded diagnostic, or remove the "
+            "'No edit;' prefix and describe the structured transform/raw diff as the edit. "
         )
     if "known invalid by the decision itself" in message:
         if "must not be scored" in message:

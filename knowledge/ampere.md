@@ -950,3 +950,8 @@ source files.
   absolute paths, traversal, or backslashes during planning parse. It also
   rejects any `No edit;` decision that includes `candidate_transform` or a raw
   `candidate_patch`, so diagnostics cannot silently carry edit payloads.
+  A follow-up live loop failed planning validation after three retries because
+  the planner returned both `candidate_transform` and raw `candidate_patch`.
+  Retry feedback now explicitly explains the mutually exclusive edit channels:
+  structured-transform mode uses a transform object with `candidate_patch == ""`;
+  legacy raw-diff mode omits `candidate_transform`; no-edit mode omits both.

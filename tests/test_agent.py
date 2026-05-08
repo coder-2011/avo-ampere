@@ -2109,6 +2109,33 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     assert "Do not mention fixing" in content
 
 
+def test_decision_feedback_explains_mutually_exclusive_edit_channels() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("candidate_patch and candidate_transform are mutually exclusive"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Choose one edit channel only" in content
+    assert "candidate_patch to exactly the empty string" in content
+    assert "omit candidate_transform" in content
+
+
+def test_decision_feedback_explains_no_edit_with_payload_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("candidate_edit starts in no-edit mode but includes an edit payload"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "No-edit mode cannot include candidate_transform or candidate_patch" in content
+    assert "remove the 'No edit;' prefix" in content
+
+
 def test_decision_feedback_explains_missing_required_keys_error() -> None:
     kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
 
