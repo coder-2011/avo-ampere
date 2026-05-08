@@ -142,6 +142,12 @@ variation steps.
   accumulation loops are also changed to map multiple key columns per lane. With the current
   one-key-per-lane mapping, `kTileKeys=64` makes 32 lanes process only keys 0..31 while advancing
   the tile by 64, skipping half the keys and breaking correctness.
+  A dynamic shared-memory structural patch that moved K/V staging to `extern __shared__` compiled on
+  sm86 with only 512 bytes of static shared memory, no spills, and the usual 48/56 registers for
+  Half/BF16/FP32. It is not scoreable as generated: the kernel launch did not pass the required
+  dynamic shared-memory byte count, the opt-in attribute was set only for the BF16 specialization,
+  and the dynamic byte count used BF16 size unconditionally. Future dynamic-shared patches must wire
+  both the launch third argument and dtype-specific `cudaFuncSetAttribute` values before scoring.
 - Shared-memory layouts and bank-conflict reduction.
 - Register pressure and spill avoidance.
 - Warp-level online softmax reductions.
