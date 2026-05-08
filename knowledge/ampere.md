@@ -57,7 +57,7 @@ variation steps.
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
   non-causal/no-dropout. This is useful search-space evidence, not a commandment.
 - Local candidates should currently start from
-  `candidates/cuda_mma_attention_seed.py` for 16/32-token, head-dim 128
+  `candidates/cuda_mma_attention_seed.py` for 16/32/64-token, head-dim 128
   BF16 tensor-core QK/PV smokes
   and `candidates/cuda_warp_rows_attention_seed.py` for tiny warp-row online-softmax
   scoring. `cuda_tiled_attention_seed.py` is the one-CTA-per-row tiled reference.
@@ -595,6 +595,19 @@ variation steps.
   a lineage-speed comparison. The planner now treats head_dim128 as the current
   unpatched MMA smoke cap and requires compile-first validation for patched MMA
   scores beyond that cap.
+  A subsequent seq64 MMA patch changed only the smoke sequence cap and
+  `kMaxSeqLen` from 32 to 64. It passed correctness at seq_len 64, total_tokens
+  256, num_heads 4, head_dim 128, BF16, both causal modes, but was gate-rejected
+  because the case signature still differs from the seq256/head_dim128 warp-row
+  best. A fresh committed-tree score also passed correctness. Noncausal max
+  error was 0.00390625 with median 0.6896960139274597 ms /
+  `0.04865104527562075` TFLOPS; causal max error was 0.0078125 with median
+  0.6171200275421143 ms / `0.027186309390769315` TFLOPS. Geomean was
+  `0.03636815047603261` TFLOPS. The current MMA seed now supports
+  seq_lens 16/32/64 with head_dim128, total_tokens up to 256, and num_heads up
+  to 4. Do not repeat the exact no-patch seq64 score as a candidate-improving
+  step; future MMA work should patch toward seq128/seq256 support or change the
+  kernel structure.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
