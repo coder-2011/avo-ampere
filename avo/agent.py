@@ -17,7 +17,9 @@ ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "score"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 TOOL_PARAMETER_MARKERS = ("<parameter ", "</parameter>")
 DEFAULT_SCORE_HEAD_DIM = 128
+DEFAULT_SCORE_NUM_HEADS = 16
 DEFAULT_SCORE_SEQ_LENS = (4096, 8192, 16384, 32768)
+DEFAULT_SCORE_TOTAL_TOKENS = 32768
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
 MMA_SEED = "candidates/cuda_mma_attention_seed.py"
 PATCH_REQUIRED_EDIT_VERBS = frozenset(
@@ -285,9 +287,10 @@ def build_repo_context(root: Path) -> str:
         "or empty.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "Unpatched seed score caps: candidates/cuda_mma_attention_seed.py supports "
-        "seq_lens 16 or 32 with head_dim 16; "
+        "seq_lens 16 or 32 with head_dim 16, total_tokens <= 32, and num_heads 1; "
         "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 128 and "
-        "head_dim <= 128. Larger seed scores need candidate_patch to update the wrapper/kernel.",
+        "head_dim <= 128 with total_tokens <= 512 and num_heads <= 4. Larger seed scores "
+        "need candidate_patch to update the wrapper/kernel.",
     ]
     if candidates:
         lines.append("Candidate modules:")
@@ -576,19 +579,39 @@ def _validate_known_candidate_score_shape(
         return
     seq_lens = _score_seq_lens(parts)
     head_dim = _score_head_dim(parts)
+    total_tokens = _score_positive_int_option(
+        parts,
+        "--total-tokens",
+        default=DEFAULT_SCORE_TOTAL_TOKENS,
+    )
+    num_heads = _score_positive_int_option(
+        parts,
+        "--num-heads",
+        default=DEFAULT_SCORE_NUM_HEADS,
+    )
     if candidate == WARP_ROWS_SEED:
-        if any(seq_len > 128 for seq_len in seq_lens) or head_dim > 128:
+        if (
+            any(seq_len > 128 for seq_len in seq_lens)
+            or head_dim > 128
+            or total_tokens > 512
+            or num_heads > 4
+        ):
             raise ValueError(
                 "next_command scores cuda_warp_rows_attention_seed.py outside its "
-                "unpatched seq_len<=128/head_dim<=128 cap; include candidate_patch "
-                "to update the wrapper/kernel first"
+                "unpatched seq_len<=128/head_dim<=128/total_tokens<=512/num_heads<=4 "
+                "cap; include candidate_patch to update the wrapper/kernel first"
             )
     elif candidate == MMA_SEED:
-        if any(seq_len not in {16, 32} for seq_len in seq_lens) or head_dim != 16:
+        if (
+            any(seq_len not in {16, 32} for seq_len in seq_lens)
+            or head_dim != 16
+            or total_tokens > 32
+            or num_heads != 1
+        ):
             raise ValueError(
                 "next_command scores cuda_mma_attention_seed.py outside its unpatched "
-                "seq_len 16/32 and head_dim 16 cap; include candidate_patch to update "
-                "the wrapper/kernel first"
+                "seq_len 16/32, head_dim 16, total_tokens<=32, and num_heads=1 cap; "
+                "include candidate_patch to update the wrapper/kernel first"
             )
 
 
@@ -612,16 +635,20 @@ def _score_seq_lens(parts: list[str]) -> tuple[int, ...]:
 
 
 def _score_head_dim(parts: list[str]) -> int:
-    raw = _single_option_value(parts, "--head-dim")
+    return _score_positive_int_option(parts, "--head-dim", default=DEFAULT_SCORE_HEAD_DIM)
+
+
+def _score_positive_int_option(parts: list[str], option: str, *, default: int) -> int:
+    raw = _single_option_value(parts, option)
     if raw is None:
-        return DEFAULT_SCORE_HEAD_DIM
+        return default
     try:
-        head_dim = int(raw)
+        value = int(raw)
     except ValueError as exc:
-        raise ValueError("next_command --head-dim must be an integer") from exc
-    if head_dim <= 0:
-        raise ValueError("next_command --head-dim must be positive")
-    return head_dim
+        raise ValueError(f"next_command {option} must be an integer") from exc
+    if value <= 0:
+        raise ValueError(f"next_command {option} must be positive")
+    return value
 
 
 def _recover_json_object(text: str) -> dict[str, Any] | None:
