@@ -408,6 +408,9 @@ def build_repo_context(root: Path) -> str:
         "correctness; do not repeat that reduce[tid] score/shifted guard change.",
         "The warp-row BF16 score_tiles shared-memory conversion preserved correctness "
         "but regressed throughput; do not repeat that buffer-precision change.",
+        "The unpatched warp-row seq256/head_dim128 score passed correctness but "
+        "regressed below the accepted MMA direct-accumulation kernel; do not repeat "
+        "that no-patch diagnostic without a structural candidate_patch.",
         "The unpatched MMA seq64/head_dim128 score passed correctness but is already "
         "recorded as structural progress; do not repeat it without a new candidate_patch.",
         "The unpatched MMA seq128/head_dim128 score passed correctness but is already "
@@ -554,6 +557,13 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "edit mode with a candidate_patch raw diff that structurally changes "
             "candidates/cuda_mma_attention/attention_kernel.cu or its wrapper; otherwise "
             "choose a different diagnostic such as a compile check for a new patch. "
+        )
+    if "recorded no-patch warp-row seed score" in message:
+        return (
+            "Do not retry a no-edit score of cuda_warp_rows_attention_seed.py on the "
+            "recorded seq256/head_dim128 workload. That diagnostic already passed "
+            "correctness and was gate-rejected for throughput. Use edit mode with a "
+            "candidate_patch raw diff before scoring that workload again. "
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
@@ -1397,6 +1407,16 @@ def _validate_known_candidate_score_shape(
                 "next_command scores cuda_warp_rows_attention_seed.py outside its "
                 "unpatched seq_len<=256/head_dim<=128/total_tokens<=1024/num_heads<=4 "
                 "cap; include candidate_patch to update the wrapper/kernel first"
+            )
+        if (
+            seq_lens == (256,)
+            and head_dim == 128
+            and total_tokens == 1024
+            and num_heads == 4
+        ):
+            raise ValueError(
+                "next_command repeats a recorded no-patch warp-row seed score; include "
+                "candidate_patch to change kernel structure before scoring"
             )
     elif candidate == MMA_SEED:
         if (

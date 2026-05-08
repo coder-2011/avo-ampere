@@ -899,3 +899,11 @@ source files.
   other threads would later read their own uninitialized local arrays. Do not
   move MMA row state into per-thread arrays unless every consuming thread owns
   and initializes its own row state or the state is explicitly shared.
+  A later no-edit warp-row seed diagnostic on the fixed seq256/head_dim128 BF16
+  suite passed correctness but remained slower than the accepted MMA kernel:
+  geomean `0.4114026673771631` TFLOPS, noncausal `0.5412528843592248` TFLOPS
+  at median 0.9919040203094482 ms, and causal `0.31270439311453807` TFLOPS at
+  median 0.8584319949150085 ms. The causal max error was `0.015625`, higher
+  than the MMA direct-accumulation causal error but still accepted by the
+  current correctness gate. Do not repeat this no-patch warp-row diagnostic;
+  scoring that workload again needs a structural warp-row patch.

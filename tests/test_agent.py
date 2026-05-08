@@ -329,13 +329,26 @@ def test_parse_variation_decision_rejects_unpatched_warp_rows_workload_scaling()
         parse_decision_text(json.dumps(payload))
 
 
-def test_parse_variation_decision_allows_unpatched_warp_rows_smoke_cap() -> None:
+def test_parse_variation_decision_rejects_unpatched_warp_rows_recorded_score() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "No edit needed; score the existing warp-row seed."
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_warp_rows_attention_seed.py "
         "--seq-lens 256 --total-tokens 1024 --num-heads 4 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="recorded no-patch warp-row seed score"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_unpatched_warp_rows_different_smoke() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "No edit; score the existing warp-row seed at seq128."
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_warp_rows_attention_seed.py "
+        "--seq-lens 128 --total-tokens 1024 --num-heads 4 --head-dim 128"
     )
 
     decision = parse_decision_text(json.dumps(payload))
@@ -2000,6 +2013,23 @@ def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
     assert "Do not retry a no-edit score of cuda_mma_attention_seed.py" in content
     assert "candidate_patch raw diff" in content
     assert "structurally changes candidates/cuda_mma_attention/attention_kernel.cu" in content
+
+
+def test_decision_feedback_explains_unpatched_warp_row_score_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command repeats a recorded no-patch warp-row seed score; include "
+            "candidate_patch to change kernel structure before scoring"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not retry a no-edit score of cuda_warp_rows_attention_seed.py" in content
+    assert "seq256/head_dim128" in content
+    assert "candidate_patch raw diff" in content
 
 
 def test_decision_feedback_explains_sync_mma_k_staging_error() -> None:
