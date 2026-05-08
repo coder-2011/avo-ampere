@@ -1015,7 +1015,11 @@ def _candidate_patch_repeats_mma_probability_stride_skew(added_text: str) -> boo
     compact = re.sub(r"\s+", "", added_text)
     return (
         "kProbabilityStride=kTile+8" in compact
-        and "load_matrix_sync(probability_frag,probabilities,kProbabilityStride)" in compact
+        and (
+            "load_matrix_sync(probability_frag,probabilities,kProbabilityStride)" in compact
+            or "load_matrix_sync(probability_frag,&probabilities[0][0],kProbabilityStride)"
+            in compact
+        )
     )
 
 

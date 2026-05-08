@@ -826,3 +826,10 @@ source files.
   9920 bytes shared memory. It preserved correctness and improved seq256
   head_dim128 BF16 geomean to `0.5772885607891738` TFLOPS, so lineage accepted
   commit `845ab85`.
+  A later post-acceptance loop retried probability-buffer stride-24 padding
+  using a 2D `probabilities[kTile][kProbabilityStride]` declaration and
+  `&probabilities[0][0]` in the WMMA load. It failed the noncausal build because
+  the masked-tile zero-fill branch still used stale flattened
+  `probabilities[row * kTile + key]` indexing. This is still the same simple
+  probability-buffer skew direction that previously regressed throughput, so the
+  planner now rejects both flat and 2D stride-24 repeats.
