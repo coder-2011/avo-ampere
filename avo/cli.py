@@ -94,7 +94,12 @@ def main(argv: list[str] | None = None) -> int:
 
 
 def add_score_args(parser: argparse.ArgumentParser) -> None:
-    parser.add_argument("--backend", choices=["torch-sdpa", "flash-attn"], required=True)
+    parser.add_argument(
+        "--backend",
+        choices=["torch-sdpa", "flash-attn", "candidate"],
+        required=True,
+    )
+    parser.add_argument("--candidate", type=Path, default=None)
     parser.add_argument("--seq-lens", default="4096,8192,16384,32768")
     parser.add_argument("--causal", choices=["true", "false", "both"], default="both")
     parser.add_argument("--warmup", type=int, default=5)
@@ -155,6 +160,8 @@ def _score(args: argparse.Namespace) -> int:
         "--repeats",
         str(args.repeats),
     )
+    if args.candidate:
+        worker_args.extend(["--candidate", str(args.candidate)])
     result = run_json_worker(
         worker_args,
         timeout_s=args.timeout_s,
@@ -179,6 +186,8 @@ def _seed_baseline(args: argparse.Namespace) -> int:
         "--repeats",
         str(args.repeats),
     )
+    if args.candidate:
+        worker_args.extend(["--candidate", str(args.candidate)])
     baseline_env = _baseline_build_env(os.environ.copy())
     result = run_json_worker(
         worker_args,
@@ -195,7 +204,13 @@ def _seed_baseline(args: argparse.Namespace) -> int:
 
 def _worker_score(args: argparse.Namespace) -> int:
     cases = cases_from_cli(args.seq_lens, args.causal)
-    payload = score_backend(args.backend, cases, warmup=args.warmup, repeats=args.repeats)
+    payload = score_backend(
+        args.backend,
+        cases,
+        warmup=args.warmup,
+        repeats=args.repeats,
+        candidate=args.candidate,
+    )
     print_result(payload)
     return 0
 

@@ -39,12 +39,27 @@ uv run --extra dev pytest
 uv run python -m avo compile --source kernels/smoke.cu --out-dir /tmp/avo-build
 uv run --extra cuda python -m avo env
 uv run --extra cuda python -m avo score --backend torch-sdpa --seq-lens 4096 --causal both --repeats 3 --warmup 1
+uv run --extra cuda python -m avo score --backend candidate --candidate candidates/torch_sdpa_seed.py --seq-lens 4096 --causal both --repeats 3 --warmup 1
 uv run --extra cuda --extra baseline python -m avo seed-baseline ./lineage --backend flash-attn --seq-lens 4096,8192,16384,32768 --repeats 3 --warmup 1
 ```
 
 `score` runs the CUDA work in a child Python process and parses a structured
 `AVO_RESULT_JSON=...` line from the worker. A crashing worker should return a
 failed score record instead of taking down the orchestrator.
+
+## Candidate Interface
+
+Candidate scoring loads a Python module from `--candidate` and calls:
+
+```python
+attention(q, k, v, causal: bool)
+```
+
+Inputs and outputs use PyTorch SDPA layout: `(batch, heads, seq, head_dim)`.
+The seed module at `candidates/torch_sdpa_seed.py` delegates to PyTorch SDPA so
+the scorer contract can be verified before replacing it with CUDA extension
+code. Future CUDA candidates should hide their `torch.utils.cpp_extension`
+build/load path behind the same function.
 
 ## Agent Use
 

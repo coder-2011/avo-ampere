@@ -1,14 +1,16 @@
 from __future__ import annotations
 
+import importlib.util
 import math
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Literal
 
 from .config import AttentionCase
 
-BackendName = Literal["torch-sdpa", "flash-attn"]
+BackendName = Literal["torch-sdpa", "flash-attn", "candidate"]
 
 
 @dataclass(frozen=True)
@@ -66,6 +68,7 @@ def score_backend(
     warmup: int,
     repeats: int,
     seed: int = 0,
+    candidate: Path | None = None,
 ) -> dict[str, Any]:
     if backend == "torch-sdpa":
         scores = [
@@ -75,9 +78,26 @@ def score_backend(
         scores = [
             _score_flash_attn(case, warmup=warmup, repeats=repeats, seed=seed) for case in cases
         ]
+    elif backend == "candidate":
+        if candidate is None:
+            raise ValueError("candidate backend requires --candidate")
+        try:
+            module = _load_candidate(candidate)
+        except Exception as exc:
+            scores = [
+                _failed_candidate_score(case, f"{type(exc).__name__}: {exc}") for case in cases
+            ]
+        else:
+            scores = [
+                _score_candidate(module, candidate, case, warmup=warmup, repeats=repeats, seed=seed)
+                for case in cases
+            ]
     else:
         raise ValueError(f"unsupported backend: {backend}")
-    return score_summary(backend, scores)
+    summary = score_summary(backend, scores)
+    if backend == "candidate" and candidate is not None:
+        summary["candidate_path"] = str(candidate)
+    return summary
 
 
 def _require_torch():
@@ -192,6 +212,82 @@ def _score_flash_attn(case: AttentionCase, warmup: int, repeats: int, seed: int)
             max_abs_error=None,
             error=f"{type(exc).__name__}: {exc}",
         )
+
+
+def _load_candidate(path: Path):
+    if not path.exists():
+        raise FileNotFoundError(path)
+    module_name = f"avo_candidate_{abs(hash(path.resolve()))}"
+    spec = importlib.util.spec_from_file_location(module_name, path)
+    if spec is None or spec.loader is None:
+        raise RuntimeError(f"could not load candidate module from {path}")
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    attention = getattr(module, "attention", None)
+    if not callable(attention):
+        raise ValueError("candidate module must define callable attention(q, k, v, causal)")
+    return module
+
+
+def _score_candidate(
+    module: Any,
+    candidate_path: Path,
+    case: AttentionCase,
+    warmup: int,
+    repeats: int,
+    seed: int,
+) -> CaseScore:
+    try:
+        torch = _require_torch()
+        q, k, v = _make_inputs(case, seed)
+        reference = _reference_sdpa(q, k, v, case.causal)
+        candidate = module.attention(q, k, v, case.causal)
+        if tuple(candidate.shape) != tuple(reference.shape):
+            candidate_shape = tuple(candidate.shape)
+            reference_shape = tuple(reference.shape)
+            raise RuntimeError(
+                f"candidate output shape {candidate_shape} != reference {reference_shape}"
+            )
+        if not candidate.isfinite().all().item():
+            raise RuntimeError("candidate output contains non-finite values")
+        max_abs_error = float((candidate.float() - reference.float()).abs().max().item())
+        correct = bool(torch.allclose(candidate.float(), reference.float(), atol=3e-2, rtol=3e-2))
+        milliseconds = _time_cuda(
+            lambda: module.attention(q, k, v, case.causal),
+            warmup,
+            repeats,
+        )
+        return CaseScore(
+            backend="candidate",
+            case=case,
+            correct=correct,
+            milliseconds=milliseconds,
+            tflops=tflops_from_ms(case, milliseconds) if correct else 0.0,
+            max_abs_error=max_abs_error,
+            error=None if correct else f"{candidate_path} failed tolerance check",
+        )
+    except Exception as exc:
+        return CaseScore(
+            backend="candidate",
+            case=case,
+            correct=False,
+            milliseconds=None,
+            tflops=0.0,
+            max_abs_error=None,
+            error=f"{type(exc).__name__}: {exc}",
+        )
+
+
+def _failed_candidate_score(case: AttentionCase, error: str) -> CaseScore:
+    return CaseScore(
+        backend="candidate",
+        case=case,
+        correct=False,
+        milliseconds=None,
+        tflops=0.0,
+        max_abs_error=None,
+        error=error,
+    )
 
 
 def sleep_score(seconds: float) -> dict[str, Any]:
