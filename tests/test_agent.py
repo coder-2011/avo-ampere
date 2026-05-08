@@ -344,11 +344,11 @@ def test_parse_variation_decision_allows_patched_warp_rows_score_outside_cap() -
 
 def test_parse_variation_decision_rejects_unpatched_mma_score_outside_cap() -> None:
     payload = decision_payload()
-    payload["candidate_edit"] = "Score the existing MMA seed at head_dim 128."
+    payload["candidate_edit"] = "Score the existing MMA seed at head_dim 256."
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 128"
+        "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 256"
     )
 
     with pytest.raises(ValueError, match="outside its unpatched seq_len 16/32"):
@@ -361,7 +361,7 @@ def test_parse_variation_decision_allows_unpatched_mma_smoke_cap() -> None:
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 64"
+        "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 128"
     )
 
     decision = parse_decision_text(json.dumps(payload))
@@ -371,20 +371,20 @@ def test_parse_variation_decision_allows_unpatched_mma_smoke_cap() -> None:
 
 def test_parse_variation_decision_rejects_patched_mma_shape_score_before_compile() -> None:
     payload = decision_payload()
-    payload["candidate_edit"] = "Extend the MMA wrapper cap for head_dim 128."
+    payload["candidate_edit"] = "Extend the MMA wrapper cap for head_dim 256."
     payload["candidate_patch"] = (
         "diff --git a/candidates/cuda_mma_attention_seed.py "
         "b/candidates/cuda_mma_attention_seed.py\n"
         "--- a/candidates/cuda_mma_attention_seed.py\n"
         "+++ b/candidates/cuda_mma_attention_seed.py\n"
         "@@ -1 +1 @@\n"
-        "-SMOKE_HEAD_DIM = 64\n"
-        "+SMOKE_HEAD_DIM = 128\n"
+        "-SMOKE_HEAD_DIM = 128\n"
+        "+SMOKE_HEAD_DIM = 256\n"
     )
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 128"
+        "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 256"
     )
 
     with pytest.raises(ValueError, match="first run avo compile"):
@@ -397,7 +397,7 @@ def test_parse_variation_decision_rejects_unpatched_mma_workload_scaling() -> No
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_mma_attention_seed.py "
-        "--seq-lens 32 --total-tokens 64 --num-heads 2 --head-dim 64"
+        "--seq-lens 32 --total-tokens 64 --num-heads 2 --head-dim 128"
     )
 
     with pytest.raises(ValueError, match="total_tokens<=32"):
@@ -1079,7 +1079,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "No-patch compile diagnostics are already recorded" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu, " in context
     assert "Patch hunks must use exact current file context" in context
-    assert "Patched MMA shape extensions beyond the current head_dim64 smoke" in context
+    assert "Patched MMA shape extensions beyond the current head_dim128 smoke" in context
     assert "partial MMA head_dim128 extension" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 32" in context
