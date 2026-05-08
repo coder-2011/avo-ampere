@@ -126,6 +126,12 @@ variation steps.
   spills; BF16/Half entry points use 48 registers, 1 barrier, and 16896 bytes
   shared memory, while the FP32 entry point uses 56 registers, 1 barrier, and
   33280 bytes shared memory.
+  A shape-only wrapper patch to score `seq_len=512`, `head_dim=128`,
+  `total_tokens=2048`, and `num_heads=4` also passed correctness with
+  `0.8677167693061046` geomean TFLOPS, but the fixed-case gate rejected it
+  because the benchmark signature differed from the seq256 best. Do not treat
+  larger-shape TFLOPS as a gate improvement unless the benchmark suite is
+  deliberately reseeded.
 - The tiled seed compiles cleanly on sm86 with no spills. Its ptxas diagnostics
   report 40 registers and 1 barrier for BF16/Half/FP32 entry points, and 48
   registers and 1 barrier for the double entry point. The ptxas output did not
