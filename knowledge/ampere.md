@@ -818,3 +818,11 @@ source files.
   referenced `chunk` outside the PV chunk loop. Its own risk text said it would
   fail compilation and not to score the patch as-is. The planner now treats
   those self-invalid warnings as a hard rejection before patch application.
+  A manually corrected PV direct-accumulation patch removed the intermediate
+  float `pv_tile` shared-memory buffer. It rescales `output_acc` before the PV
+  loop, loads each 16-column `output_acc` chunk into the WMMA accumulator
+  fragment, runs the PV MMA, and stores the accumulator directly back to
+  `output_acc`. This compiled with no spills, 40 registers, 1 barrier, and
+  9920 bytes shared memory. It preserved correctness and improved seq256
+  head_dim128 BF16 geomean to `0.5772885607891738` TFLOPS, so lineage accepted
+  commit `845ab85`.

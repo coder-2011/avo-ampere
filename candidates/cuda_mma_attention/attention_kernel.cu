@@ -29,7 +29,6 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
                                      float scale) {
   __shared__ float scores[kScoreElements];
   __shared__ __nv_bfloat16 probabilities[kScoreElements];
-  __shared__ float pv_tile[kOutputElements];
   __shared__ float output_acc[kOutputElements];
   __shared__ float row_max[kTile];
   __shared__ float row_sum[kTile];
@@ -145,18 +144,13 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
             v_frag;
         wmma::fragment<wmma::accumulator, kTile, 16, kTile, float> output_frag;
 
-        wmma::fill_fragment(output_frag, 0.0f);
-        wmma::load_matrix_sync(probability_frag, probabilities, kTile);
         const int chunk_offset = chunk * 16;
+        wmma::load_matrix_sync(output_frag, &output_acc[chunk_offset], kHeadDim, wmma::mem_row_major);
+        wmma::load_matrix_sync(probability_frag, probabilities, kTile);
         wmma::load_matrix_sync(v_frag, v + base + key_start * kHeadDim + chunk_offset, kHeadDim);
         wmma::mma_sync(output_frag, probability_frag, v_frag, output_frag);
-        wmma::store_matrix_sync(&pv_tile[chunk_offset], output_frag, kHeadDim, wmma::mem_row_major);
+        wmma::store_matrix_sync(&output_acc[chunk_offset], output_frag, kHeadDim, wmma::mem_row_major);
       }
-    }
-    __syncthreads();
-
-    for (int linear = threadIdx.x; linear < kOutputElements; linear += blockDim.x) {
-      output_acc[linear] += pv_tile[linear];
     }
     __syncthreads();
   }
