@@ -1,7 +1,8 @@
 from pathlib import Path
+from textwrap import dedent
 from types import SimpleNamespace
 
-from avo.cli import _agent_status, _baseline_build_env, _score
+from avo.cli import _agent_status, _baseline_build_env, _score, main
 
 
 def test_agent_status_reports_missing_key_without_secret(monkeypatch) -> None:
@@ -73,3 +74,32 @@ def test_score_command_forwards_trial_count(monkeypatch) -> None:
     assert exit_code == 0
     assert "--trials" in captured["args"]
     assert captured["args"][captured["args"].index("--trials") + 1] == "3"
+
+
+def test_apply_patch_command_reports_dry_run_result(tmp_path: Path, capsys) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    patch = tmp_path / "candidate.patch"
+    patch.write_text(
+        dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = 2
+            """
+        ),
+        encoding="utf-8",
+    )
+
+    exit_code = main(["apply-patch", str(patch), "--cwd", str(tmp_path), "--dry-run"])
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert '"ok": true' in output
+    assert "candidates/seed.py" in output
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"

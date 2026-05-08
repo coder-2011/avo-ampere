@@ -1,6 +1,7 @@
 import json
 import sys
 from pathlib import Path
+from textwrap import dedent
 
 import pytest
 
@@ -8,10 +9,13 @@ from avo.agent import VariationDecision
 from avo.evolve import (
     CommandResult,
     EvolutionStep,
+    PatchResult,
     VariationAttempt,
     _extract_score_payload,
+    apply_candidate_patch,
     command_from_decision,
     finalize_attempt,
+    paths_from_unified_diff,
     run_decision_command,
     summarize_attempt_history,
     write_attempt,
@@ -50,6 +54,171 @@ def test_command_from_decision_rejects_shell() -> None:
 def test_command_from_decision_rejects_unsupported_subcommand() -> None:
     with pytest.raises(ValueError, match="unsupported"):
         command_from_decision(decision("avo commit-score lineage score.json"))
+
+
+def test_paths_from_unified_diff_extracts_candidate_paths() -> None:
+    patch = candidate_value_patch()
+
+    assert paths_from_unified_diff(patch) == ["candidates/seed.py"]
+
+
+def test_apply_candidate_patch_dry_run_does_not_modify_file(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    patch = candidate_value_patch()
+
+    result = apply_candidate_patch(patch, cwd=tmp_path, dry_run=True)
+
+    assert result.ok
+    assert result.patch_paths == ["candidates/seed.py"]
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_apply_candidate_patch_updates_candidate_file(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+
+    result = apply_candidate_patch(candidate_value_patch(), cwd=tmp_path)
+
+    assert result.ok
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
+def test_apply_candidate_patch_rejects_non_candidate_path() -> None:
+    result = apply_candidate_patch(
+        dedent(
+            """\
+            diff --git a/README.md b/README.md
+            --- a/README.md
+            +++ b/README.md
+            @@ -1 +1 @@
+            -old
+            +new
+            """
+        ),
+        cwd=Path.cwd(),
+    )
+
+    assert_patch_rejected(result, "under: candidates")
+
+
+def test_apply_candidate_patch_rejects_path_traversal() -> None:
+    result = apply_candidate_patch(
+        dedent(
+            """\
+            diff --git a/candidates/../evil.py b/candidates/../evil.py
+            --- a/candidates/../evil.py
+            +++ b/candidates/../evil.py
+            @@ -1 +1 @@
+            -old
+            +new
+            """
+        ),
+        cwd=Path.cwd(),
+    )
+
+    assert_patch_rejected(result, "path traversal")
+
+
+def test_apply_candidate_patch_rejects_symlink_patch() -> None:
+    result = apply_candidate_patch(
+        dedent(
+            """\
+            diff --git a/candidates/link b/candidates/link
+            new file mode 120000
+            index 0000000..e69de29
+            --- /dev/null
+            +++ b/candidates/link
+            @@ -0,0 +1 @@
+            +../outside
+            """
+        ),
+        cwd=Path.cwd(),
+    )
+
+    assert_patch_rejected(result, "unsupported patch marker")
+
+
+def test_apply_candidate_patch_rejects_existing_symlink_path(tmp_path: Path) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    outside = tmp_path / "outside"
+    outside.mkdir()
+    (candidate_dir / "link").symlink_to(outside, target_is_directory=True)
+
+    result = apply_candidate_patch(
+        dedent(
+            """\
+            diff --git a/candidates/link/seed.py b/candidates/link/seed.py
+            --- a/candidates/link/seed.py
+            +++ b/candidates/link/seed.py
+            @@ -1 +1 @@
+            -old
+            +new
+            """
+        ),
+        cwd=tmp_path,
+    )
+
+    assert_patch_rejected(result, "existing symlink")
+
+
+def test_apply_candidate_patch_rejects_binary_patch() -> None:
+    result = apply_candidate_patch(
+        dedent(
+            """\
+            diff --git a/candidates/blob.bin b/candidates/blob.bin
+            new file mode 100644
+            index 0000000..1234567
+            GIT binary patch
+            literal 0
+            HcmV?d00001
+            """
+        ),
+        cwd=Path.cwd(),
+    )
+
+    assert_patch_rejected(result, "unsupported patch marker")
+
+
+def test_apply_candidate_patch_rejects_delete_patch() -> None:
+    result = apply_candidate_patch(
+        dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            deleted file mode 100644
+            index 1234567..0000000
+            --- a/candidates/seed.py
+            +++ /dev/null
+            @@ -1 +0,0 @@
+            -VALUE = 1
+            """
+        ),
+        cwd=Path.cwd(),
+    )
+
+    assert_patch_rejected(result, "unsupported patch marker")
+
+
+def test_apply_candidate_patch_rejects_empty_patch() -> None:
+    result = apply_candidate_patch("", cwd=Path.cwd())
+
+    assert_patch_rejected(result, "at least one diff")
+
+
+def test_apply_candidate_patch_rejects_non_git_unified_diff() -> None:
+    result = apply_candidate_patch(
+        dedent(
+            """\
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = 2
+            """
+        ),
+        cwd=Path.cwd(),
+    )
+
+    assert_patch_rejected(result, "diff --git")
 
 
 def test_run_decision_command_executes_allowed_command() -> None:
@@ -225,3 +394,30 @@ def test_summarize_attempt_history_reports_recent_steps(tmp_path: Path) -> None:
     assert "geomean_tflops=3.0" in summary
     assert "command returncode=2" in summary
     assert "bad.json" not in summary
+
+
+def write_seed_candidate(root: Path) -> Path:
+    candidate_dir = root / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    return seed
+
+
+def candidate_value_patch() -> str:
+    return dedent(
+        """\
+        diff --git a/candidates/seed.py b/candidates/seed.py
+        --- a/candidates/seed.py
+        +++ b/candidates/seed.py
+        @@ -1 +1 @@
+        -VALUE = 1
+        +VALUE = 2
+        """
+    )
+
+
+def assert_patch_rejected(result: PatchResult, reason: str) -> None:
+    assert not result.ok
+    assert result.rejected_reason is not None
+    assert reason in result.rejected_reason

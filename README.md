@@ -10,7 +10,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Target workload: BF16 forward attention with head dimension 128 and sequence lengths 4096, 8192, 16384, and 32768.
 - Baseline: FlashAttention-2. FlashAttention-4 is intentionally excluded because its Blackwell path uses primitives that are not available on Ampere.
 - Candidate support: Python candidate modules plus a first CUDA-extension smoke candidate.
-- Agent support: Anthropic-backed variation planning with strict schema validation and a bounded command allowlist.
+- Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, and a candidate-only patch application substrate.
 - Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise in JSON.
 - Attempt memory: `evolve-once --attempts-dir` records accepted and rejected steps outside the committed lineage and feeds recent summaries back into later agent prompts.
 - Research state: infrastructure-first checkpoint. The code can score and gate candidates, but the repository does not yet contain a novel accepted attention kernel.
@@ -227,6 +227,15 @@ uv run python -m avo evolve-once \
 
 `run-decision` intentionally accepts only selected `avo env`, `avo compile`, and `avo score` commands. It does not run arbitrary shell, git, file-editing, or destructive commands.
 
+Candidate source edits have a separate manual substrate:
+
+```bash
+uv run python -m avo apply-patch candidate.patch --dry-run
+uv run python -m avo apply-patch candidate.patch
+```
+
+`apply-patch` reads a raw unified diff, extracts `diff --git` paths, rejects paths outside `candidates/`, rejects path traversal, symlink-mode patches, binary patches, renames, deletes, and mode changes, then runs `git apply --check --whitespace=error` before applying. It does not stage, commit, score, or bypass the lineage gate. The command is not yet wired into `run-decision`; it is the bounded executor surface needed before the Anthropic loop can safely propose candidate edits.
+
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the existing lineage gate.
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
 When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step JSON for every run, including rejected and failed attempts. Later `agent-plan` or `evolve-once` calls summarize the latest records from that directory so the agent can avoid repeating known dead ends without adding them to committed lineage.
@@ -235,7 +244,7 @@ When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step 
 
 - Scaling the tiny WMMA QK/PV seed beyond its 16/32-token smoke shapes.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
-- A complete mutation loop that edits candidate code safely.
+- Wiring the candidate-only patch substrate into a complete agent mutation loop.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.
 

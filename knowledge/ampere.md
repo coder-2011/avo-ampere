@@ -51,6 +51,12 @@ variation steps.
 - Use `evolve-once --attempts-dir ./attempts` during autonomous runs so rejected
   score attempts, command failures, and gate decisions remain available as recent
   prompt context without becoming committed lineage.
+- Candidate source patching now has a bounded manual substrate:
+  `avo apply-patch PATCH --dry-run` accepts only ordinary unified diffs under
+  `candidates/`, rejects path traversal, symlink-mode patches, binary patches,
+  renames, deletes, and mode changes, and runs `git apply --check` before any
+  real apply. It does not stage, commit, score, or currently appear in the
+  agent `run-decision` allowlist.
 
 ## Search Space
 

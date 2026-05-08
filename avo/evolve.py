@@ -6,7 +6,7 @@ import subprocess
 import sys
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .agent import VariationDecision
@@ -16,6 +16,20 @@ from .lineage import GateDecision, commit_score
 DEFAULT_ALLOWED_SUBCOMMANDS = frozenset({"env", "compile", "score"})
 SHELL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 DEFAULT_ATTEMPT_HISTORY_LIMIT = 5
+DEFAULT_PATCH_ROOTS = ("candidates/",)
+REJECTED_PATCH_MARKERS = frozenset(
+    {
+        "Binary files ",
+        "GIT binary patch",
+        "deleted file mode ",
+        "rename from ",
+        "rename to ",
+        "copy from ",
+        "copy to ",
+        "similarity index ",
+        "dissimilarity index ",
+    }
+)
 
 
 @dataclass(frozen=True)
@@ -38,6 +52,26 @@ class CommandResult:
             "timed_out": self.timed_out,
             "stdout_tail": self.stdout_tail,
             "stderr_tail": self.stderr_tail,
+        }
+
+
+@dataclass(frozen=True)
+class PatchResult:
+    ok: bool
+    patch_paths: list[str]
+    returncode: int | None
+    stdout_tail: str
+    stderr_tail: str
+    rejected_reason: str | None = None
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "ok": self.ok,
+            "patch_paths": self.patch_paths,
+            "returncode": self.returncode,
+            "stdout_tail": self.stdout_tail,
+            "stderr_tail": self.stderr_tail,
+            "rejected_reason": self.rejected_reason,
         }
 
 
@@ -95,6 +129,117 @@ def command_from_decision(
         allowed = ", ".join(sorted(allowed_subcommands))
         raise ValueError(f"unsupported avo subcommand '{subcommand}'; allowed: {allowed}")
     return [sys.executable, "-m", "avo", *parts[1:]]
+
+
+def paths_from_unified_diff(
+    patch_text: str,
+    *,
+    allowed_roots: tuple[str, ...] = DEFAULT_PATCH_ROOTS,
+) -> list[str]:
+    paths: set[str] = set()
+    current_diff_paths: set[str] = set()
+    in_hunk = False
+    saw_diff_git = False
+
+    for raw_line in patch_text.splitlines():
+        if _contains_rejected_patch_marker(raw_line):
+            raise ValueError(f"unsupported patch marker: {_rejected_patch_marker(raw_line)}")
+
+        if raw_line.startswith("diff --git "):
+            saw_diff_git = True
+            in_hunk = False
+            current_diff_paths = _paths_from_diff_git_line(raw_line, allowed_roots=allowed_roots)
+            paths.update(current_diff_paths)
+            continue
+
+        if raw_line.startswith("@@"):
+            in_hunk = True
+            continue
+
+        if in_hunk:
+            continue
+
+        if raw_line.startswith("new file mode "):
+            if raw_line != "new file mode 100644":
+                raise ValueError("new files must use mode 100644")
+            continue
+
+        if raw_line.startswith(("old mode ", "new mode ")):
+            raise ValueError("mode changes are not supported")
+
+        if raw_line.startswith("--- ") or raw_line.startswith("+++ "):
+            path = _path_from_file_header(raw_line)
+            if path is None:
+                continue
+            normalized = _validate_patch_path(path, allowed_roots=allowed_roots)
+            if not current_diff_paths:
+                raise ValueError("file headers must follow a diff --git path")
+            if normalized not in current_diff_paths:
+                raise ValueError("file header path does not match diff --git path")
+            paths.add(normalized)
+
+    if not saw_diff_git or not paths:
+        raise ValueError("patch must contain at least one diff --git path")
+    return sorted(paths)
+
+
+def apply_candidate_patch(
+    patch_text: str,
+    *,
+    cwd: Path,
+    dry_run: bool = False,
+) -> PatchResult:
+    try:
+        patch_paths = paths_from_unified_diff(patch_text)
+        _validate_patch_worktree(cwd, patch_paths)
+    except ValueError as exc:
+        return PatchResult(
+            ok=False,
+            patch_paths=[],
+            returncode=None,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=str(exc),
+        )
+
+    check = _run_git_apply(
+        cwd,
+        patch_text,
+        "--check",
+        "--whitespace=error",
+    )
+    if check.returncode != 0:
+        return PatchResult(
+            ok=False,
+            patch_paths=patch_paths,
+            returncode=check.returncode,
+            stdout_tail=_tail(check.stdout),
+            stderr_tail=_tail(check.stderr),
+            rejected_reason="git apply --check failed",
+        )
+
+    if dry_run:
+        return PatchResult(
+            ok=True,
+            patch_paths=patch_paths,
+            returncode=check.returncode,
+            stdout_tail=_tail(check.stdout),
+            stderr_tail=_tail(check.stderr),
+        )
+
+    applied = _run_git_apply(
+        cwd,
+        patch_text,
+        "--whitespace=error",
+    )
+    return PatchResult(
+        ok=applied.returncode == 0,
+        patch_paths=patch_paths,
+        returncode=applied.returncode,
+        stdout_tail=_tail(applied.stdout),
+        stderr_tail=_tail(applied.stderr),
+        rejected_reason=None if applied.returncode == 0 else "git apply failed",
+    )
 
 
 def run_decision_command(
@@ -231,6 +376,105 @@ def _looks_like_score_payload(payload: dict[str, Any]) -> bool:
         isinstance(payload.get("all_correct"), bool)
         and "geomean_tflops" in payload
         and isinstance(payload.get("cases"), list)
+    )
+
+
+def _contains_rejected_patch_marker(line: str) -> bool:
+    return _rejected_patch_marker(line) is not None
+
+
+def _rejected_patch_marker(line: str) -> str | None:
+    for marker in REJECTED_PATCH_MARKERS:
+        if line.startswith(marker):
+            return marker.strip()
+    if "120000" in line and "mode " in line:
+        return "symlink mode 120000"
+    return None
+
+
+def _paths_from_diff_git_line(line: str, *, allowed_roots: tuple[str, ...]) -> set[str]:
+    parts = line.split()
+    if len(parts) != 4:
+        raise ValueError("diff --git paths with whitespace or quoting are not supported")
+    left = _validate_prefixed_diff_path(parts[2], allowed_roots=allowed_roots)
+    right = _validate_prefixed_diff_path(parts[3], allowed_roots=allowed_roots)
+    if left != right:
+        raise ValueError("renames and cross-path patches are not supported")
+    return {left}
+
+
+def _path_from_file_header(line: str) -> str | None:
+    _, _, rest = line.partition(" ")
+    path = rest.split("\t", maxsplit=1)[0]
+    if path == "/dev/null":
+        return None
+    return path
+
+
+def _validate_prefixed_diff_path(path: str, *, allowed_roots: tuple[str, ...]) -> str:
+    if not path.startswith(("a/", "b/")):
+        raise ValueError("diff paths must use a/ and b/ prefixes")
+    return _validate_patch_path(path[2:], allowed_roots=allowed_roots)
+
+
+def _validate_patch_path(path: str, *, allowed_roots: tuple[str, ...]) -> str:
+    if path.startswith(("a/", "b/")):
+        path = path[2:]
+    if not path:
+        raise ValueError("patch path is empty")
+    if "\x00" in path or "\\" in path:
+        raise ValueError("patch path contains unsupported characters")
+    if any(char.isspace() for char in path):
+        raise ValueError("patch paths with whitespace are not supported")
+    if path.startswith("/"):
+        raise ValueError("absolute patch paths are not supported")
+
+    posix_path = PurePosixPath(path)
+    if posix_path.is_absolute():
+        raise ValueError("absolute patch paths are not supported")
+    if any(part in {"", ".", ".."} for part in posix_path.parts):
+        raise ValueError("path traversal is not supported")
+    if ".git" in posix_path.parts:
+        raise ValueError("patch paths must not contain .git")
+
+    normalized = posix_path.as_posix()
+    if not any(
+        normalized.startswith(root) and normalized != root.rstrip("/") for root in allowed_roots
+    ):
+        roots = ", ".join(root.rstrip("/") for root in allowed_roots)
+        raise ValueError(f"patch paths must be under: {roots}")
+    return normalized
+
+
+def _validate_patch_worktree(cwd: Path, patch_paths: list[str]) -> None:
+    if not cwd.exists():
+        raise ValueError(f"cwd does not exist: {cwd}")
+    if not cwd.is_dir():
+        raise ValueError(f"cwd is not a directory: {cwd}")
+    for patch_path in patch_paths:
+        if _path_has_symlink(cwd, patch_path):
+            raise ValueError(f"patch path crosses an existing symlink: {patch_path}")
+
+
+def _path_has_symlink(cwd: Path, patch_path: str) -> bool:
+    current = cwd
+    for part in PurePosixPath(patch_path).parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+        if not current.exists():
+            return False
+    return False
+
+
+def _run_git_apply(cwd: Path, patch_text: str, *args: str) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        ["git", "apply", *args],
+        cwd=cwd,
+        input=patch_text,
+        text=True,
+        capture_output=True,
+        check=False,
     )
 
 

@@ -17,6 +17,7 @@ from .compile import compile_cuda_source
 from .config import AMPERE_A6000, cases_from_cli
 from .evolve import (
     DEFAULT_ATTEMPT_HISTORY_LIMIT,
+    apply_candidate_patch,
     finalize_attempt,
     run_decision_command,
     summarize_attempt_history,
@@ -80,6 +81,11 @@ def main(argv: list[str] | None = None) -> int:
     run_decision_parser.add_argument("--timeout-s", type=int, default=900)
     run_decision_parser.add_argument("--attempt-json", type=Path, default=None)
 
+    apply_patch_parser = subparsers.add_parser("apply-patch")
+    apply_patch_parser.add_argument("patch", type=Path)
+    apply_patch_parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    apply_patch_parser.add_argument("--dry-run", action="store_true")
+
     evolve_parser = subparsers.add_parser("evolve-once")
     evolve_parser.add_argument("--lineage", type=Path, required=True)
     evolve_parser.add_argument("--knowledge", type=Path, required=True)
@@ -117,6 +123,8 @@ def main(argv: list[str] | None = None) -> int:
         return _agent_plan(args)
     if args.command == "run-decision":
         return _run_decision(args)
+    if args.command == "apply-patch":
+        return _apply_patch(args)
     if args.command == "evolve-once":
         return _evolve_once(args)
     raise AssertionError(args.command)
@@ -336,6 +344,16 @@ def _run_decision(args: argparse.Namespace) -> int:
         write_attempt(args.attempt_json, attempt)
     print(json.dumps(attempt.as_dict(), indent=2, sort_keys=True))
     return 0 if attempt.command_result.ok else 2
+
+
+def _apply_patch(args: argparse.Namespace) -> int:
+    result = apply_candidate_patch(
+        args.patch.read_text(encoding="utf-8"),
+        cwd=args.cwd,
+        dry_run=args.dry_run,
+    )
+    print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
+    return 0 if result.ok else 2
 
 
 def _evolve_once(args: argparse.Namespace) -> int:
