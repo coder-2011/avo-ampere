@@ -517,6 +517,19 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "If you cannot express that cleanly as a small diff, choose a materially "
             "different non-async candidate patch in this retry. "
         )
+    if "repeats synchronous MMA K shared-memory staging" in message:
+        return (
+            "Do not retry static k_shared MMA K staging. It already passed correctness "
+            "and regressed throughput. A corrected K-staging decision must add real "
+            "async-copy or double-buffered overlap; otherwise choose a different "
+            "non-K-staging candidate patch. "
+        )
+    if "synchronous double-buffered MMA V shared-memory staging" in message:
+        return (
+            "Do not retry static v_shared[2] MMA V staging. It already passed correctness "
+            "and regressed throughput. A corrected V-staging decision must add real "
+            "async-copy overlap; otherwise choose a different non-V-staging candidate patch. "
+        )
     return ""
 
 

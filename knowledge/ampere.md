@@ -667,6 +667,9 @@ variation steps.
   at median 1.2412480115890503 ms; causal was `0.2166535380479405` TFLOPS at
   median 1.2390079498291016 ms. Do not repeat synchronous static `k_shared`
   staging without real async-copy or double-buffered overlap.
+  A later planner loop still retried static synchronous K staging after the no-patch and scalar-async
+  guards. Runtime feedback now explicitly tells the agent to stop retrying `k_shared` K staging and
+  either add real overlap or choose a different non-K-staging patch.
   A follow-up loop proposed static double-buffered V staging in the MMA seed:
   `v_shared[2][kTile * kHeadDim]`, cooperative warp loads of the current and
   next 16x128 V tiles, and PV `wmma::load_matrix_sync` from

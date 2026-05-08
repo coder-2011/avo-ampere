@@ -1410,6 +1410,38 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     assert "choose a materially different non-async candidate patch in this retry" in content
 
 
+def test_decision_feedback_explains_sync_mma_k_staging_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "candidate_patch repeats synchronous MMA K shared-memory staging; "
+            "the recorded score preserved correctness but regressed throughput"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not retry static k_shared MMA K staging" in content
+    assert "choose a different non-K-staging candidate patch" in content
+
+
+def test_decision_feedback_explains_sync_mma_v_staging_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "candidate_patch repeats synchronous double-buffered MMA V shared-memory staging; "
+            "the recorded score preserved correctness but regressed throughput"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not retry static v_shared[2] MMA V staging" in content
+    assert "choose a different non-V-staging candidate patch" in content
+
+
 def test_parse_variation_decision_response_prefers_tool_use() -> None:
     payload = decision_payload()
     response = SimpleNamespace(
