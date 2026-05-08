@@ -525,6 +525,14 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "as build/mma_probe. Do not write compiler outputs under candidates/ or beside "
             "source files. "
         )
+    if "recorded unpatched MMA seed score" in message:
+        return (
+            "Do not retry a no-edit score of cuda_mma_attention_seed.py. That exact "
+            "MMA seed score is already in lineage. To score this candidate again, use "
+            "edit mode with a candidate_patch raw diff that structurally changes "
+            "candidates/cuda_mma_attention/attention_kernel.cu or its wrapper; otherwise "
+            "choose a different diagnostic such as a compile check for a new patch. "
+        )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
             "Do not retry scalar sizeof(__nv_bfloat16) async copies. A valid Ampere "

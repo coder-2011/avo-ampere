@@ -1637,6 +1637,23 @@ def test_decision_feedback_explains_compile_out_dir_error() -> None:
     assert "Do not write compiler outputs under candidates/" in content
 
 
+def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command repeats a recorded unpatched MMA seed score; include "
+            "candidate_patch to change kernel structure before scoring"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not retry a no-edit score of cuda_mma_attention_seed.py" in content
+    assert "candidate_patch raw diff" in content
+    assert "structurally changes candidates/cuda_mma_attention/attention_kernel.cu" in content
+
+
 def test_decision_feedback_explains_sync_mma_k_staging_error() -> None:
     kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
 

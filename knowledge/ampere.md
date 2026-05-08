@@ -809,3 +809,7 @@ source files.
   current best `0.4924015757468769`. Do not repeat this exact QK
   `k_frag_next` preload chain; future QK scheduling work needs materially
   different overlap or profiler evidence.
+  A later loop still failed planning validation after three attempts by trying
+  to score `cuda_mma_attention_seed.py` with no `candidate_patch`. Retry
+  feedback now explicitly says not to repeat no-edit MMA seed scores; scoring
+  that candidate again requires a structural raw diff or a different diagnostic.
