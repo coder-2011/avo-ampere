@@ -3,8 +3,10 @@ from pathlib import Path
 from textwrap import dedent
 from types import SimpleNamespace
 
+import pytest
+
 from avo.agent import VariationDecision
-from avo.cli import _agent_status, _baseline_build_env, _evolve_once, _score, main
+from avo.cli import _agent_status, _baseline_build_env, _evolve_loop, _evolve_once, _score, main
 from avo.evolve import CommandResult, VariationAttempt, apply_candidate_patch
 
 
@@ -260,3 +262,102 @@ def test_evolve_once_snapshots_accepted_candidate_patch(
     assert (tmp_path / "lineage" / "sources" / "latest" / "candidates" / "seed.py").read_text(
         encoding="utf-8"
     ) == "VALUE = 2\n"
+
+
+def test_evolve_loop_runs_until_accepted_and_records_attempts(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    decisions = [
+        loop_decision("first rejected"),
+        loop_decision("second accepted"),
+    ]
+    seen_attempt_histories = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env):
+        geomean = 0.0 if decision.hypothesis == "first rejected" else 3.0
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="{}",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:00+00:00",
+            completed_at="2026-05-08T00:00:01+00:00",
+            score_payload={
+                "backend": "mock",
+                "all_correct": True,
+                "geomean_tflops": geomean,
+                "cases": [{}],
+            },
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    exit_code = _evolve_loop(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            env_file=None,
+            model="claude",
+            max_steps=3,
+            loop_json=tmp_path / "loop.json",
+            attempts_dir=tmp_path / "attempts",
+            attempt_limit=5,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["accepted"] is True
+    assert payload["completed_steps"] == 2
+    assert payload["stopped_reason"] == "accepted"
+    assert len(list((tmp_path / "attempts").glob("*.json"))) == 2
+    assert seen_attempt_histories[0] == ""
+    assert "first rejected" in seen_attempt_histories[1]
+    assert json.loads((tmp_path / "loop.json").read_text(encoding="utf-8"))["accepted"] is True
+
+
+def test_evolve_loop_requires_attempts_dir(tmp_path: Path) -> None:
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="attempts-dir"):
+        _evolve_loop(
+            SimpleNamespace(
+                lineage=tmp_path / "lineage",
+                knowledge=knowledge,
+                cwd=tmp_path,
+                timeout_s=10,
+                env_file=None,
+                model="claude",
+                max_steps=1,
+                loop_json=None,
+                attempts_dir=None,
+                attempt_limit=5,
+            )
+        )
+
+
+def loop_decision(hypothesis: str) -> VariationDecision:
+    return VariationDecision(
+        hypothesis=hypothesis,
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="mock loop step",
+        expected_effect="exercise loop control",
+        risk="mock score only",
+        next_command="avo score --backend candidate",
+    )

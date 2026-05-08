@@ -17,6 +17,7 @@ from .compile import compile_cuda_source
 from .config import AMPERE_A6000, cases_from_cli
 from .evolve import (
     DEFAULT_ATTEMPT_HISTORY_LIMIT,
+    EvolutionStep,
     apply_candidate_patch,
     cleanup_rejected_candidate_patch,
     finalize_attempt,
@@ -97,6 +98,17 @@ def main(argv: list[str] | None = None) -> int:
     evolve_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
     add_attempt_history_args(evolve_parser)
 
+    loop_parser = subparsers.add_parser("evolve-loop")
+    loop_parser.add_argument("--lineage", type=Path, required=True)
+    loop_parser.add_argument("--knowledge", type=Path, required=True)
+    loop_parser.add_argument("--cwd", type=Path, default=Path.cwd())
+    loop_parser.add_argument("--timeout-s", type=int, default=900)
+    loop_parser.add_argument("--env-file", type=Path, default=None)
+    loop_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
+    loop_parser.add_argument("--max-steps", type=int, default=3)
+    loop_parser.add_argument("--loop-json", type=Path, default=None)
+    add_attempt_history_args(loop_parser)
+
     args = parser.parse_args(argv)
 
     if args.command == "env":
@@ -128,6 +140,8 @@ def main(argv: list[str] | None = None) -> int:
         return _apply_patch(args)
     if args.command == "evolve-once":
         return _evolve_once(args)
+    if args.command == "evolve-loop":
+        return _evolve_loop(args)
     raise AssertionError(args.command)
 
 
@@ -361,6 +375,55 @@ def _evolve_once(args: argparse.Namespace) -> int:
     if args.env_file:
         load_env_file(args.env_file)
     knowledge = args.knowledge.read_text(encoding="utf-8")
+    step = _run_evolve_step(args, knowledge)
+    if args.step_json:
+        write_step(args.step_json, step)
+    if args.attempts_dir:
+        write_step_record(args.attempts_dir, step)
+    print(json.dumps(step.as_dict(), indent=2, sort_keys=True))
+    return _step_exit_code(step)
+
+
+def _evolve_loop(args: argparse.Namespace) -> int:
+    if args.max_steps <= 0:
+        raise ValueError("--max-steps must be positive")
+    if args.attempts_dir is None:
+        raise ValueError("evolve-loop requires --attempts-dir for cross-step memory")
+    if args.env_file:
+        load_env_file(args.env_file)
+    knowledge = args.knowledge.read_text(encoding="utf-8")
+
+    steps: list[EvolutionStep] = []
+    stopped_reason = "max_steps"
+    for _ in range(args.max_steps):
+        step = _run_evolve_step(args, knowledge)
+        steps.append(step)
+        write_step_record(args.attempts_dir, step)
+        if step.accepted:
+            stopped_reason = "accepted"
+            break
+        if step.patch_cleanup_result is not None and not step.patch_cleanup_result.ok:
+            stopped_reason = "cleanup_failed"
+            break
+
+    payload = {
+        "accepted": any(step.accepted for step in steps),
+        "completed_steps": len(steps),
+        "max_steps": args.max_steps,
+        "stopped_reason": stopped_reason,
+        "steps": [step.as_dict() for step in steps],
+    }
+    if args.loop_json:
+        args.loop_json.parent.mkdir(parents=True, exist_ok=True)
+        args.loop_json.write_text(
+            json.dumps(payload, indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if payload["accepted"] else 2
+
+
+def _run_evolve_step(args: argparse.Namespace, knowledge: str) -> EvolutionStep:
     decision = request_variation_decision(
         lineage_summary=_lineage_summary(args.lineage),
         knowledge=knowledge,
@@ -375,15 +438,13 @@ def _evolve_once(args: argparse.Namespace) -> int:
         env=os.environ.copy(),
     )
     step = finalize_attempt(args.lineage, attempt, source_root=args.cwd)
-    step = cleanup_rejected_candidate_patch(step, cwd=args.cwd)
-    if args.step_json:
-        write_step(args.step_json, step)
-    if args.attempts_dir:
-        write_step_record(args.attempts_dir, step)
-    print(json.dumps(step.as_dict(), indent=2, sort_keys=True))
+    return cleanup_rejected_candidate_patch(step, cwd=args.cwd)
+
+
+def _step_exit_code(step: EvolutionStep) -> int:
     if step.patch_cleanup_result is not None and not step.patch_cleanup_result.ok:
         return 2
-    if not attempt.command_result.ok:
+    if not step.attempt.command_result.ok:
         return 2
     if step.gate_decision is not None and not step.gate_decision.accepted:
         return 2

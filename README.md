@@ -12,7 +12,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Candidate support: Python candidate modules plus a first CUDA-extension smoke candidate.
 - Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, and a candidate-only patch application substrate.
 - Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise in JSON.
-- Attempt memory: `evolve-once --attempts-dir` records accepted and rejected steps outside the committed lineage and feeds recent summaries back into later agent prompts.
+- Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage and feed recent summaries back into later agent prompts.
 - Research state: infrastructure-first checkpoint. The code can score and gate candidates, but the repository does not yet contain a novel accepted attention kernel.
 
 ## What was built
@@ -242,11 +242,24 @@ Anthropic decisions now include a required `candidate_patch` string. Empty means
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
 When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step JSON for every run, including rejected and failed attempts. Later `agent-plan` or `evolve-once` calls summarize the latest records from that directory so the agent can avoid repeating known dead ends without adding them to committed lineage.
 
+Run a bounded multi-step session by repeating the same safe one-step unit:
+
+```bash
+uv run python -m avo evolve-loop \
+  --lineage ./lineage \
+  --knowledge knowledge/ampere.md \
+  --attempts-dir ./attempts \
+  --max-steps 3 \
+  --loop-json attempts/latest-loop.json
+```
+
+`evolve-loop` requires `--attempts-dir` so cross-step memory is always available. It stops when a step is accepted, when rejected-patch cleanup fails, or when `--max-steps` is exhausted. Command failures and gate rejections are recorded, summarized into the next prompt, and allowed to continue until one of those stop conditions is reached.
+
 ## What is still missing
 
 - Scaling the tiny WMMA QK/PV seed beyond its 16/32-token smoke shapes.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
-- Multi-step autonomous edit/score/diagnose sessions beyond one bounded patched decision.
+- Longer-running autonomous supervision beyond the minimal capped `evolve-loop`, including no-progress detection and richer stop policies.
 - Full source snapshotting for unmodified companion files around accepted candidate patches.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.

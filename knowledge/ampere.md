@@ -48,9 +48,13 @@ variation steps.
   reference. The older `cuda_identity_seed.py` is only an extension/build smoke
   because it delegates attention math to PyTorch SDPA before running a copy
   kernel.
-- Use `evolve-once --attempts-dir ./attempts` during autonomous runs so rejected
-  score attempts, command failures, and gate decisions remain available as recent
-  prompt context without becoming committed lineage.
+- Use `evolve-once --attempts-dir ./attempts` for a single autonomous decision
+  and `evolve-loop --attempts-dir ./attempts --max-steps N` for a bounded
+  multi-step session. The loop repeats the same one-step decision/score/gate
+  unit, requires an attempts directory for cross-step memory, stops on accepted
+  candidates, rejected-patch cleanup failure, or max-step exhaustion, and lets
+  command failures or gate rejections inform the next prompt instead of becoming
+  committed lineage.
 - Candidate source patching now has a bounded manual substrate:
   `avo apply-patch PATCH --dry-run` accepts only ordinary unified diffs under
   `candidates/`, rejects path traversal, symlink-mode patches, binary patches,
