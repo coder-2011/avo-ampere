@@ -1588,6 +1588,57 @@ def test_parse_variation_decision_rejects_stray_probability_frag_statement() -> 
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_unused_q_frag_preload_skeleton() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add a Q-fragment double-buffer skeleton and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,8 @@\n"
+        "-old\n"
+        "+wmma::fragment<wmma::matrix_a, kTile, kTile, 16, __nv_bfloat16, "
+        "wmma::row_major> q_frag_next;\n"
+        "+const bool has_next_tile = next_query_tile < query_tiles;\n"
+        "+if (has_next_tile) {\n"
+        "+  wmma::load_matrix_sync(q_frag_next, q + base, kHeadDim);\n"
+        "+}\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="preload fragment"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_compile_only_structural_probe_text() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add a Q-fragment double-buffer skeleton and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+new\n"
+    )
+    payload["expected_effect"] = (
+        "This is a compile-only structural probe. It does not yet consume q_frag_next "
+        "and must not be scored."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_bf16_score_tiles_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Convert warp-row score_tiles shared memory to BF16."

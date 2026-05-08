@@ -93,7 +93,10 @@ SELF_REJECTING_PATCH_PHRASES = (
     "not ready to apply",
     "not yet called",
     "stub is empty",
+    "compile-only structural probe",
+    "does not yet consume",
     "unused in this patch",
+    "must not be scored",
     "must be updated before scoring",
     "unused doubled buffers",
     "diff is incomplete",
@@ -778,6 +781,16 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "later uses row / blockDim.x from other threads; the recorded score failed "
             "correctness with non-finite outputs"
         )
+    if _candidate_patch_repeats_mma_qk_fragment_preload_chain(added_text):
+        raise ValueError(
+            "candidate_patch repeats the MMA QK k_frag_next preload chain; "
+            "the recorded score preserved correctness but regressed geomean throughput"
+        )
+    if _candidate_patch_repeats_mma_q_fragment_preload_chain(added_text):
+        raise ValueError(
+            "candidate_patch repeats the MMA QK q_frag_next preload chain; "
+            "the recorded score preserved correctness but regressed geomean throughput"
+        )
     if _candidate_patch_adds_unused_mma_preload_fragment(added_text):
         raise ValueError(
             "candidate_patch adds an MMA preload fragment that is loaded but never consumed; "
@@ -792,16 +805,6 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
         raise ValueError(
             "candidate_patch adds a stray probability_frag statement in a PV preload patch; "
             "remove duplicate fragment declaration lines before compile-checking"
-        )
-    if _candidate_patch_repeats_mma_qk_fragment_preload_chain(added_text):
-        raise ValueError(
-            "candidate_patch repeats the MMA QK k_frag_next preload chain; "
-            "the recorded score preserved correctness but regressed geomean throughput"
-        )
-    if _candidate_patch_repeats_mma_q_fragment_preload_chain(added_text):
-        raise ValueError(
-            "candidate_patch repeats the MMA QK q_frag_next preload chain; "
-            "the recorded score preserved correctness but regressed geomean throughput"
         )
     if _candidate_patch_uses_global_offset_for_shared_k_tile(added_text):
         raise ValueError(
@@ -1022,8 +1025,11 @@ def _candidate_patch_uses_thread_local_mma_row_state_for_cross_thread_rows(
 def _candidate_patch_adds_unused_mma_preload_fragment(added_text: str) -> bool:
     compact = re.sub(r"\s+", "", added_text)
     return (
-        "k_frag_next" in compact
-        and "load_matrix_sync(k_frag_next," in compact
+        (
+            "load_matrix_sync(k_frag_next," in compact
+            or "load_matrix_sync(q_frag_next," in compact
+            or "load_matrix_sync(probability_frag_next," in compact
+        )
         and "mma_sync" not in compact
     )
 

@@ -884,3 +884,11 @@ source files.
   line and said it would cause NVCC compile failure, so the planner now treats
   that wording and the stray `probability_frag;` preload shape as invalid before
   patch application.
+  A later Q double-buffer skeleton compiled cleanly but only loaded
+  `q_frag_next` for the next query tile after the last key tile; it did not swap
+  or consume that fragment in the QK MMA path. Compile diagnostics matched the
+  accepted direct-accumulation kernel resource counts: 40 registers, 1 barrier,
+  and 9920 bytes shared memory. Because it produced no correctness or throughput
+  evidence and its own expected-effect/risk text called it a compile-only
+  structural probe that must not be scored, the planner now rejects unused
+  `q_frag_next`/`probability_frag_next` preload skeletons before compile.
