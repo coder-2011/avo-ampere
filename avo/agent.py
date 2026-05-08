@@ -92,6 +92,7 @@ SELF_REJECTING_PATCH_PHRASES = (
     "not ready to apply",
     "not yet called",
     "stub is empty",
+    "unused in this patch",
     "must be updated before scoring",
     "unused doubled buffers",
     "would break correctness",
@@ -727,6 +728,16 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch repeats the stride-24 MMA probability-buffer skew; "
             "the recorded score preserved correctness but regressed geomean throughput"
         )
+    if _candidate_patch_adds_unused_async_copy_helpers(added_text):
+        raise ValueError(
+            "candidate_patch adds async-copy helper wrappers without using them; "
+            "the API availability smoke is already recorded, so include real dataflow"
+        )
+    if _candidate_patch_inserts_async_helper_inside_mma_signature(added_text):
+        raise ValueError(
+            "candidate_patch inserts async helper definitions inside the MMA kernel "
+            "signature and duplicates the kernel declaration"
+        )
 
 
 def _candidate_patch_added_lines(candidate_patch: str) -> list[str]:
@@ -867,6 +878,26 @@ def _candidate_patch_repeats_mma_probability_stride_skew(added_text: str) -> boo
     return (
         "kProbabilityStride=kTile+8" in compact
         and "load_matrix_sync(probability_frag,probabilities,kProbabilityStride)" in compact
+    )
+
+
+def _candidate_patch_adds_unused_async_copy_helpers(added_text: str) -> bool:
+    return (
+        "__pipeline_memcpy_async" in added_text
+        and "async_copy_16" in added_text
+        and added_text.count("async_copy_16") == 1
+        and "async_commit" in added_text
+        and added_text.count("async_commit") == 1
+        and "async_wait" in added_text
+        and added_text.count("async_wait") == 1
+    )
+
+
+def _candidate_patch_inserts_async_helper_inside_mma_signature(added_text: str) -> bool:
+    return (
+        "__pipeline_memcpy_async" in added_text
+        and "__device__ __forceinline__" in added_text
+        and "__global__ void mma_attention_kernel" in added_text
     )
 
 

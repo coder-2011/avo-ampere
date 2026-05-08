@@ -684,6 +684,16 @@ variation steps.
   `0.3388788769297927` TFLOPS at median 0.7921280264854431 ms. Do not repeat
   simple probability-buffer skew padding without profiler evidence or a
   materially different probability/PV dataflow.
+  A later MMA async-copy header check recovered from the scalar BF16 async-copy
+  retry loop, but still produced only unused wrapper helpers around
+  `__pipeline_memcpy_async`, `__pipeline_commit`, and `__pipeline_wait_prior`.
+  It inserted those helper definitions inside the `mma_attention_kernel`
+  signature and duplicated the kernel declaration, so NVCC failed with parameter
+  syntax and undefined helper-argument errors before ptxas. Cleanup succeeded.
+  Do not repeat wrapper-only async-copy API proofs; the CUDA pipeline primitive
+  header availability is already recorded. If adding wrappers, place helper
+  definitions before the kernel signature and call them in real 16-byte-group
+  dataflow, otherwise choose a materially different non-async patch.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.

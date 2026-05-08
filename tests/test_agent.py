@@ -1046,6 +1046,79 @@ def test_parse_variation_decision_rejects_scalar_bf16_async_copy_patch() -> None
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_patch_described_as_unused() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add async copy wrappers and compile the source."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+#include <cuda_pipeline_primitives.h>\n"
+    )
+    payload["risk"] = "The helpers are unused in this patch, so there is no dataflow change."
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_unused_async_copy_wrappers() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add async copy wrappers and compile the source."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,11 @@\n"
+        "-old\n"
+        "+__device__ __forceinline__ void async_copy_16(void* dst, const void* src) {\n"
+        "+  __pipeline_memcpy_async(dst, src, 16);\n"
+        "+}\n"
+        "+__device__ __forceinline__ void async_commit() {\n"
+        "+  __pipeline_commit();\n"
+        "+}\n"
+        "+__device__ __forceinline__ void async_wait(int prior) {\n"
+        "+  __pipeline_wait_prior(prior);\n"
+        "+}\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="helper wrappers without using them"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_async_helper_inside_mma_signature() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add an async copy helper before the MMA kernel."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,8 @@\n"
+        "-old\n"
+        "+__device__ __forceinline__ void async_copy_16(void* dst, const void* src) {\n"
+        "+  __pipeline_memcpy_async(dst, src, 16);\n"
+        "+}\n"
+        "+__global__ void mma_attention_kernel(const __nv_bfloat16* q) {\n"
+        "+  async_copy_16(nullptr, nullptr);\n"
+        "+}\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="inside the MMA kernel signature"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_noop_async_copy_stub_patch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch warp-row async copy helper and compile it."
