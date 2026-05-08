@@ -98,6 +98,13 @@ variation steps.
   `LDGSTS.E.BYPASS.128` on sm86 and passed correctness, but regressed the tiny 64x64 BF16
   smoke versus synchronous shared staging. Do not re-enable a single-stage cp.async copy without
   adding actual overlap, double buffering, or profiler evidence.
+- A later generated cp.async patch for the warp-row shared K/V staging path was rejected before
+  compile because the raw diff had trailing whitespace and corrupt hunk structure. Its proposed
+  structure was also invalid for future attempts: it issued 16-byte async copies at scalar element
+  positions, dropped zero-fill for out-of-tile lanes, and waited immediately with no double-buffered
+  overlap. Any new cp.async patch must use vector-aligned 16-byte groups, preserve zero-fill or
+  guarded shared-memory state for partial tiles, and introduce a real overlapped pipeline rather
+  than a single-stage copy/wait replacement.
 - Shared-memory layouts and bank-conflict reduction.
 - Register pressure and spill avoidance.
 - Warp-level online softmax reductions.
