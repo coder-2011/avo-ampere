@@ -215,6 +215,12 @@ variation steps.
   MMA patches should be smaller, use exact current file context, avoid
   whitespace-only added lines, and compile-check the first structural slice
   before bundling QK, PV, wrapper, and score-shape changes together.
+  A second generated head-dimension-32 patch again tried to bundle wrapper,
+  QK, PV, and scoring into one step and was rejected by `git apply --check`
+  with `error: corrupt patch at line 120`. It also introduced undefined
+  `head_dim` identifiers inside the CUDA kernel and still used unsupported
+  WMMA fragment template shapes. The validator now rejects patched MMA scores
+  beyond head_dim 16 unless the next command is a compile build-check first.
   A patched attempt that simply changed `kHeadDim` and `SMOKE_HEAD_DIM` from 16
   to 32 applied cleanly, but failed CUDA compilation: WMMA fragments such as
   `fragment<matrix_a, 16, 16, 32, ...>` and `fragment<accumulator, 16, 32, 16,

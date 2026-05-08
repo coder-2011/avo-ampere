@@ -358,6 +358,8 @@ def build_repo_context(root: Path) -> str:
         "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
         "head_dim 16, total_tokens <= 16, and num_heads 1. Larger seed scores need "
         "candidate_patch to update the wrapper/kernel.",
+        "Patched MMA shape extensions beyond head_dim 16 must run an avo compile "
+        "build-check first; do not jump straight to score.",
     ]
     if candidates:
         lines.append("Candidate modules:")
@@ -620,6 +622,11 @@ def _validate_subcommand_arguments(
                 allowed_roots=("candidates/",),
                 suffixes=(".py",),
             )
+            _validate_patched_mma_score_is_compile_checked_first(
+                parts,
+                candidate=candidate,
+                candidate_patch=candidate_patch,
+            )
             _validate_known_candidate_score_shape(
                 parts,
                 candidate=candidate,
@@ -757,6 +764,23 @@ def _validate_known_candidate_score_shape(
                 "validated seq_len 16, head_dim 16, total_tokens<=16, and num_heads=1 "
                 "cap; include candidate_patch to fix or extend the wrapper/kernel first"
             )
+
+
+def _validate_patched_mma_score_is_compile_checked_first(
+    parts: list[str],
+    *,
+    candidate: str,
+    candidate_patch: str,
+) -> None:
+    if not candidate_patch.strip() or candidate != MMA_SEED:
+        return
+    if _score_head_dim(parts) == 16:
+        return
+    raise ValueError(
+        "next_command scores a patched MMA shape extension beyond head_dim 16; "
+        "first run avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/<name> to build-check the candidate_patch"
+    )
 
 
 def _validate_env_command_context(planning_text: str) -> None:
