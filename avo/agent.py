@@ -1014,11 +1014,19 @@ def _candidate_patch_uses_thread_local_mma_row_state_for_cross_thread_rows(
 ) -> bool:
     compact = re.sub(r"\s+", "", added_text)
     return (
-        "row_max_reg" in compact
-        and "row_sum_reg" in compact
-        and "old_scale_reg" in compact
-        and "row/blockDim.x" in compact
-        and "output_acc[linear]*=old_scale_reg[reg_idx]" in compact
+        (
+            "row_max_reg" in compact
+            and "row_sum_reg" in compact
+            and "old_scale_reg" in compact
+            and "row/blockDim.x" in compact
+            and "output_acc[linear]*=old_scale_reg[reg_idx]" in compact
+        )
+        or (
+            "floatrow_max[kTile];" in compact
+            and "floatrow_sum[kTile];" in compact
+            and "floatold_scale[kTile];" in compact
+            and "threadIdx.x==0" in compact
+        )
     )
 
 

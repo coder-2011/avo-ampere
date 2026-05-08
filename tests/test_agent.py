@@ -1089,6 +1089,35 @@ def test_parse_variation_decision_rejects_thread_local_mma_row_state() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_thread0_local_row_state_init() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Move MMA row state into local arrays and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,12 @@\n"
+        "-old\n"
+        "+float row_max[kTile];\n"
+        "+float row_sum[kTile];\n"
+        "+float old_scale[kTile];\n"
+        "+if (key_start == 0 && threadIdx.x == 0) {\n"
+        "+  for (int row = 0; row < kTile; ++row) {\n"
+        "+    row_max[row] = -std::numeric_limits<float>::infinity();\n"
+        "+    row_sum[row] = 0.0f;\n"
+        "+  }\n"
+        "+}\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="per-thread registers"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_unused_mma_preload_fragment() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Preload the next MMA K fragment and compile it."

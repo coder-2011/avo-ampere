@@ -892,3 +892,10 @@ source files.
   evidence and its own expected-effect/risk text called it a compile-only
   structural probe that must not be scored, the planner now rejects unused
   `q_frag_next`/`probability_frag_next` preload skeletons before compile.
+  A later row-state register patch was rejected by `git apply --check` as a
+  corrupt patch. The direction also repeated an unsafe per-thread register-state
+  mapping in a new form: local `float row_max[kTile]`, `row_sum[kTile]`, and
+  `old_scale[kTile]` arrays were initialized only by `threadIdx.x == 0`, while
+  other threads would later read their own uninitialized local arrays. Do not
+  move MMA row state into per-thread arrays unless every consuming thread owns
+  and initializes its own row state or the state is explicitly shared.
