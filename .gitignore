@@ -11,3 +11,4 @@ build/
 .env.local
 lineage/
 benchmarks/
+attempts/

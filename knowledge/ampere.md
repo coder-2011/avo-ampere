@@ -633,6 +633,18 @@ variation steps.
   num_heads up to 4. Do not repeat the exact no-patch seq256 score as a
   candidate-improving step; future MMA work should change the kernel structure
   or compile-check a shape extension beyond seq256 before scoring.
+  A follow-up Anthropic loop proposed a synchronous shared-memory K staging
+  substrate for only QK chunk 0: add `k_shared[kTile * kHeadDim]`, load the
+  full 16x128 BF16 K tile cooperatively, and use shared memory only for the
+  first 16-wide WMMA K fragment while leaving the other seven QK chunks and all
+  PV chunks on global loads. The patch compiled on sm86 with no spills, 40
+  registers, 1 barrier, and 22208 bytes shared memory, then was cleaned up
+  because it was compile-only. The agent's risk text understated the smem
+  increase: 16*128 BF16 values add 4096 bytes, matching the compile delta from
+  18112 to 22208 bytes. Do not repeat the exact single-chunk synchronous K
+  staging compile-only probe; the next K/V staging step should either stage all
+  QK chunks and score, or introduce a clearly different cp.async/double-buffered
+  load path and compile-check it first.
 - Next CUDA-kernel steps should keep correctness shapes small until row max,
   denominator, output accumulation, and causal masking are demonstrably correct
   for BF16 and FP32 before adding tensor-core or async-copy complexity.
