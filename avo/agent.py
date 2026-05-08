@@ -384,6 +384,8 @@ def build_repo_context(root: Path) -> str:
         "kernel change for the known larger-shape correctness failure.",
         "The current tiled kernel already uses the online-softmax output recurrence "
         "output_acc * old_scale + tile_acc * tile_scale; do not repeat that stale fix.",
+        "The tiled reduction-bound guard patch still failed seq128/head_dim128 "
+        "correctness; do not repeat that reduce[tid] score/shifted guard change.",
         "The warp-row BF16 score_tiles shared-memory conversion preserved correctness "
         "but regressed throughput; do not repeat that buffer-precision change.",
         "Patched MMA shape extensions beyond the current head_dim64 smoke must run "
@@ -606,6 +608,11 @@ def _validate_candidate_patch_domain_sanity(candidate_patch: str) -> None:
             "candidate_patch repeats a stale tiled output-rescale fix; the current "
             "tiled kernel already uses output_acc * old_scale + tile_acc * tile_scale"
         )
+    if _candidate_patch_repeats_tiled_reduction_guard_fix(candidate_patch):
+        raise ValueError(
+            "candidate_patch repeats the tiled reduction-bound guard fix; the recorded "
+            "seq128/head_dim128 score still failed correctness"
+        )
     added_text = "\n".join(_candidate_patch_added_lines(candidate_patch))
     if "__pipeline_wait_prior<" in added_text:
         raise ValueError(
@@ -718,6 +725,16 @@ def _candidate_patch_repeats_stale_tiled_rescale_fix(candidate_patch: str) -> bo
     return (
         "-output_acc=tile_acc*tile_scale;" in compact
         and "+output_acc=output_acc*old_scale+tile_acc*tile_scale;" in compact
+    )
+
+
+def _candidate_patch_repeats_tiled_reduction_guard_fix(candidate_patch: str) -> bool:
+    compact = re.sub(r"\s+", "", candidate_patch)
+    return (
+        "+reduce[tid]=score;" in compact
+        and "+reduce[tid]=-std::numeric_limits<float>::infinity();" in compact
+        and "+reduce[tid]=shifted;" in compact
+        and "+reduce[tid]=0.0f;" in compact
     )
 
 
