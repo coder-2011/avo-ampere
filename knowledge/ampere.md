@@ -26,6 +26,10 @@ variation steps.
 ## Baseline
 
 - Seed and baseline should be FlashAttention-2.
+- Treat FA2 as the comparison baseline, not as the lineage acceptance threshold.
+  Candidate commits should compare against prior candidate scores for the same
+  benchmark signature so the search can preserve incremental improvements while
+  still reporting the FA2 gap explicitly.
 - Correctness reference should be PyTorch `scaled_dot_product_attention`.
 - Benchmark forward pass with BF16, head dimension 128, sequence lengths
   4096/8192/16384/32768, total tokens 32768, causal and non-causal.

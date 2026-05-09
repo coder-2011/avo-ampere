@@ -226,6 +226,10 @@ limits, library paths, and the local `libcudart.so` link shim. The `cuda` extra 
 nvcc, CRT, NVVM, and CCCL header wheels needed for Torch `cu130` extension builds; the candidate
 wrapper uses the same CUDA-root and link-shim logic for extension builds.
 
+The FA2 baseline remains a comparison lane, not the candidate acceptance threshold. Candidate
+lineage commits are accepted against prior candidate scores with the same benchmark signature so
+the search can preserve incremental progress before it reaches FA2 throughput.
+
 ## Agent workflow
 
 The agent wrapper uses the Anthropic API and expects `ANTHROPIC_API_KEY` in the environment.

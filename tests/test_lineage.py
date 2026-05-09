@@ -231,6 +231,58 @@ def test_seed_baseline_records_json(tmp_path) -> None:
     assert baseline == latest
 
 
+def test_baseline_does_not_block_candidate_lineage_progress(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    baseline = score_payload(seq_len=128, geomean=25.0)
+    baseline["backend"] = "flash-attn"
+    seeded = seed_baseline(repo, baseline, force=True)
+    candidate = score_payload(seq_len=128, geomean=5.0)
+
+    decision = commit_score(repo, candidate)
+
+    assert seeded["role"] == "baseline"
+    assert decision.accepted
+    assert "established benchmark case set" in decision.reason
+    assert best_score_payload_for_signature(repo, candidate)["geomean_tflops"] == 5.0
+    assert json.loads((repo / "scores" / "baseline.json").read_text(encoding="utf-8"))[
+        "geomean_tflops"
+    ] == 25.0
+
+
+def test_candidate_regression_rejects_against_prior_candidate_not_baseline(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    baseline = score_payload(seq_len=128, geomean=25.0)
+    baseline["backend"] = "flash-attn"
+    seed_baseline(repo, baseline, force=True)
+    commit_score(repo, score_payload(seq_len=128, geomean=5.0))
+    head_before = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+
+    decision = commit_score(repo, score_payload(seq_len=128, geomean=4.0))
+
+    head_after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+    assert not decision.accepted
+    assert "regressed" in decision.reason
+    assert decision.best_geomean == 5.0
+    assert head_after == head_before
+
+
+def test_lineage_summary_keeps_baseline_and_candidate_lanes_for_same_signature(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    baseline = score_payload(seq_len=128, geomean=25.0)
+    baseline["backend"] = "flash-attn"
+    seed_baseline(repo, baseline, force=True)
+    commit_score(repo, score_payload(seq_len=128, geomean=5.0))
+
+    summary = json.loads(lineage_score_summary(repo))
+
+    lanes = summary["benchmark_lanes"]
+    assert [lane["geomean_tflops"] for lane in lanes] == [25.0, 5.0]
+    assert [lane.get("role") for lane in lanes] == ["baseline", None]
+
+
 def score_payload(*, seq_len: int, geomean: float) -> dict:
     return {
         "backend": "candidate",

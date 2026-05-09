@@ -197,7 +197,7 @@ def lineage_score_summary(path: Path, *, max_lanes: int = 8) -> str:
 
 
 def accepted_score_lanes(path: Path) -> list[dict[str, Any]]:
-    lanes: dict[tuple[str, ...], dict[str, Any]] = {}
+    lanes: dict[tuple[str, tuple[str, ...]], dict[str, Any]] = {}
     if not (path / ".git").exists() or not _has_commits(path):
         return []
     for commit in _git_capture(path, "rev-list", "HEAD").splitlines():
@@ -214,10 +214,11 @@ def accepted_score_lanes(path: Path) -> list[dict[str, Any]]:
         signature = _benchmark_signature(payload)
         if not signature:
             continue
+        lane_key = (_score_lane_kind(payload), signature)
         geomean = _score_geomean(payload)
-        current = lanes.get(signature)
+        current = lanes.get(lane_key)
         if current is None or geomean > _score_geomean(current["payload"]):
-            lanes[signature] = {"commit": commit, "payload": payload}
+            lanes[lane_key] = {"commit": commit, "payload": payload}
     return sorted(
         lanes.values(),
         key=lambda lane: _score_geomean(lane["payload"]),
@@ -238,7 +239,11 @@ def best_score_payload_for_signature(
         path / "scores" / "by_signature" / f"{_benchmark_signature_hash(candidate)}.json"
     )
     payload = _read_score_payload(signature_path)
-    if payload is not None and _benchmark_signature(payload) == signature:
+    if (
+        payload is not None
+        and not _is_baseline_payload(payload)
+        and _benchmark_signature(payload) == signature
+    ):
         return payload
 
     best_payload: dict[str, Any] | None = None
@@ -252,7 +257,11 @@ def best_score_payload_for_signature(
             payload = json.loads(raw)
         except json.JSONDecodeError:
             continue
-        if not isinstance(payload, dict) or _benchmark_signature(payload) != signature:
+        if (
+            not isinstance(payload, dict)
+            or _is_baseline_payload(payload)
+            or _benchmark_signature(payload) != signature
+        ):
             continue
         geomean = _score_geomean(payload)
         if best_payload is None or geomean > best_geomean:
@@ -273,6 +282,16 @@ def _score_payload_brief(payload: dict[str, Any]) -> dict[str, Any]:
         if payload.get(key) is not None:
             brief[key] = payload[key]
     return brief
+
+
+def _score_lane_kind(payload: dict[str, Any]) -> str:
+    return "baseline" if _is_baseline_payload(payload) else "candidate"
+
+
+def _is_baseline_payload(payload: dict[str, Any]) -> bool:
+    return payload.get("role") == "baseline" or (
+        payload.get("backend") == "flash-attn" and payload.get("source") == "flash-attn"
+    )
 
 
 def _score_case_dicts(payload: dict[str, Any]) -> list[dict[str, Any]]:
