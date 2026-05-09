@@ -134,6 +134,15 @@ reject a bad transform family, or explain a score/gate result.
   no-effect transform after preflight already proved it is invalid.
 - Retrieval query: `candidate_transform structural preflight rejection invalidates pending compile-only score followup`.
 
+- Claim: ambiguous `replace_once` and `insert_*_once` transform anchors should be
+  repaired by using larger unique anchors with surrounding code; runtime now
+  reports matching start line numbers to make that repair actionable.
+- Evidence source: K-staging attempts after the rejected-followup fix and
+  runtime transform materialization errors.
+- Why useful: helps the planner repair semantic transforms without falling back
+  to raw CUDA diffs.
+- Retrieval query: `candidate_transform ambiguous anchor matching start lines larger unique anchor`.
+
 ## CUDA Structural Constraints
 
 - Claim: future `cp.async` attempts must use aligned 16-byte groups, treat 16
@@ -179,3 +188,11 @@ reject a bad transform family, or explain a score/gate result.
   swizzled/shared layouts matching MMA access, and overlap or broader K/V/Q
   dataflow instead of isolated synchronous Q-tile loading.
 - Retrieval query: `synchronous Q shared memory staging regression geomean 6.722112165053056`.
+
+- Claim: WMMA chunk-loop unroll-by-2 preserved full-target correctness but
+  regressed geomean to `7.758592599549404` TFLOPS versus best
+  `7.777584666360881`.
+- Evidence source: loop after rejected-followup clearing and chunk-unroll score.
+- Why useful: discourages more local unroll-only edits and points the search
+  back toward dataflow, layout, tiling, and staging changes.
+- Retrieval query: `WMMA chunk unroll by 2 rejected geomean 7.758592599549404`.

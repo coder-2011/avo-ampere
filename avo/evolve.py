@@ -1245,18 +1245,69 @@ def _normalize_transform_path(raw_path: Any) -> str:
 def _transform_replace_once(content: str, *, find: str, replacement: str) -> str:
     count = content.count(find)
     if count != 1:
-        raise ValueError(f"replace_once expected exactly one match, found {count}")
+        raise ValueError(
+            _transform_match_error(
+                "replace_once",
+                "match",
+                count=count,
+                content=content,
+                needle=find,
+            )
+        )
     return content.replace(find, replacement, 1)
 
 
 def _transform_insert_once(content: str, *, anchor: str, text: str, before: bool) -> str:
     count = content.count(anchor)
     if count != 1:
-        raise ValueError(f"insert transform expected exactly one anchor, found {count}")
+        raise ValueError(
+            _transform_match_error(
+                "insert transform",
+                "anchor",
+                count=count,
+                content=content,
+                needle=anchor,
+            )
+        )
     index = content.index(anchor)
     if not before:
         index += len(anchor)
     return f"{content[:index]}{text}{content[index:]}"
+
+
+def _transform_match_error(
+    op: str,
+    label: str,
+    *,
+    count: int,
+    content: str,
+    needle: str,
+) -> str:
+    line_numbers = _transform_match_line_numbers(content, needle)
+    line_hint = ""
+    if line_numbers:
+        rendered = ", ".join(str(line) for line in line_numbers[:6])
+        if len(line_numbers) > 6:
+            rendered += ", ..."
+        line_hint = f"; matching start lines: {rendered}"
+    return (
+        f"{op} expected exactly one {label}, found {count}{line_hint}. "
+        "Use a larger unique anchor including surrounding code."
+    )
+
+
+def _transform_match_line_numbers(content: str, needle: str) -> list[int]:
+    if not needle:
+        return []
+    line_numbers: list[int] = []
+    start = 0
+    while True:
+        index = content.find(needle, start)
+        if index < 0:
+            break
+        line_numbers.append(content.count("\n", 0, index) + 1)
+        start = index + max(1, len(needle))
+    return line_numbers
 
 
 def _transform_add_include(content: str, *, header: str) -> str:

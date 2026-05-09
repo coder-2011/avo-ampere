@@ -203,13 +203,34 @@ def test_materialize_candidate_transform_rejects_ambiguous_anchor(tmp_path: Path
     seed = write_seed_candidate(tmp_path)
     seed.write_text("VALUE = 1\nVALUE = 1\n", encoding="utf-8")
 
-    with pytest.raises(ValueError, match="expected exactly one match"):
+    with pytest.raises(ValueError, match="matching start lines: 1, 2"):
         materialize_candidate_transform(
             {
                 "op": "replace_once",
                 "path": "candidates/seed.py",
                 "find": "VALUE = 1",
                 "replace": "VALUE = 2",
+            },
+            cwd=tmp_path,
+        )
+
+
+def test_materialize_candidate_transform_reports_ambiguous_insert_lines(
+    tmp_path: Path,
+) -> None:
+    seed = write_seed_candidate(tmp_path)
+    seed.write_text(
+        "if (threadIdx.x < warpSize) {\nbody\nif (threadIdx.x < warpSize) {\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(ValueError, match="matching start lines: 1, 3"):
+        materialize_candidate_transform(
+            {
+                "op": "insert_before_once",
+                "path": "candidates/seed.py",
+                "anchor": "if (threadIdx.x < warpSize) {",
+                "text": "// inserted\n",
             },
             cwd=tmp_path,
         )

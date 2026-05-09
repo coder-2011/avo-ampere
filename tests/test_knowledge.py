@@ -73,6 +73,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("structural preflight rejection", "compile-only", "score follow-up"),
         ),
         (
+            "candidate_transform ambiguous anchor matching start lines larger unique anchor",
+            ("ambiguous", "matching start line", "unique anchor"),
+        ),
+        (
             "synchronous Q shared memory staging regression geomean 6.722112165053056",
             ("q shared-memory staging", "6.722112165053056", "regressed"),
         ),
@@ -87,6 +91,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
         (
             "kThreads 64 rejected geomean 7.587127963961811 occupancy",
             ("kthreads=64", "7.587127963961811", "occupancy"),
+        ),
+        (
+            "WMMA chunk unroll by 2 rejected geomean 7.758592599549404",
+            ("chunk-loop unroll-by-2", "7.758592599549404", "regressed"),
         ),
         (
             "CUDA execution model grid block thread warp SIMT divergence",

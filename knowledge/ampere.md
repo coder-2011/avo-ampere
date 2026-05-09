@@ -1234,3 +1234,19 @@ source files.
   score request. After the fix, recent-attempt summaries point at the recurring
   `planning_transform_preflight` class and promoted transform-materialization
   track instead of asking to score the stale no-effect transform.
+- After the stale-followup fix, the planner moved to genuinely semantic K-staging
+  transforms: add a 16x128 BF16 `k_shared` tile, cooperatively stage K, and load
+  a QK WMMA fragment from shared memory while leaving the rest of the dataflow
+  unchanged. Both attempts failed materialization because `insert_before_once`
+  anchors were ambiguous (`found 3`, then `found 2`), not because the CUDA idea
+  was structurally invalid. Transform materialization now reports matching start
+  line numbers for ambiguous `replace_once` and `insert_*_once` anchors so the
+  planner can repair by using a larger unique anchor with surrounding code.
+- The same loop then reset to a chunk-loop unroll-by-2 transform for the QK and
+  PV WMMA head-dimension loops. It compiled cleanly with no spills, 39 registers,
+  1 barrier, and 9920 bytes shared memory. A follow-up score passed all 8
+  full-target BF16 cases but regressed geomean to `7.758592599549404` TFLOPS
+  versus the current best `7.777584666360881`, so the gate rejected it. This is
+  useful negative evidence: simple WMMA chunk-loop unrolling is not the current
+  bottleneck, and the search should return to real dataflow/layout work rather
+  than more local unroll-only edits.
