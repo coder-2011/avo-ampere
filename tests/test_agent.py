@@ -308,6 +308,54 @@ def test_parse_variation_decision_accepts_transform_batch() -> None:
     assert decision.candidate_transform == {"op": "batch", "steps": steps}
 
 
+def test_parse_variation_decision_applies_batch_default_path() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Batch two exact source edits in the MMA kernel using the batch path as the "
+        "default for each step."
+    )
+    payload["candidate_transform"] = {
+        "op": "batch",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "steps": [
+            {
+                "op": "set_constexpr_int",
+                "name": "kThreads",
+                "value": 256,
+            },
+            {
+                "op": "set_constexpr_int",
+                "name": "kTile",
+                "value": 16,
+            },
+        ],
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_batch"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "set_constexpr_int",
+                "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+                "name": "kThreads",
+                "value": 256,
+            },
+            {
+                "op": "set_constexpr_int",
+                "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+                "name": "kTile",
+                "value": 16,
+            },
+        ],
+    }
+
+
 def test_parse_variation_decision_infers_set_constexpr_transform_from_edit() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = (

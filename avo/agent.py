@@ -242,7 +242,10 @@ TRANSFORM_STEP_SCHEMA: dict[str, Any] = {
         },
         "path": {
             "type": "string",
-            "description": "Repo-relative candidate source path under candidates/.",
+            "description": (
+                "Repo-relative candidate source path under candidates/. For op=batch this "
+                "may be a default path for steps that omit path."
+            ),
         },
         "find": {"type": "string", "description": "Exact text to replace for replace_once."},
         "replace": {"type": "string", "description": "Replacement text for replace_once."},
@@ -1070,12 +1073,17 @@ def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
         allowed = ", ".join(sorted(STRUCTURED_TRANSFORM_OPS))
         raise ValueError(f"candidate_transform op must be one of: {allowed}")
     if op == "batch":
-        extra = set(value) - {"op", "steps", "steps_json"}
+        extra = set(value) - {"op", "path", "steps", "steps_json"}
         if extra:
             raise ValueError(
                 "candidate_transform batch contains unsupported keys: "
                 + ", ".join(sorted(extra))
             )
+        batch_path = value.get("path")
+        if batch_path is not None:
+            if not isinstance(batch_path, str):
+                raise ValueError("candidate_transform batch path must be a string")
+            _validate_candidate_transform_path(batch_path)
         steps = _candidate_transform_batch_steps(value)
         if (
             not isinstance(steps, list)
@@ -1089,7 +1097,10 @@ def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
         transform = {
             "op": "batch",
             "steps": [
-                _validate_candidate_transform_step(step, label=f"batch step {index}")
+                _validate_candidate_transform_step(
+                    _candidate_transform_batch_step_with_default_path(step, batch_path),
+                    label=f"batch step {index}",
+                )
                 for index, step in enumerate(steps)
             ],
         }
@@ -1114,6 +1125,15 @@ def _candidate_transform_batch_steps(value: dict[str, Any]) -> list[Any]:
     if not isinstance(parsed, list):
         raise ValueError("candidate_transform batch steps_json must be a JSON array")
     return parsed
+
+
+def _candidate_transform_batch_step_with_default_path(
+    step: Any,
+    batch_path: Any,
+) -> Any:
+    if not isinstance(step, dict) or "path" in step or batch_path is None:
+        return step
+    return {"path": batch_path, **step}
 
 
 def _validate_candidate_transform_semantic_coherence(transform: dict[str, Any]) -> None:
