@@ -1998,6 +1998,33 @@ def _candidate_patch_adds_unused_async_copy_helpers(added_text: str) -> bool:
     )
 
 
+def _candidate_patch_adds_unused_shared_staging_buffer(
+    inspection: CandidatePatchInspection,
+) -> bool:
+    if not inspection.edits_cuda_source:
+        return False
+    added_names = _cuda_shared_declared_identifiers(inspection.added_text)
+    if not added_names:
+        return False
+    removed_names = set(_cuda_shared_declared_identifiers(inspection.removed_text))
+    new_names = set(added_names) - removed_names
+    for name in new_names:
+        occurrences = len(re.findall(rf"\b{re.escape(name)}\b", inspection.added_text))
+        declaration_occurrences = added_names.count(name)
+        if occurrences <= declaration_occurrences:
+            return True
+    return False
+
+
+def _cuda_shared_declared_identifiers(text: str) -> list[str]:
+    pattern = (
+        r"\b(?:extern\s+)?__shared__\s+"
+        r"(?:[A-Za-z_][A-Za-z0-9_:<>]*\s+)+[*&\s]*"
+        r"(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s*(?:\[|;|=)"
+    )
+    return [match.group("name") for match in re.finditer(pattern, text)]
+
+
 def _candidate_patch_inserts_async_helper_inside_mma_signature(added_text: str) -> bool:
     return (
         "__pipeline_memcpy_async" in added_text
@@ -2229,6 +2256,15 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
         detector=lambda inspection: _candidate_patch_adds_unused_async_copy_helpers(
             inspection.added_text
         ),
+    ),
+    CandidatePatchPreflightTrack(
+        name="no_effect_shared_staging_buffer",
+        failure_class="no_effect_or_skeleton",
+        message=(
+            "new shared-memory staging buffers must be loaded from, stored to, or consumed "
+            "by executable dataflow in the same transform"
+        ),
+        detector=_candidate_patch_adds_unused_shared_staging_buffer,
     ),
     CandidatePatchPreflightTrack(
         name="cuda_helper_placement",

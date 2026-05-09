@@ -2409,6 +2409,45 @@ def test_parse_variation_decision_rejects_unused_async_copy_wrappers() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_structural_preflight_rejects_unused_shared_staging_buffer() -> None:
+    patch = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1,3 +1,4 @@\n"
+        " __global__ void kernel() {\n"
+        "-  __shared__ float scores[kScoreElements];\n"
+        "+  __shared__ float scores[kScoreElements];\n"
+        "+  __shared__ __nv_bfloat16 k_shared[2][kTile * kHeadDim];\n"
+        " }\n"
+    )
+
+    with pytest.raises(ValueError, match="no_effect_shared_staging_buffer"):
+        validate_candidate_patch_structural_preflight(patch, allow_cuda_source_edits=True)
+
+
+def test_structural_preflight_allows_used_shared_staging_buffer() -> None:
+    patch = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1,3 +1,8 @@\n"
+        " __global__ void kernel(const __nv_bfloat16* k) {\n"
+        "-  __shared__ float scores[kScoreElements];\n"
+        "+  __shared__ float scores[kScoreElements];\n"
+        "+  __shared__ __nv_bfloat16 k_shared[2][kTile * kHeadDim];\n"
+        "+  for (int linear = threadIdx.x; linear < kTile * kHeadDim; linear += blockDim.x) {\n"
+        "+    k_shared[linear] = k[linear];\n"
+        "+  }\n"
+        "+  wmma::load_matrix_sync(k_frag, k_shared + chunk_offset, kHeadDim);\n"
+        " }\n"
+    )
+
+    validate_candidate_patch_structural_preflight(patch, allow_cuda_source_edits=True)
+
+
 def test_parse_variation_decision_rejects_async_helper_inside_mma_signature() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Add an async copy helper before the MMA kernel."

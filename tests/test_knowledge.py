@@ -100,6 +100,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("shared memory", "__syncthreads", "bank", "tiling"),
         ),
         (
+            "CUDA shared staging buffer no effect must be loaded stored consumed",
+            ("shared-memory staging buffer", "executable dataflow", "no-effect"),
+        ),
+        (
             "CUDA occupancy registers shared memory spills ptxas",
             ("occupancy", "registers", "shared memory", "ptxas"),
         ),

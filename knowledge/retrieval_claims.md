@@ -81,6 +81,15 @@ reject a bad transform family, or explain a score/gate result.
   connects staging proposals to a concrete benefit.
 - Retrieval query: `CUDA shared memory synchronization bank conflicts tiling`.
 
+- Claim: a new shared-memory staging buffer is not a semantic CUDA transform by
+  itself; the same materialized transform must also load, store, or consume that
+  buffer in executable dataflow.
+- Evidence source: rejected loop after general CUDA grounding and runtime
+  `no_effect_shared_staging_buffer` preflight.
+- Why useful: rejects no-effect staging scaffolds while preserving real
+  shared-memory staging transforms.
+- Retrieval query: `CUDA shared staging buffer no effect must be loaded stored consumed`.
+
 - Claim: occupancy is a resource tradeoff constrained by block size, registers,
   shared memory, and hardware resident-block/warp limits; maximum occupancy is
   not automatically maximum performance.

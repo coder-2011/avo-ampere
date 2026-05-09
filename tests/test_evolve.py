@@ -478,6 +478,52 @@ def test_run_decision_command_preflights_materialized_cuda_transform(tmp_path: P
     assert kernel.read_text(encoding="utf-8") == "old\n"
 
 
+def test_run_decision_command_rejects_materialized_unused_shared_buffer(
+    tmp_path: Path,
+) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text(
+        "__global__ void kernel() {\n"
+        "  __shared__ float scores[kScoreElements];\n"
+        "}\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+
+    attempt = run_decision_command(
+        decision(
+            "avo worker-sleep --seconds 0",
+            candidate_transform={
+                "op": "replace_once",
+                "path": "candidates/kernel.cu",
+                "find": (
+                    "__global__ void kernel() {\n"
+                    "  __shared__ float scores[kScoreElements];\n"
+                    "}\n"
+                ),
+                "replace": (
+                    "__global__ void kernel() {\n"
+                    "  __shared__ float scores[kScoreElements];\n"
+                    "  __shared__ __nv_bfloat16 k_shared[2][kTile * kHeadDim];\n"
+                    "}\n"
+                ),
+            },
+        ),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+
+    assert attempt.patch_result is not None
+    assert not attempt.patch_result.ok
+    assert "no_effect_shared_staging_buffer" in str(attempt.patch_result.rejected_reason)
+    assert attempt.command_result.returncode is None
+    assert "__nv_bfloat16 k_shared" not in kernel.read_text(encoding="utf-8")
+
+
 def test_run_decision_command_applies_promoted_preflight_to_transform(
     tmp_path: Path,
 ) -> None:

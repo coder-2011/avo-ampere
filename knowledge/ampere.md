@@ -1212,3 +1212,16 @@ source files.
   granularity, use swizzled/shared layouts that match `ldmatrix`/MMA access, and
   introduce overlap or a broader K/V/Q dataflow reason rather than another
   isolated synchronous Q-tile load.
+- The loop after adding general CUDA grounding chose a better family (`cp.async`
+  K staging), but still under-materialized it. Step 1 failed planning validation
+  because it described a cooperative double-buffered async K-staging transform
+  in prose without a structured transform. Step 2 compiled a transform that only
+  added `cooperative_groups.h` and declared `__shared__ __nv_bfloat16
+  k_shared[2][kTile * kHeadDim]`; ptxas warned that `k_shared` was declared but
+  never referenced, and no score was run. Step 3 again failed validation by
+  asking to score that no-effect transform. Runtime preflight now rejects a new
+  shared-memory staging buffer unless the same materialized transform also
+  stores to, loads from, or consumes that buffer in executable dataflow. This is
+  a structural guard against no-effect staging scaffolds, not a ban on shared
+  memory: real staging must include producer/consumer use in the same coherent
+  transform.
