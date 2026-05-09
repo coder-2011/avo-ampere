@@ -1459,6 +1459,60 @@ def test_summarize_attempt_history_requests_transform_anchor_repair(
     assert '"replace":"load_shared_q();"' in summary
 
 
+def test_summarize_attempt_history_scope_hints_loop_local_insert(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "insert_after_once",
+                "path": "candidates/kernel.cu",
+                "anchor": "  __syncthreads();",
+                "text": (
+                    "  for (int linear = threadIdx.x; linear < kTile; linear += blockDim.x) {\n"
+                    "    k_shared[linear] = k[key_start + linear];\n"
+                    "  }"
+                ),
+            },
+        ],
+    }
+    rejected_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=None,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="candidate patch rejected",
+        ),
+        patch_result=PatchResult(
+            ok=False,
+            patch_paths=[],
+            returncode=None,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=(
+                "candidate transform rejected: insert transform expected exactly one anchor, "
+                "found 5; matching start lines: 54, 84, 121, 127, 155."
+            ),
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=rejected_attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "Scope hint: inserted text references key_start" in summary
+    assert "inside the key_start loop" in summary
+    assert "loop header or surrounding body context" in summary
+
+
 def test_summarize_attempt_history_drops_stale_compile_followup_after_later_score(
     tmp_path: Path,
 ) -> None:

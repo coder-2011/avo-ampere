@@ -832,11 +832,14 @@ def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
         return ""
     rejected_reason, transform = materialization_failure
     transform_json = json.dumps(transform, sort_keys=True, separators=(",", ":"))
+    scope_hint = _transform_scope_repair_hint(transform)
+    scope_hint_text = f" {scope_hint}" if scope_hint else ""
     return (
         "Follow-up signal: the latest semantic structured transform failed materialization "
         "before compile. Keep the same semantic move only if it remains useful, but repair "
         "the candidate_transform anchors/matches with larger unique surrounding-code "
-        "snippets; do not restate the CUDA edit in prose without candidate_transform. "
+        "snippets; do not restate the CUDA edit in prose without candidate_transform."
+        f"{scope_hint_text} "
         f"Materialization error: {_shorten(rejected_reason, 500)}. "
         "Rejected candidate_transform JSON to repair, not reuse unchanged: "
         f"{transform_json}"
@@ -872,6 +875,21 @@ def _is_repairable_transform_materialization_error(rejected_reason: str) -> bool
         and "expected exactly one" in text
         and ("anchor" in text or "match" in text)
     )
+
+
+def _transform_scope_repair_hint(transform: dict[str, Any]) -> str:
+    for step in _candidate_transform_steps(transform):
+        op = str(step.get("op") or "")
+        if op not in {"insert_before_once", "insert_after_once"}:
+            continue
+        text = str(step.get("text") or "")
+        anchor = str(step.get("anchor") or "")
+        if "key_start" in text and "key_start" not in anchor:
+            return (
+                "Scope hint: inserted text references key_start, so choose an anchor inside "
+                "the key_start loop and include the loop header or surrounding body context."
+            )
+    return ""
 
 
 def _successful_compile_only_transform(payload: dict[str, Any]) -> dict[str, Any] | None:
