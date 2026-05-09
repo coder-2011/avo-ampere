@@ -832,6 +832,9 @@ def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
             "different transform family. Compile-only patches are cleaned up before "
             "follow-up scoring, so a no_edit score would score the unmodified seed; include "
             "this candidate_transform again with edit_mode=transform and candidate_patch=\"\". "
+            "For the score command, candidate_edit may summarize the prior compiled edit, "
+            "but the executable edit payload must still be the exact candidate_transform JSON; "
+            "do not return a prose-only score decision. "
             "Exact pending candidate_transform JSON: "
             f"{transform_json}"
         )

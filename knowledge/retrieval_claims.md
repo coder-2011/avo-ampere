@@ -35,6 +35,16 @@ reject a bad transform family, or explain a score/gate result.
   retunes.
 - Retrieval query: `CUTLASS Ampere FlashAttention v2 128x128 128 threads swizzled online softmax`.
 
+- Claim: useful Ampere K/V staging should be a GMEM-to-SMEM-to-register
+  pipeline: 128-bit `cp.async` copies, ldmatrix-compatible swizzled shared
+  layouts, `LdMatrix8x8x16bOp` shared-to-register loads, and MMA operand layouts.
+- Evidence source: Exa research over NVIDIA CUTLASS's Ampere FlashAttention v2
+  example and an Ampere FlashAttention building-block writeup.
+- Why useful: explains why plain synchronous `k_shared` staging regressed and
+  points future transforms toward copy/layout/register-pipeline work rather than
+  another immediate-load-and-sync shared tile.
+- Retrieval query: `CUTLASS Ampere FlashAttention cp.async ldmatrix register pipeline 128-bit K V staging`.
+
 - Claim: FA2/SM80 code derives `NumThreads` from tiled MMA structure; a
   block-size constant is not a proxy for implementing a new workload
   distribution.
@@ -299,6 +309,17 @@ reject a bad transform family, or explain a score/gate result.
   vectorized copies, swizzling, or async overlap rather than only moving Q loads
   into shared memory.
 - Retrieval query: `q_shared Q staging repaired anchors geomean 6.686302249012325 shared memory 14016`.
+
+- Claim: repaired synchronous K shared-memory staging passed full-target
+  correctness but regressed geomean to `4.16538030902376` TFLOPS versus best
+  `7.777584666360881`.
+- Evidence source: loop after transform-channel preservation and K-staging
+  score.
+- Why useful: discourages isolated synchronous K-tile staging; future K/V work
+  should include async overlap, vectorized copy/layout structure, or a broader
+  FA2-like work decomposition rather than only moving K WMMA loads into shared
+  memory.
+- Retrieval query: `synchronous K shared memory staging regression geomean 4.16538030902376 k_shared key_start`.
 
 - Claim: WMMA chunk-loop unroll-by-2 preserved full-target correctness but
   regressed geomean to `7.758592599549404` TFLOPS versus best

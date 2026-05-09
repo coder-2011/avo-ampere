@@ -780,6 +780,8 @@ history.
   https://github.com/Dao-AILab/flash-attention/blob/main/hopper/mainloop_fwd_sm80.hpp
 - Dao-AILab CuTe FlashAttention online softmax helper:
   https://github.com/Dao-AILab/flash-attention/blob/58fe37fb/flash_attn/cute/softmax.py
+- Flash Attention from Scratch, Part 2, Ampere building blocks:
+  https://lubits.ch/flash/Part-2
 - NVIDIA CUDA Samples BF16 Tensor Core GEMM:
   https://github.com/NVIDIA/cuda-samples/blob/master/Samples/3_CUDA_Features/bf16TensorCoreGemm/bf16TensorCoreGemm.cu
 - NVIDIA CUDA C++ Programming Guide, Warp Matrix Functions:
@@ -1198,6 +1200,16 @@ source files.
   not a substitute for implementing new K/V staging, multiple query tiles,
   split-Q work distribution, or an async pipeline. Runtime preflight now
   classifies that mismatch as `planning_transform_semantic_mismatch`.
+- Another Exa refresh over the same NVIDIA CUTLASS CuTeDSL example and an
+  Ampere FlashAttention building-block writeup clarifies why the local
+  synchronous K-staging regression is expected. CUTLASS uses a 128-bit
+  `cp.async` tiled copy atom for Q/K/V global-to-shared movement, swizzled shared
+  layouts, and `LdMatrix8x8x16bOp` shared-to-register copy atoms for Q/K/V
+  fragments before MMA. The useful K/V direction is therefore not "load K into
+  plain shared memory and immediately synchronize." It is a coherent
+  GMEM-to-SMEM-to-register pipeline: 16-byte copies, ldmatrix-compatible shared
+  layout, SMEM-to-register copies matched to MMA operands, and enough staging to
+  overlap movement with QK/PV work.
 - A later Exa refresh over Dao-AILab's FA2 SM80 forward kernel clarifies how Q
   staging fits into the real Ampere design. The kernel constructs `sQ`, `sK`,
   and `sV` shared-memory tensors through tiled copy layouts, can share Q/K
@@ -1271,3 +1283,16 @@ source files.
   isolated synchronous Q staging adds shared-memory footprint and barriers
   without enough benefit. Future staging should move toward a broader FA2-like
   Q/K/V copy-layout-pipeline change, not another standalone `q_shared` tile.
+- A later follow-up scored the repaired synchronous K shared-memory staging
+  transform. It added a 16x128 BF16 `k_shared` tile, cooperatively loaded K at
+  the start of each `key_start` iteration, and changed QK WMMA K-fragment loads
+  from global memory to shared memory. The candidate passed all 8 full-target
+  BF16 correctness cases, but regressed geomean to `4.16538030902376` TFLOPS
+  versus the current best `7.777584666360881`. Per-case TFLOPS were about
+  6.06/3.04 for seq4096 noncausal/causal, 5.97/2.98 for seq8192, 5.80/2.92 for
+  seq16384, and 5.74/2.84 for seq32768. This is a stronger negative signal than
+  Q staging: synchronous K staging adds cooperative loads and an extra barrier
+  on every key tile without real overlap, swizzled layout, or vectorized copy
+  structure. Future K/V staging should be async/double-buffered and layout-aware,
+  or the search should move to a wider FA2-like work decomposition rather than
+  another isolated synchronous shared tile.

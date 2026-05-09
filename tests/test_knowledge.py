@@ -65,6 +65,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("cutlass", "128x128", "128 threads", "online softmax"),
         ),
         (
+            "CUTLASS Ampere FlashAttention cp.async ldmatrix register pipeline 128-bit K V staging",
+            ("cp.async", "ldmatrix", "register pipeline", "128-bit"),
+        ),
+        (
             "FlashAttention SM80 Q in regs Share_Q_K_smem cp_async K V "
             "pipeline q_shared regression",
             ("q-in-register", "share q/k", "cp.async", "q_shared"),
@@ -105,6 +109,11 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
         (
             "q_shared Q staging repaired anchors geomean 6.686302249012325 shared memory 14016",
             ("q-staging", "6.686302249012325", "14016 bytes", "regressed"),
+        ),
+        (
+            "synchronous K shared memory staging regression geomean "
+            "4.16538030902376 k_shared key_start",
+            ("k shared-memory staging", "4.16538030902376", "k_shared", "key_start"),
         ),
         (
             "CUDA execution model grid block thread warp SIMT divergence",

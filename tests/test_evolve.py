@@ -1240,6 +1240,8 @@ def test_summarize_attempt_history_requests_score_after_compile_only_transform(
     assert "score the same candidate_transform" in summary
     assert "Compile-only patches are cleaned up" in summary
     assert "no_edit score would score the unmodified seed" in summary
+    assert "executable edit payload must still be the exact candidate_transform" in summary
+    assert "do not return a prose-only score decision" in summary
     assert '"op":"set_constexpr_int"' in summary
     assert '"value":512' in summary
 
