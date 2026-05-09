@@ -17,7 +17,7 @@ constexpr int kMaxSeqLen = 32768;
 constexpr int kHeadDim = 128;
 constexpr int kScoreElements = kTile * kTile;
 constexpr int kOutputElements = kTile * kHeadDim;
-constexpr int kThreads = 256;
+constexpr int kThreads = 128;
 
 __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
                                      const __nv_bfloat16* __restrict__ k,
