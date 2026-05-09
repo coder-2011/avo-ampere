@@ -104,6 +104,7 @@ STRUCTURED_TRANSFORM_STEP_OPS = frozenset(
 )
 STRUCTURED_TRANSFORM_OPS = STRUCTURED_TRANSFORM_STEP_OPS | frozenset({"batch"})
 MAX_TRANSFORM_BATCH_STEPS = 4
+SUPPORT_ONLY_TRANSFORM_OPS = frozenset({"add_include"})
 PLANNING_EDIT_TERMS = frozenset(
     {
         "change",
@@ -184,7 +185,7 @@ TRANSFORM_STEP_SCHEMA: dict[str, Any] = {
         "op": {
             "type": "string",
             "enum": sorted(STRUCTURED_TRANSFORM_STEP_OPS),
-            "description": "Single tiny structured edit materialized by the orchestrator.",
+            "description": "Single primitive edit step materialized by the orchestrator.",
         },
         "path": {
             "type": "string",
@@ -224,14 +225,14 @@ TRANSFORM_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": sorted(STRUCTURED_TRANSFORM_OPS),
             "description": (
-                "Small structured edit operation, or batch for a small ordered bundle "
-                "of tiny operations materialized by the orchestrator."
+                "Small coherent structured transform, or batch for a small ordered bundle "
+                "of primitive operations materialized by the orchestrator."
             ),
         },
         "steps_json": {
             "type": "string",
             "description": (
-                "For op=batch, a compact JSON array of tiny transform step objects. "
+                "For op=batch, a compact JSON array of primitive transform step objects. "
                 "Each step has op, path, and the fields required by that op."
             ),
         },
@@ -272,8 +273,8 @@ DECISION_SCHEMA: dict[str, Any] = {
         "candidate_transform": {
             **TRANSFORM_SCHEMA,
             "description": (
-                "Preferred edit channel for CUDA/kernel evolution. Use one tiny "
-                "structured transform or a small batch of tiny transforms, or omit "
+                "Preferred edit channel for CUDA/kernel evolution. Use one coherent "
+                "structured transform or a small semantic batch of primitive steps, or omit "
                 "this field for no-edit/legacy patch mode."
             ),
         },
@@ -492,17 +493,19 @@ def build_variation_prompt(
         "Optimize toward realistic long-sequence BF16 attention workloads; current small "
         "candidate smoke shapes are safety fences for unsupported seeds, not the end target.\n"
         "Use one of exactly three modes. Preferred edit mode: candidate_transform is one "
-        "tiny structured operation or a small ordered batch under candidates/, and "
+        "small coherent transformation or an ordered semantic batch under candidates/, and "
         "candidate_patch is exactly the empty string \"\". "
         "Supported ops are add_include, replace_once, insert_before_once, "
         "insert_after_once, set_constexpr_int, and add_int_to_python_set; use op=batch "
-        "with steps_json containing up to four tiny "
-        "steps when a coherent candidate needs coordinated wrapper/kernel edits. The "
-        "orchestrator materializes and preflights the patch. If a CUDA idea cannot be "
-        "expressed as at most four exact transform steps over the current source "
-        "excerpts, choose a smaller representable first transform or a no-edit "
-        "diagnostic; do not describe a broad CUDA rewrite in candidate_edit without "
-        "that exact transform. "
+        "with steps_json containing up to four primitive steps when one coherent candidate "
+        "needs coordinated wrapper/kernel edits. The orchestrator materializes and "
+        "preflights the patch. Make the smallest coherent transformation that preserves "
+        "kernel invariants and can be validated against the hypothesis. Primitive steps are "
+        "only the representation; do not submit support-only edits such as adding a header, "
+        "unused helper, or unused buffer as a standalone candidate. If a CUDA idea cannot be "
+        "expressed as an exact coherent transform over the current source excerpts, choose a "
+        "smaller semantic transform or a no-edit diagnostic; do not describe a broad CUDA "
+        "rewrite in candidate_edit without that exact transform. "
         "Legacy edit mode: candidate_patch is one small raw git-style unified diff under "
         "candidates/ starting with 'diff --git'. It may edit wrappers or other non-CUDA "
         "candidate files, but it must not edit .cu/.cuh kernel sources directly. No-edit "
@@ -549,16 +552,20 @@ def build_repo_context(root: Path) -> str:
         "4096/8192/16384/32768, total_tokens around 32768, num_heads around 16, "
         "head_dim 128, and both causal modes. Small candidate shapes are smoke fences, "
         "not the optimization objective.",
-        "Preferred edit channel: candidate_transform, one tiny structured operation or "
-        "a small ordered batch under candidates/. Supported step ops: add_include, "
+        "Preferred edit channel: candidate_transform, one small coherent transformation or "
+        "a small semantic batch under candidates/. Supported step ops: add_include, "
         "replace_once, insert_before_once, insert_after_once, set_constexpr_int, "
         "add_int_to_python_set. Use op=batch with steps_json when wrapper and kernel "
         "caps must change together. Legacy "
         "candidate_patch raw diffs are allowed only for non-CUDA candidate files; "
         ".cu/.cuh kernel edits must use candidate_transform.",
-        "If a CUDA idea is not representable as at most four exact transform steps, "
-        "shrink it to the first exact anchor-based edit or choose a no-edit diagnostic; "
-        "do not describe a broad kernel rewrite without candidate_transform.",
+        "Make the smallest coherent transformation that preserves invariants and can be "
+        "validated. Primitive steps are not the objective: support-only edits such as "
+        "adding a header, unused helper, or unused buffer must be part of a semantic batch "
+        "that changes executable dataflow or a validation contract.",
+        "If a CUDA idea is not representable as an exact coherent transform, shrink it to "
+        "a smaller semantic anchor-based edit or choose a no-edit diagnostic; do not "
+        "describe a broad kernel rewrite without candidate_transform.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compiles of existing CUDA candidates are baseline diagnostics, not "
         "optimization steps; compile only when build-checking a materialized edit.",
@@ -682,8 +689,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "no-edit mode. If this is a follow-up score for a compiled transform, include "
             "the exact candidate_transform object from the follow-up signal. Do not "
             "restate a broad CUDA change in candidate_edit without an exact "
-            "candidate_transform; reduce it to one exact replace/insert/set operation "
-            "or an at-most-four-step batch over current source excerpts. "
+            "candidate_transform; reduce it to the smallest coherent semantic transform "
+            "or an at-most-four-step batch over current source excerpts. Support-only "
+            "edits such as adding a header or unused helper are not valid standalone "
+            "optimization candidates. "
         )
     if "candidate_patch and candidate_transform are mutually exclusive" in message:
         return (
@@ -705,7 +714,9 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "as candidate_transform: one operation, or op=batch when coordinated "
             "wrapper/kernel changes are required. Each step must be representable by "
             "add_include, replace_once, insert_before_once, insert_after_once, "
-            "set_constexpr_int, or add_int_to_python_set. "
+            "set_constexpr_int, or add_int_to_python_set. Primitive steps must compose "
+            "into a coherent semantic move; add_include is support-only and cannot stand "
+            "alone. "
             "Raw candidate_patch is only for non-CUDA candidate files. "
         )
     if "structural preflight track" in message:
@@ -714,6 +725,13 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "around. Choose a smaller candidate_transform operation or batch that changes "
             "real dataflow and avoids the same structural class, or switch to a bounded "
             "diagnostic that gives new information for a different transform family. "
+        )
+    if "support-only" in message:
+        return (
+            "Make the smallest coherent transformation that preserves invariants and can "
+            "be validated. Do not return a header-only, helper-only, or unused-buffer-only "
+            "candidate. If add_include is needed, put it in an op=batch with the dataflow "
+            "or validation-contract change that actually uses it. "
         )
     if "known invalid by the decision itself" in message:
         return (
@@ -881,14 +899,18 @@ def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:
                 "candidate_transform batch steps must contain 1 to "
                 f"{MAX_TRANSFORM_BATCH_STEPS} operations"
             )
-        return {
+        transform = {
             "op": "batch",
             "steps": [
                 _validate_candidate_transform_step(step, label=f"batch step {index}")
                 for index, step in enumerate(steps)
             ],
         }
-    return _validate_candidate_transform_step(value)
+        _validate_candidate_transform_semantic_coherence(transform)
+        return transform
+    transform = _validate_candidate_transform_step(value)
+    _validate_candidate_transform_semantic_coherence(transform)
+    return transform
 
 
 def _candidate_transform_batch_steps(value: dict[str, Any]) -> list[Any]:
@@ -905,6 +927,20 @@ def _candidate_transform_batch_steps(value: dict[str, Any]) -> list[Any]:
     if not isinstance(parsed, list):
         raise ValueError("candidate_transform batch steps_json must be a JSON array")
     return parsed
+
+
+def _validate_candidate_transform_semantic_coherence(transform: dict[str, Any]) -> None:
+    steps = transform.get("steps") if transform.get("op") == "batch" else [transform]
+    if not isinstance(steps, list) or not all(isinstance(step, dict) for step in steps):
+        return
+    step_ops = {str(step.get("op") or "") for step in steps}
+    if step_ops and step_ops <= SUPPORT_ONLY_TRANSFORM_OPS:
+        raise ValueError(
+            "candidate_transform is support-only; make the smallest coherent semantic "
+            "transformation that preserves invariants and can be validated. Support-only "
+            "steps such as add_include must be part of a batch with a real dataflow or "
+            "validation-contract change."
+        )
 
 
 def _validate_candidate_transform_step(value: Any, *, label: str = "operation") -> dict[str, Any]:
@@ -964,12 +1000,12 @@ def _infer_candidate_transform_from_edit(
     if source_path is None:
         return None
     steps: list[dict[str, Any]] = []
-    include_header = _infer_include_header_from_edit(candidate_edit)
-    if include_header is not None:
-        return {"op": "add_include", "path": source_path, "header": include_header}
     const_match = _infer_integer_constant_change(candidate_edit)
     if const_match is None:
         return None
+    include_header = _infer_include_header_from_edit(candidate_edit)
+    if include_header is not None:
+        steps.append({"op": "add_include", "path": source_path, "header": include_header})
     steps.append(
         {
             "op": "set_constexpr_int",

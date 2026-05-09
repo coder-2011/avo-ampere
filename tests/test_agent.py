@@ -69,7 +69,7 @@ def test_parse_variation_decision_accepts_structured_transform() -> None:
     assert decision.candidate_transform == payload["candidate_transform"]
 
 
-def test_parse_variation_decision_accepts_add_include_transform() -> None:
+def test_parse_variation_decision_rejects_standalone_add_include_transform() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Add the CUDA pipeline header through a structured transform."
     payload["candidate_transform"] = {
@@ -82,12 +82,43 @@ def test_parse_variation_decision_accepts_add_include_transform() -> None:
         "--out-dir build/mma_include"
     )
 
+    with pytest.raises(ValueError, match="support-only"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_accepts_add_include_inside_semantic_batch() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Add the CUDA pipeline header and wire a first semantic dataflow marker in one "
+        "coherent structured transform."
+    )
+    payload["candidate_transform"] = {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "add_include",
+                "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+                "header": "cuda_pipeline_primitives.h",
+            },
+            {
+                "op": "insert_after_once",
+                "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+                "anchor": "constexpr int kThreads = 256;\n",
+                "text": "constexpr int kAsyncCopyBytes = 16;\n",
+            },
+        ],
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_include"
+    )
+
     decision = parse_decision_text(json.dumps(payload))
 
     assert decision.candidate_transform == payload["candidate_transform"]
 
 
-def test_parse_variation_decision_infers_add_include_transform_from_edit() -> None:
+def test_parse_variation_decision_does_not_infer_support_only_include_transform() -> None:
     payload = decision_payload()
     payload["files_to_inspect"] = []
     payload["candidate_edit"] = (
@@ -98,13 +129,8 @@ def test_parse_variation_decision_infers_add_include_transform_from_edit() -> No
         "--out-dir build/mma_include"
     )
 
-    decision = parse_decision_text(json.dumps(payload))
-
-    assert decision.candidate_transform == {
-        "op": "add_include",
-        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
-        "header": "cuda_pipeline_primitives.h",
-    }
+    with pytest.raises(ValueError, match="candidate_transform or candidate_patch"):
+        parse_decision_text(json.dumps(payload))
 
 
 def test_parse_variation_decision_rejects_add_include_on_python_file() -> None:
@@ -2544,7 +2570,8 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Preferred edit channel: candidate_transform" in context
     assert "Legacy candidate_patch raw diffs are allowed only for non-CUDA" in context
     assert ".cu/.cuh kernel edits must use candidate_transform" in context
-    assert "at most four exact transform steps" in context
+    assert "smallest coherent transformation" in context
+    assert "support-only edits" in context
     assert "do not describe a broad kernel rewrite without candidate_transform" in context
     assert "Structural CUDA preflight tracks are class-oriented hard checks" in context
     assert "wrapper/kernel shape-contract consistency" in context
@@ -2624,7 +2651,8 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "candidate_transform" in prompt
     assert "No-edit mode" in prompt
     assert "Supported ops are add_include" in prompt
-    assert "at most four exact transform steps" in prompt
+    assert "smallest coherent transformation" in prompt
+    assert "support-only edits" in prompt
     assert "do not describe a broad CUDA rewrite in candidate_edit" in prompt
     assert "Legacy edit mode" in prompt
     assert "must not edit .cu/.cuh kernel sources directly" in prompt
@@ -2671,7 +2699,9 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     assert "Do not mention fixing" in content
     assert "exact candidate_transform object from the follow-up signal" in content
     assert "Do not restate a broad CUDA change" in content
+    assert "smallest coherent semantic transform" in content
     assert "at-most-four-step batch" in content
+    assert "Support-only edits" in content
 
 
 def test_decision_feedback_explains_mutually_exclusive_edit_channels() -> None:
@@ -2713,6 +2743,8 @@ def test_decision_feedback_explains_raw_cuda_patch_error() -> None:
     assert "Do not use raw candidate_patch for .cu or .cuh files" in content
     assert "Express the CUDA edit as candidate_transform" in content
     assert "add_include" in content
+    assert "coherent semantic move" in content
+    assert "cannot stand alone" in content
     assert "op=batch" in content
     assert "Raw candidate_patch is only for non-CUDA candidate files" in content
 
@@ -2942,6 +2974,20 @@ def test_decision_feedback_explains_structural_preflight_error() -> None:
     assert "failed transform family" in content
     assert "smaller candidate_transform operation or batch" in content
     assert "avoids the same structural class" in content
+
+
+def test_decision_feedback_explains_support_only_transform_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("candidate_transform is support-only; add_include cannot stand alone"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "smallest coherent transformation" in content
+    assert "header-only" in content
+    assert "op=batch" in content
 
 
 def test_parse_variation_decision_response_prefers_tool_use() -> None:

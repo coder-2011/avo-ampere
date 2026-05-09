@@ -1008,6 +1008,23 @@ def test_summarize_attempt_history_classifies_missing_pending_transform(
     assert "class=planning_missing_pending_transform" in summary
 
 
+def test_summarize_attempt_history_classifies_support_only_transform(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    step = planning_failure_step(
+        ValueError(
+            "candidate_transform is support-only; make the smallest coherent semantic "
+            "transformation that preserves invariants"
+        )
+    )
+    write_step_record(attempts, step)
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=planning_support_only_transform" in summary
+
+
 def test_summarize_attempt_history_does_not_fingerprint_different_planning_errors(
     tmp_path: Path,
 ) -> None:
@@ -1071,6 +1088,48 @@ def test_summarize_attempt_history_requests_score_after_compile_only_transform(
     assert "score the same candidate_transform" in summary
     assert '"op":"set_constexpr_int"' in summary
     assert '"value":512' in summary
+
+
+def test_summarize_attempt_history_does_not_request_score_for_support_only_transform(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "add_include",
+        "path": "candidates/kernel.cu",
+        "header": "cuda_pipeline_primitives.h",
+    }
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "compiled successfully but has not been scored" not in summary
+    assert "score the same candidate_transform" not in summary
+    assert "class=compile_only_diagnostic" in summary
 
 
 def test_summarize_attempt_history_keeps_compile_followup_after_planning_failure(
@@ -1173,9 +1232,10 @@ def test_attempt_history_rejects_repeated_compile_only_transform(tmp_path: Path)
 def test_attempt_history_rejects_score_without_pending_transform(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     transform = {
-        "op": "add_include",
+        "op": "set_constexpr_int",
         "path": "candidates/kernel.cu",
-        "header": "cuda_pipeline_primitives.h",
+        "name": "kMaxSeqLen",
+        "value": 512,
     }
     attempt = VariationAttempt(
         decision=decision(

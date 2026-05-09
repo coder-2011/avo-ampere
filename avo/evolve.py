@@ -13,6 +13,7 @@ from pathlib import Path, PurePosixPath
 from typing import Any
 
 from .agent import (
+    SUPPORT_ONLY_TRANSFORM_OPS,
     VariationDecision,
     promoted_preflight_track_names_for_classes,
     validate_candidate_patch_structural_preflight,
@@ -815,8 +816,8 @@ def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
         return ""
     transform_json = json.dumps(pending_transform, sort_keys=True, separators=(",", ":"))
     return (
-        "Follow-up signal: the latest structured transform compiled successfully but has "
-        "not been scored. Do not repeat the compile-only check; score the same "
+        "Follow-up signal: the latest semantic structured transform compiled successfully but "
+        "has not been scored. Do not repeat the compile-only check; score the same "
         "candidate_transform on the next validation workload, or choose a materially "
         "different transform family. Exact pending candidate_transform JSON: "
         f"{transform_json}"
@@ -832,7 +833,9 @@ def _successful_compile_only_transform(payload: dict[str, Any]) -> dict[str, Any
         return None
     decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
     transform = decision.get("candidate_transform")
-    return transform if isinstance(transform, dict) else None
+    if not isinstance(transform, dict) or not _transform_has_semantic_step(transform):
+        return None
+    return transform
 
 
 def _has_successful_compile_only_transform(
@@ -874,6 +877,16 @@ def _decision_transform(payload: dict[str, Any]) -> dict[str, Any] | None:
     decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
     transform = decision.get("candidate_transform")
     return transform if isinstance(transform, dict) else None
+
+
+def _transform_has_semantic_step(transform: dict[str, Any]) -> bool:
+    steps = transform.get("steps") if transform.get("op") == "batch" else [transform]
+    if not isinstance(steps, list):
+        return False
+    return any(
+        isinstance(step, dict) and str(step.get("op") or "") not in SUPPORT_ONLY_TRANSFORM_OPS
+        for step in steps
+    )
 
 
 def _step_score_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
@@ -1672,6 +1685,8 @@ def _classify_planning_failure(detail: str) -> str:
         return "planning_edit_channel"
     if "pending compile-only candidate_transform" in detail:
         return "planning_missing_pending_transform"
+    if "support-only" in detail:
+        return "planning_support_only_transform"
     if "candidate_transform or candidate_patch" in detail:
         return "planning_missing_edit_payload"
     if "recorded no-patch compile diagnostic" in detail:
