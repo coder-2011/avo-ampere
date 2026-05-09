@@ -1179,3 +1179,17 @@ source files.
   and duplicate declaration checks. MMA shape-contract changes also have an
   always-on wrapper/kernel batch preflight so wrapper-only or kernel-only
   graduation attempts fail before compile.
+- A follow-up Exa research refresh on NVIDIA CUTLASS's Ampere FlashAttention v2
+  example reinforces the correct semantic target for sm8x work: head_dim 128
+  examples use 128x128 M/N tiles and 128 threads, require 16-byte contiguous
+  alignment, stage Q/K/V through shared memory with `cp.async`, use swizzled
+  shared-memory layouts, and use Ampere tensor-core MMA with an integrated
+  online softmax. FlashAttention's SM80 kernel code likewise treats `NumThreads`
+  as the size of the tiled MMA and derives minimum blocks per SM from it rather
+  than using a block-size constant as a proxy for a new workload distribution.
+  Future CUDA edits should therefore materialize real dataflow, tiling,
+  scheduling, or validation-contract changes. A `set_constexpr_int` or Python
+  set update is valid when it is the actual invariant being tested, but it is
+  not a substitute for implementing new K/V staging, multiple query tiles,
+  split-Q work distribution, or an async pipeline. Runtime preflight now
+  classifies that mismatch as `planning_transform_semantic_mismatch`.
