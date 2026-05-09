@@ -1225,3 +1225,12 @@ source files.
   a structural guard against no-effect staging scaffolds, not a ban on shared
   memory: real staging must include producer/consumer use in the same coherent
   transform.
+- A follow-up loop with that preflight active confirmed the guard works: the
+  declaration-only `k_shared` transform was rejected before scoring as
+  `no_effect_shared_staging_buffer`. However, attempt history still surfaced the
+  older compile-only transform as a pending score follow-up. Runtime follow-up
+  logic now treats a later structural preflight rejection of the same
+  `candidate_transform` identity as invalidating that pending compile-only
+  score request. After the fix, recent-attempt summaries point at the recurring
+  `planning_transform_preflight` class and promoted transform-materialization
+  track instead of asking to score the stale no-effect transform.

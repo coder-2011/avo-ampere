@@ -846,6 +846,9 @@ def _has_successful_compile_only_transform(
     transform: dict[str, Any],
 ) -> bool:
     transform_identity = _transform_identity(transform)
+    invalidated_identities = _preflight_rejected_transform_identities(payloads)
+    if transform_identity in invalidated_identities:
+        return False
     return any(
         _transform_identity(previous) == transform_identity
         for previous in (
@@ -857,14 +860,44 @@ def _has_successful_compile_only_transform(
 
 
 def _pending_compile_only_transform(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
+    invalidated_identities: set[str] = set()
     for payload in reversed(payloads):
         if isinstance(_step_score_payload(payload), dict):
             return None
+        rejected_identity = _preflight_rejected_transform_identity(payload)
+        if rejected_identity is not None:
+            invalidated_identities.add(rejected_identity)
+            continue
         transform = _successful_compile_only_transform(payload)
         if transform is None:
             continue
+        if _transform_identity(transform) in invalidated_identities:
+            continue
         return transform
     return None
+
+
+def _preflight_rejected_transform_identities(payloads: list[dict[str, Any]]) -> set[str]:
+    identities: set[str] = set()
+    for payload in payloads:
+        identity = _preflight_rejected_transform_identity(payload)
+        if identity is not None:
+            identities.add(identity)
+    return identities
+
+
+def _preflight_rejected_transform_identity(payload: dict[str, Any]) -> str | None:
+    transform = _decision_transform(payload)
+    if transform is None:
+        return None
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    patch_result = attempt.get("patch_result")
+    if not isinstance(patch_result, dict) or patch_result.get("ok") is not False:
+        return None
+    rejected_reason = str(patch_result.get("rejected_reason") or "")
+    if "candidate structural preflight rejected" not in rejected_reason:
+        return None
+    return _transform_identity(transform)
 
 
 def _decision_transform(payload: dict[str, Any]) -> dict[str, Any] | None:

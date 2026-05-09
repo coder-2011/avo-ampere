@@ -68,6 +68,11 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("set_constexpr_int", "contract-only", "dataflow", "semantic"),
         ),
         (
+            "candidate_transform structural preflight rejection invalidates pending "
+            "compile-only score followup",
+            ("structural preflight rejection", "compile-only", "score follow-up"),
+        ),
+        (
             "synchronous Q shared memory staging regression geomean 6.722112165053056",
             ("q shared-memory staging", "6.722112165053056", "regressed"),
         ),

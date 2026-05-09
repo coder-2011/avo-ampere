@@ -126,6 +126,14 @@ reject a bad transform family, or explain a score/gate result.
 - Why useful: keeps reliability work general and search-loop oriented.
 - Retrieval query: `recurring failure class promote hard preflight structural track`.
 
+- Claim: a structurally rejected `candidate_transform` invalidates any older
+  compile-only "score this transform" follow-up for the same transform identity.
+- Evidence source: loop after the shared-staging-buffer preflight and runtime
+  attempt-history follow-up logic.
+- Why useful: prevents the planner from repeatedly trying to score a stale
+  no-effect transform after preflight already proved it is invalid.
+- Retrieval query: `candidate_transform structural preflight rejection invalidates pending compile-only score followup`.
+
 ## CUDA Structural Constraints
 
 - Claim: future `cp.async` attempts must use aligned 16-byte groups, treat 16

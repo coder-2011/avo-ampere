@@ -1274,6 +1274,95 @@ def test_summarize_attempt_history_keeps_compile_followup_after_planning_failure
     assert '"value":1024' in summary
 
 
+def test_summarize_attempt_history_drops_compile_followup_after_preflight_rejection(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "add_include",
+                "path": "candidates/kernel.cu",
+                "header": "cooperative_groups.h",
+            },
+            {
+                "op": "replace_once",
+                "path": "candidates/kernel.cu",
+                "find": "__shared__ float scores[kScoreElements];",
+                "replace": (
+                    "__shared__ float scores[kScoreElements];\n"
+                    "__shared__ __nv_bfloat16 k_shared[2][kTile * kHeadDim];"
+                ),
+            },
+        ],
+    }
+    compile_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    rejected_attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 4096",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=None,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail=(
+                "candidate patch rejected: candidate structural preflight rejected: "
+                "structural preflight track no_effect_shared_staging_buffer"
+            ),
+        ),
+        patch_result=PatchResult(
+            ok=False,
+            patch_paths=[],
+            returncode=None,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=(
+                "candidate transform rejected: candidate structural preflight rejected: "
+                "structural preflight track no_effect_shared_staging_buffer"
+            ),
+        ),
+        started_at="2026-05-08T00:00:02+00:00",
+        completed_at="2026-05-08T00:00:03+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=compile_attempt, gate_decision=None))
+    write_step_record(attempts, EvolutionStep(attempt=rejected_attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "compiled successfully but has not been scored" not in summary
+    assert "score the same candidate_transform" not in summary
+    validate_decision_against_attempt_history(
+        decision("avo score --backend candidate --candidate candidates/seed.py --seq-lens 4096"),
+        attempts,
+    )
+
+
 def test_summarize_attempt_history_drops_stale_compile_followup_after_later_score(
     tmp_path: Path,
 ) -> None:
