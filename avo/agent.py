@@ -613,14 +613,17 @@ def build_repo_context(root: Path) -> str:
         "toward the target workload or explain a targeted compile diagnostic.",
         "Structural CUDA preflight tracks are class-oriented hard checks: edit-channel "
         "integrity, transform path/materialization, wrapper/kernel shape-contract "
-        "consistency, WMMA contract validity, async-copy contract validity, shared-tile "
-        "scope, symbol lifecycle, and disconnected skeleton/dataflow. Failed attempt "
-        "classes can be promoted by the evolve loop into active hard tracks.",
+        "consistency, WMMA contract validity, async-copy contract validity, async pipeline "
+        "stage lifecycle, shared-tile scope, symbol lifecycle, and disconnected "
+        "skeleton/dataflow. Failed attempt classes can be promoted by the evolve loop "
+        "into active hard tracks.",
         "CUDA transforms should preserve executable contracts, not just compile text: "
         "tensor-core fragment declarations must match Ampere-supported contracts, async "
-        "copies must be aligned and consumed by real dataflow, staged shared-memory "
-        "addresses must stay tile-local, declarations must have clear lifetimes, and "
-        "shape graduation must update wrapper and kernel contracts together.",
+        "copies must be aligned and consumed by real dataflow, pipeline waits must match "
+        "the number of committed stages, double-buffer stage indices must advance after "
+        "consumption, staged shared-memory addresses must stay tile-local, declarations "
+        "must have clear lifetimes, and shape graduation must update wrapper and kernel "
+        "contracts together.",
         "After a shape-support compile succeeds, score the realistic target lane instead "
         "of spending additional no-edit steps on smoke-only shapes.",
     ]
@@ -1884,6 +1887,49 @@ def _candidate_patch_inserts_async_helper_inside_mma_signature(added_text: str) 
     )
 
 
+def _candidate_patch_has_invalid_async_pipeline_stage_lifecycle(
+    inspection: CandidatePatchInspection,
+) -> bool:
+    added_text = inspection.added_text
+    if "__pipeline_memcpy_async" not in added_text or "__pipeline_wait_prior(1)" not in added_text:
+        return False
+    return (
+        _candidate_patch_waits_for_two_stage_pipeline_before_two_commits(added_text)
+        or _candidate_patch_double_buffers_without_stage_advance(added_text)
+    )
+
+
+def _candidate_patch_waits_for_two_stage_pipeline_before_two_commits(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    first_wait = compact.find("__pipeline_wait_prior(1);")
+    if first_wait < 0:
+        return False
+    commits_before_wait = compact[:first_wait].count("__pipeline_commit();")
+    return commits_before_wait < 2
+
+
+def _candidate_patch_double_buffers_without_stage_advance(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    for match in re.finditer(r"1-(?P<name>[A-Za-z_][A-Za-z0-9_]*)", compact):
+        name = match.group("name")
+        if not re.search(rf"\[[^\]]*{re.escape(name)}[^\]]*\]", compact):
+            continue
+        if _compact_cuda_text_advances_binary_stage(compact, name):
+            continue
+        return True
+    return False
+
+
+def _compact_cuda_text_advances_binary_stage(compact_text: str, name: str) -> bool:
+    escaped = re.escape(name)
+    return bool(
+        re.search(rf"{escaped}=1-{escaped};", compact_text)
+        or re.search(rf"{escaped}\^=1;", compact_text)
+        or re.search(rf"{escaped}=\({escaped}\+1\)%2;", compact_text)
+        or re.search(rf"{escaped}=\({escaped}\+1\)&1;", compact_text)
+    )
+
+
 def _candidate_patch_has_obvious_cuda_delimiter_mismatch(
     inspection: CandidatePatchInspection,
 ) -> bool:
@@ -1955,6 +2001,15 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
         ),
         detector=lambda inspection: "__pipeline_memcpy_async" in inspection.added_text
         and "sizeof(__nv_bfloat16)" in inspection.added_text,
+    ),
+    CandidatePatchPreflightTrack(
+        name="async_pipeline_stage_lifecycle",
+        failure_class="correctness_nonfinite_output",
+        message=(
+            "two-stage async-copy pipelines must prefill enough committed stages before "
+            "wait_prior(1), and double-buffer stage indices must advance after consumption"
+        ),
+        detector=_candidate_patch_has_invalid_async_pipeline_stage_lifecycle,
     ),
     CandidatePatchPreflightTrack(
         name="wmma_fragment_shape",

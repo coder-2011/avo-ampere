@@ -46,6 +46,7 @@ PROMOTABLE_FAILURE_CLASS_TRACKS = {
     "cuda_syntax_error": "cuda_text_shape",
     "stale_or_undefined_symbol": "symbol_lifecycle",
     "correctness_failed": "correctness_preflight",
+    "correctness_nonfinite_output": "correctness_preflight",
 }
 REJECTED_PATCH_MARKERS = frozenset(
     {
@@ -1667,7 +1668,7 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
             return "correctness_failed"
         return "command_failed"
     if isinstance(score_payload, dict) and score_payload.get("all_correct") is False:
-        return "correctness_failed"
+        return _classify_score_failure(score_payload)
     if isinstance(gate_decision, dict) and gate_decision.get("accepted") is False:
         reason = str(gate_decision.get("reason") or "").lower()
         if "correct" in reason or "error" in reason:
@@ -1729,6 +1730,24 @@ def _classify_compile_failure(detail: str) -> str:
     return "compile_failed"
 
 
+def _classify_score_failure(score_payload: dict[str, Any]) -> str:
+    if "non-finite" in _score_payload_error_text(score_payload).lower():
+        return "correctness_nonfinite_output"
+    return "correctness_failed"
+
+
+def _score_payload_error_text(score_payload: dict[str, Any]) -> str:
+    cases = score_payload.get("cases")
+    if not isinstance(cases, list):
+        return ""
+    errors = [
+        str(case.get("error") or "")
+        for case in cases
+        if isinstance(case, dict) and case.get("error")
+    ]
+    return " ".join(errors)
+
+
 def _command_status(command_result: dict[str, Any]) -> str:
     if command_result.get("timed_out"):
         return "command timed out"
@@ -1787,6 +1806,12 @@ def _score_status(score_payload: Any) -> str:
         return "no score payload"
     geomean = score_payload.get("geomean_tflops")
     correct = score_payload.get("all_correct")
+    error_text = _score_payload_error_text(score_payload)
+    if correct is False and error_text:
+        return (
+            f"score all_correct={correct} geomean_tflops={geomean} "
+            f"first_error={_shorten(error_text, 100)}"
+        )
     return f"score all_correct={correct} geomean_tflops={geomean}"
 
 

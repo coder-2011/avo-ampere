@@ -973,6 +973,40 @@ def test_summarize_attempt_history_includes_patch_failure_detail(tmp_path: Path)
     assert "class=raw_diff_preflight" in summary
 
 
+def test_summarize_attempt_history_classifies_nonfinite_score(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/cuda_mma_attention_seed.py"
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={
+            "all_correct": False,
+            "geomean_tflops": 0.0,
+            "cases": [
+                {
+                    "correct": False,
+                    "error": "RuntimeError: candidate output contains non-finite values",
+                }
+            ],
+        },
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=correctness_nonfinite_output" in summary
+    assert "non-finite values" in summary
+
+
 def test_summarize_attempt_history_classifies_planning_validation_failure(
     tmp_path: Path,
 ) -> None:

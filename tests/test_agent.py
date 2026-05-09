@@ -2256,6 +2256,67 @@ def test_parse_variation_decision_rejects_scalar_bf16_async_copy_patch() -> None
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_invalid_async_pipeline_lifecycle() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Patch MMA async copy staging lifecycle and compile it."
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,22 @@\n"
+        "-old\n"
+        "+int current_buffer = 0;\n"
+        "+__pipeline_memcpy_async(&k_shared[0][linear], &k[linear], 16);\n"
+        "+__pipeline_commit();\n"
+        "+for (int key_start = 0; key_start < seq_len; key_start += kTile) {\n"
+        "+  __pipeline_wait_prior(1);\n"
+        "+  __syncthreads();\n"
+        "+  const int next_key_start = key_start + kTile;\n"
+        "+  __pipeline_memcpy_async(&k_shared[1 - current_buffer][linear],\n"
+        "+                          &k[next_key_start * kHeadDim + linear],\n"
+        "+                          16);\n"
+        "+  __pipeline_commit();\n"
+        "+  wmma::load_matrix_sync(k_frag, &k_shared[current_buffer][chunk_offset], kHeadDim);\n"
+        "+}\n"
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma"
+    )
+
+    with pytest.raises(ValueError, match="async_pipeline_stage_lifecycle"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_structural_preflight_allows_valid_async_pipeline_lifecycle() -> None:
+    patch = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,24 @@\n"
+        "-old\n"
+        "+int current_buffer = 0;\n"
+        "+__pipeline_memcpy_async(&k_shared[0][linear], &k[linear], 16);\n"
+        "+__pipeline_commit();\n"
+        "+__pipeline_memcpy_async(&k_shared[1][linear], &k[kTile * kHeadDim + linear], 16);\n"
+        "+__pipeline_commit();\n"
+        "+for (int key_start = 0; key_start < seq_len; key_start += kTile) {\n"
+        "+  __pipeline_wait_prior(1);\n"
+        "+  __syncthreads();\n"
+        "+  wmma::load_matrix_sync(k_frag, &k_shared[current_buffer][chunk_offset], kHeadDim);\n"
+        "+  current_buffer = 1 - current_buffer;\n"
+        "+  __pipeline_memcpy_async(&k_shared[current_buffer][linear],\n"
+        "+                          &k[(key_start + 2 * kTile) * kHeadDim + linear],\n"
+        "+                          16);\n"
+        "+  __pipeline_commit();\n"
+        "+}\n"
+    )
+
+    validate_candidate_patch_structural_preflight(patch, allow_cuda_source_edits=True)
+
+
 def test_parse_variation_decision_rejects_patch_described_as_unused() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Add async copy wrappers and compile the source."
