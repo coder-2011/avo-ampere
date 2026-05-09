@@ -31,6 +31,16 @@ SUPERVISOR_REPEAT_THRESHOLD = 3
 SUPERVISOR_EXHAUSTION_THRESHOLD = 5
 PROMOTED_PREFLIGHT_TRACKS_FILENAME = "preflight_tracks.json"
 IGNORED_FAILURE_CLASSES = frozenset({"accepted", "unknown", "command_failed"})
+COMPILE_FAILURE_DETAIL_MARKERS = (
+    "nvcc",
+    "ptxas",
+    "ninja: build stopped",
+    "compilation failed",
+    "compileerror",
+    ".cu(",
+    ".cuh(",
+    "attention_kernel.cu",
+)
 PROMOTABLE_FAILURE_CLASS_TRACKS = {
     "planning_edit_channel": "edit_channel_consistency",
     "planning_missing_edit_payload": "edit_channel_consistency",
@@ -137,6 +147,8 @@ class EvolutionStep:
     attempt: VariationAttempt
     gate_decision: GateDecision | None
     patch_cleanup_result: PatchResult | None = None
+    repair_attempts: tuple[VariationAttempt, ...] = ()
+    repair_cleanup_results: tuple[PatchResult, ...] = ()
 
     @property
     def accepted(self) -> bool:
@@ -153,6 +165,10 @@ class EvolutionStep:
                 if self.patch_cleanup_result is not None
                 else None
             ),
+            "repair_attempts": [attempt.as_dict() for attempt in self.repair_attempts],
+            "repair_cleanup_results": [
+                cleanup.as_dict() for cleanup in self.repair_cleanup_results
+            ],
         }
 
 
@@ -423,12 +439,48 @@ def run_decision_command(
     )
 
 
+def attempt_has_repairable_compile_failure(attempt: VariationAttempt) -> bool:
+    if attempt.patch_result is None or not attempt.patch_result.ok:
+        return False
+    if attempt.command_result.ok or attempt.command_result.timed_out:
+        return False
+    return _command_or_detail_looks_like_compile_failure(
+        attempt.decision.next_command,
+        " ".join(attempt.command_result.command),
+        _command_result_text(attempt.command_result),
+    )
+
+
+def attempt_has_repairable_transform_materialization_failure(attempt: VariationAttempt) -> bool:
+    patch_result = attempt.patch_result
+    if patch_result is None or patch_result.ok:
+        return False
+    if attempt.decision.candidate_transform is None:
+        return False
+    detail = " ".join(
+        part
+        for part in (
+            patch_result.rejected_reason or "",
+            patch_result.stderr_tail,
+            attempt.command_result.stderr_tail,
+        )
+        if part
+    )
+    return _is_repairable_transform_materialization_error(detail)
+
+
+def compile_failure_class_for_attempt(attempt: VariationAttempt) -> str:
+    return _classify_compile_failure(_command_result_text(attempt.command_result).lower())
+
+
 def finalize_attempt(
     lineage: Path,
     attempt: VariationAttempt,
     *,
     message: str = "evolve: accept candidate",
     source_root: Path | None = None,
+    repair_attempts: tuple[VariationAttempt, ...] = (),
+    repair_cleanup_results: tuple[PatchResult, ...] = (),
 ) -> EvolutionStep:
     gate_decision = None
     if attempt.score_payload is not None:
@@ -445,10 +497,20 @@ def finalize_attempt(
             source_files=source_files,
             candidate_patch=candidate_patch,
         )
-    return EvolutionStep(attempt=attempt, gate_decision=gate_decision)
+    return EvolutionStep(
+        attempt=attempt,
+        gate_decision=gate_decision,
+        repair_attempts=repair_attempts,
+        repair_cleanup_results=repair_cleanup_results,
+    )
 
 
-def planning_failure_step(error: Exception) -> EvolutionStep:
+def planning_failure_step(
+    error: Exception,
+    *,
+    repair_attempts: tuple[VariationAttempt, ...] = (),
+    repair_cleanup_results: tuple[PatchResult, ...] = (),
+) -> EvolutionStep:
     timestamp = _utc_now()
     decision = VariationDecision(
         hypothesis="agent planning failed validation",
@@ -471,7 +533,12 @@ def planning_failure_step(error: Exception) -> EvolutionStep:
         started_at=timestamp,
         completed_at=timestamp,
     )
-    return EvolutionStep(attempt=attempt, gate_decision=None)
+    return EvolutionStep(
+        attempt=attempt,
+        gate_decision=None,
+        repair_attempts=repair_attempts,
+        repair_cleanup_results=repair_cleanup_results,
+    )
 
 
 def cleanup_rejected_candidate_patch(step: EvolutionStep, *, cwd: Path) -> EvolutionStep:
@@ -487,6 +554,8 @@ def cleanup_rejected_candidate_patch(step: EvolutionStep, *, cwd: Path) -> Evolu
         attempt=step.attempt,
         gate_decision=step.gate_decision,
         patch_cleanup_result=cleanup_result,
+        repair_attempts=step.repair_attempts,
+        repair_cleanup_results=step.repair_cleanup_results,
     )
 
 
@@ -629,6 +698,14 @@ def validate_decision_against_attempt_history(
         "next_command repeats a successful compile-only candidate_transform; score the "
         "same structured transform on a validation workload or choose a materially "
         "different transform family"
+    )
+
+
+def pending_compile_only_transform(directory: Path | None) -> dict[str, Any] | None:
+    if directory is None or not directory.exists():
+        return None
+    return _pending_compile_only_transform(
+        [payload for _, payload in _load_step_payloads(directory)]
     )
 
 
@@ -905,6 +982,9 @@ def _transform_scope_repair_hint(transform: dict[str, Any]) -> str:
 
 def _successful_compile_only_transform(payload: dict[str, Any]) -> dict[str, Any] | None:
     if _step_failure_class(payload) != "compile_only_diagnostic":
+        return None
+    cleanup_result = payload.get("patch_cleanup_result")
+    if isinstance(cleanup_result, dict) and cleanup_result.get("ok") is False:
         return None
     attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
     patch_result = attempt.get("patch_result")
@@ -1775,6 +1855,8 @@ def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
     )
     score_payload = attempt.get("score_payload")
     gate_decision = payload.get("gate_decision")
+    repair_attempts = payload.get("repair_attempts")
+    repair_count = len(repair_attempts) if isinstance(repair_attempts, list) else 0
 
     status = _command_status(command_result)
     patch = _patch_status(patch_result)
@@ -1785,7 +1867,8 @@ def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
     command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
     hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
     return (
-        f"{name}: class={failure_class}; {status}; {patch}; {cleanup}; {gate}; {score}; "
+        f"{name}: class={failure_class}; {status}; {patch}; {cleanup}; "
+        f"repairs={repair_count}; {gate}; {score}; "
         f"command={command}; hypothesis={hypothesis}"
     )
 
@@ -1815,7 +1898,7 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
     command_text = " ".join(str(item) for item in command_result.get("command") or [])
     if returncode not in (0, None):
         detail = _result_detail(command_result).lower()
-        if "compile" in next_command or " compile" in command_text:
+        if _command_or_detail_looks_like_compile_failure(next_command, command_text, detail):
             return _classify_compile_failure(detail)
         if "correctness" in detail or "max_abs_error" in detail:
             return "correctness_failed"
@@ -1885,8 +1968,23 @@ def _classify_compile_failure(detail: str) -> str:
     return "compile_failed"
 
 
+def _command_or_detail_looks_like_compile_failure(
+    next_command: str,
+    command_text: str,
+    detail: str,
+) -> bool:
+    text = f"{next_command} {command_text}".lower()
+    if "avo compile" in text or " compile" in text:
+        return True
+    lowered_detail = detail.lower()
+    return any(marker in lowered_detail for marker in COMPILE_FAILURE_DETAIL_MARKERS)
+
+
 def _classify_score_failure(score_payload: dict[str, Any]) -> str:
-    if "non-finite" in _score_payload_error_text(score_payload).lower():
+    error_text = _score_payload_error_text(score_payload).lower()
+    if "ninja is required" in error_text or "cuda is not available" in error_text:
+        return "score_environment_error"
+    if "non-finite" in error_text:
         return "correctness_nonfinite_output"
     return "correctness_failed"
 
@@ -1946,6 +2044,10 @@ def _result_detail(result: dict[str, Any]) -> str:
     if not detail:
         return ""
     return _shorten(" ".join(detail.split()), 180)
+
+
+def _command_result_text(result: CommandResult) -> str:
+    return "\n".join(part for part in (result.stderr_tail, result.stdout_tail) if part)
 
 
 def _gate_status(gate_decision: Any) -> str:

@@ -15,6 +15,7 @@ from avo.evolve import (
     VariationAttempt,
     _extract_score_payload,
     apply_candidate_patch,
+    attempt_has_repairable_compile_failure,
     cleanup_rejected_candidate_patch,
     command_from_decision,
     finalize_attempt,
@@ -1108,6 +1109,84 @@ def test_summarize_attempt_history_classifies_nonfinite_score(tmp_path: Path) ->
     assert "non-finite values" in summary
 
 
+def test_summarize_attempt_history_classifies_score_environment_error(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/cuda_mma_attention_seed.py"
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={
+            "all_correct": False,
+            "geomean_tflops": 0.0,
+            "cases": [
+                {
+                    "correct": False,
+                    "error": "RuntimeError: Ninja is required to load C++ extensions",
+                }
+            ],
+        },
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=score_environment_error" in summary
+    assert "Ninja is required" in summary
+
+
+def test_score_time_nvcc_failure_is_compile_repairable(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/cuda_mma_attention_seed.py",
+            candidate_patch=dedent(
+                """\
+                diff --git a/candidates/seed.py b/candidates/seed.py
+                --- a/candidates/seed.py
+                +++ b/candidates/seed.py
+                @@ -1 +1 @@
+                -VALUE = 1
+                +VALUE = bad
+                """
+            ),
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=1,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="ninja: build stopped: nvcc failed compiling attention_kernel.cu",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/seed.py"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+
+    assert attempt_has_repairable_compile_failure(attempt)
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=compile_failed" in summary
+
+
 def test_summarize_attempt_history_classifies_planning_validation_failure(
     tmp_path: Path,
 ) -> None:
@@ -1708,6 +1787,59 @@ def test_attempt_history_rejects_score_without_pending_transform(tmp_path: Path)
             decision("avo score --backend candidate --candidate candidates/seed.py --seq-lens 512"),
             attempts,
         )
+
+
+def test_cleanup_failed_compile_transform_is_not_pending(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 512,
+    }
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    cleanup_failed = PatchResult(
+        ok=False,
+        patch_paths=["candidates/kernel.cu"],
+        returncode=0,
+        stdout_tail="",
+        stderr_tail="candidate patch cleanup left paths dirty",
+        rejected_reason="candidate patch cleanup left paths dirty",
+    )
+    write_step_record(
+        attempts,
+        EvolutionStep(attempt=attempt, gate_decision=None, patch_cleanup_result=cleanup_failed),
+    )
+
+    validate_decision_against_attempt_history(
+        decision("avo score --backend candidate --candidate candidates/seed.py --seq-lens 512"),
+        attempts,
+    )
 
 
 def test_attempt_history_rejects_repeated_compile_after_planning_failure(

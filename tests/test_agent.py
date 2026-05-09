@@ -71,6 +71,27 @@ def test_parse_variation_decision_accepts_structured_transform() -> None:
     assert decision.edit_mode == "transform"
 
 
+def test_parse_variation_decision_normalizer_attaches_pending_transform() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = "Score the previously compiled transform."
+    payload["next_command"] = "avo score --backend candidate --candidate candidates/demo.py"
+    transform = {
+        "op": "replace_once",
+        "path": "candidates/demo.py",
+        "find": "VALUE = 1",
+        "replace": "VALUE = 2",
+    }
+
+    decision = parse_decision_text(
+        json.dumps(payload),
+        normalize_payload=lambda raw: {**raw, "candidate_transform": transform},
+    )
+
+    assert decision.candidate_transform == transform
+    assert decision.edit_mode == "transform"
+
+
 def test_parse_variation_decision_allows_contract_only_constant_retune() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"
@@ -398,6 +419,50 @@ def test_parse_variation_decision_infers_increase_constexpr_transform_from_edit(
         "path": "candidates/cuda_mma_attention/attention_kernel.cu",
         "name": "kThreads",
         "value": 256,
+    }
+
+
+def test_parse_variation_decision_infers_thread_count_retune_alias() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Decrease thread count from 128 to 64 in the MMA attention kernel to improve "
+        "occupancy while preserving the existing one-query-tile block contract."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_64"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+    assert decision.candidate_transform == {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 64,
+    }
+
+
+def test_parse_variation_decision_infers_changing_constexpr_transform() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Widen the MMA kernel tile contract by changing kTile from 16 to 32, then "
+        "compile-check that the constexpr shape remains supported."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_ktile_32"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+    assert decision.candidate_transform == {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kTile",
+        "value": 32,
     }
 
 

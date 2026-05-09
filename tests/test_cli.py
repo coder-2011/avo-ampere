@@ -1,4 +1,5 @@
 import json
+import os
 import tomllib
 from pathlib import Path
 from textwrap import dedent
@@ -13,9 +14,11 @@ from avo.cli import (
     _baseline_build_status,
     _evolve_loop,
     _evolve_once,
+    _pending_transform_payload_normalizer,
     _planning_context,
     _score,
     _seed_baseline,
+    _torch_extension_worker_env,
     main,
 )
 from avo.cuda_env import (
@@ -25,7 +28,15 @@ from avo.cuda_env import (
     prepare_torch_extension_env,
     python_cuda_home,
 )
-from avo.evolve import CommandResult, VariationAttempt, apply_candidate_patch
+from avo.evolve import (
+    CommandResult,
+    EvolutionStep,
+    PatchResult,
+    VariationAttempt,
+    apply_candidate_patch,
+    materialize_candidate_transform,
+    write_step_record,
+)
 
 
 def test_agent_status_reports_missing_key_without_secret(monkeypatch) -> None:
@@ -260,6 +271,28 @@ def test_prepare_torch_extension_env_adds_cudart_link_dir(tmp_path: Path, monkey
     assert env["LD_LIBRARY_PATH"].split(":")[:2] == [str(link_dir), str(cuda_home / "lib")]
 
 
+def test_torch_extension_worker_env_exposes_python_bin_for_ninja(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    python_bin = tmp_path / "venv" / "bin"
+    python_bin.mkdir(parents=True)
+    python_executable = python_bin / "python"
+    python_executable.write_text("", encoding="utf-8")
+
+    def fake_prepare(env, *, max_jobs):
+        env["MAX_JOBS"] = max_jobs
+        return env
+
+    monkeypatch.setattr("avo.cli.prepare_torch_extension_env", fake_prepare)
+    monkeypatch.setattr("avo.cli.sys.executable", str(python_executable))
+
+    updated = _torch_extension_worker_env({"PATH": "/usr/bin"})
+
+    assert updated["PATH"].split(os.pathsep)[0] == str(python_bin)
+    assert updated["MAX_JOBS"] == "1"
+
+
 def test_baseline_build_status_reports_cuda_mismatch(monkeypatch) -> None:
     monkeypatch.setattr("avo.cli.nvcc_path_from_env", lambda env: "/usr/local/cuda/bin/nvcc")
     monkeypatch.setattr("avo.cli.nvcc_cuda_version", lambda nvcc_path, env: ("12.9", None))
@@ -451,6 +484,339 @@ def test_evolve_once_cleans_up_nonaccepted_candidate_patch(
     assert exit_code == 0
     assert payload["patch_cleanup_result"]["ok"] is True
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_evolve_once_repairs_candidate_compile_failure_before_finishing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    first_decision = VariationDecision(
+        hypothesis="introduce compile failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value in a way that fails compile",
+        expected_effect="exercise compile repair",
+        risk="mock compile failure",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = bad
+            """
+        ),
+    )
+    repair_decision = VariationDecision(
+        hypothesis="repair compile failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value with valid syntax",
+        expected_effect="build should pass",
+        risk="compile-only repair",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = 2
+            """
+        ),
+    )
+    decisions = [first_decision, repair_decision]
+    seen_attempt_histories: list[str] = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        patch_result = apply_candidate_patch(decision.candidate_patch, cwd=cwd)
+        ok = decision.hypothesis == "repair compile failure"
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "compile"],
+                returncode=0 if ok else 1,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail=(
+                    ""
+                    if ok
+                    else "attention_kernel.cu(4): error: identifier bad is undefined"
+                ),
+            ),
+            started_at="2026-05-08T00:00:00+00:00",
+            completed_at="2026-05-08T00:00:01+00:00",
+            patch_result=patch_result,
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    exit_code = _evolve_once(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            step_json=None,
+            env_file=None,
+            model="claude",
+            attempts_dir=None,
+            attempt_limit=5,
+            compile_repair_attempts=1,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["attempt"]["decision"]["hypothesis"] == "repair compile failure"
+    assert len(payload["repair_attempts"]) == 1
+    assert payload["repair_cleanup_results"][0]["ok"] is True
+    assert payload["patch_cleanup_result"]["ok"] is True
+    assert "Immediate compile-repair request" in seen_attempt_histories[1]
+    assert "identifier bad is undefined" in seen_attempt_histories[1]
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_evolve_once_repairs_transform_materialization_failure_before_finishing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\nANCHOR\nVALUE = 2\nANCHOR\n", encoding="utf-8")
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    first_decision = VariationDecision(
+        hypothesis="introduce ambiguous transform",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="insert after an ambiguous anchor",
+        expected_effect="exercise transform repair",
+        risk="mock materialization failure",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        edit_mode="transform",
+        candidate_transform={
+            "op": "insert_after_once",
+            "path": "candidates/seed.py",
+            "anchor": "ANCHOR",
+            "text": "VALUE = 3\n",
+        },
+    )
+    repair_decision = VariationDecision(
+        hypothesis="repair ambiguous transform",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="insert after a unique anchor span",
+        expected_effect="materialization should pass",
+        risk="compile-only repair",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        edit_mode="transform",
+        candidate_transform={
+            "op": "insert_after_once",
+            "path": "candidates/seed.py",
+            "anchor": "VALUE = 1\nANCHOR",
+            "text": "\nVALUE = 3",
+        },
+    )
+    decisions = [first_decision, repair_decision]
+    seen_attempt_histories: list[str] = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        if decision.hypothesis == "introduce ambiguous transform":
+            return VariationAttempt(
+                decision=decision,
+                command_result=CommandResult(
+                    command=["python", "-m", "avo", "compile"],
+                    returncode=None,
+                    timed_out=False,
+                    stdout_tail="",
+                    stderr_tail=(
+                        "candidate patch rejected: candidate transform rejected: insert "
+                        "transform expected exactly one anchor, found 2"
+                    ),
+                ),
+                started_at="2026-05-08T00:00:00+00:00",
+                completed_at="2026-05-08T00:00:01+00:00",
+                patch_result=PatchResult(
+                    ok=False,
+                    patch_paths=[],
+                    returncode=None,
+                    stdout_tail="",
+                    stderr_tail="",
+                    rejected_reason=(
+                        "candidate transform rejected: insert transform expected exactly "
+                        "one anchor, found 2"
+                    ),
+                ),
+            )
+        patch_text = materialize_candidate_transform(decision.candidate_transform, cwd=cwd)
+        patch_result = apply_candidate_patch(patch_text, cwd=cwd)
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "compile"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:00+00:00",
+            completed_at="2026-05-08T00:00:01+00:00",
+            patch_result=patch_result,
+            materialized_patch=patch_text,
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    exit_code = _evolve_once(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            step_json=None,
+            env_file=None,
+            model="claude",
+            attempts_dir=None,
+            attempt_limit=5,
+            compile_repair_attempts=1,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["attempt"]["decision"]["hypothesis"] == "repair ambiguous transform"
+    assert len(payload["repair_attempts"]) == 1
+    assert payload["repair_cleanup_results"] == []
+    assert payload["patch_cleanup_result"]["ok"] is True
+    assert "Immediate structured-transform materialization repair request" in (
+        seen_attempt_histories[1]
+    )
+    assert "expected exactly one anchor" in seen_attempt_histories[1]
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\nANCHOR\nVALUE = 2\nANCHOR\n"
+
+
+def test_pending_transform_payload_normalizer_attaches_transform_to_score(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "replace_once",
+        "path": "candidates/seed.py",
+        "find": "VALUE = 1",
+        "replace": "VALUE = 2",
+    }
+    compile_decision = VariationDecision(
+        hypothesis="compile transform",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value",
+        expected_effect="compile checks the edit",
+        risk="mock compile",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        edit_mode="transform",
+        candidate_transform=transform,
+    )
+    compile_attempt = VariationAttempt(
+        decision=compile_decision,
+        command_result=CommandResult(
+            command=["python", "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/seed.py"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+    write_step_record(attempts, EvolutionStep(attempt=compile_attempt, gate_decision=None))
+
+    normalize = _pending_transform_payload_normalizer(attempts)
+
+    assert normalize is not None
+    payload = normalize(
+        {
+            "hypothesis": "score compiled transform",
+            "files_to_inspect": ["candidates/seed.py"],
+            "candidate_edit": "Score the previously compiled transform.",
+            "candidate_patch": "",
+            "edit_mode": "transform",
+            "expected_effect": "records the score",
+            "risk": "mock score",
+            "next_command": "avo score --backend candidate --candidate candidates/seed.py",
+        }
+    )
+    assert payload["candidate_transform"] == transform
+    assert payload["candidate_patch"] == ""
+    assert payload["edit_mode"] == "transform"
+
+    prose_payload = normalize(
+        {
+            "hypothesis": "follow up on a compiled transform",
+            "files_to_inspect": ["candidates/seed.py"],
+            "candidate_edit": "Score the previously compiled transform.",
+            "candidate_patch": "",
+            "edit_mode": "transform",
+            "expected_effect": "records the score",
+            "risk": "mock score",
+            "next_command": "avo env",
+        }
+    )
+    assert prose_payload["candidate_transform"] == transform
+
+    no_edit_payload = normalize(
+        {
+            "hypothesis": "score pending compiled transform",
+            "files_to_inspect": ["candidates/seed.py"],
+            "candidate_edit": "Score the previously compiled transform.",
+            "candidate_patch": "",
+            "edit_mode": "no_edit",
+            "expected_effect": "records the score",
+            "risk": "mock score",
+            "next_command": "avo score --backend candidate --candidate candidates/seed.py",
+        }
+    )
+    assert no_edit_payload["candidate_transform"] == transform
+    assert no_edit_payload["edit_mode"] == "transform"
+
+    malformed_payload = normalize(
+        {
+            "hypothesis": "score pending compiled transform",
+            "files_to_inspect": ["candidates/seed.py"],
+            "candidate_edit": "Score the previously compiled transform.",
+            "candidate_patch": "",
+            "candidate_transform": {},
+            "edit_mode": "transform",
+            "expected_effect": "records the score",
+            "risk": "mock score",
+            "next_command": "avo score --backend candidate --candidate candidates/seed.py",
+        }
+    )
+    assert malformed_payload["candidate_transform"] == transform
 
 
 def test_evolve_once_snapshots_accepted_candidate_patch(

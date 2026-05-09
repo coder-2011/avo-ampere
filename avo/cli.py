@@ -5,8 +5,10 @@ import importlib.util
 import json
 import os
 import shlex
+import sys
 import sysconfig
 from pathlib import Path
+from typing import Any
 
 from .agent import (
     DEFAULT_AGENT_MODEL,
@@ -28,10 +30,15 @@ from .cuda_env import (
 from .evolve import (
     DEFAULT_ATTEMPT_HISTORY_LIMIT,
     EvolutionStep,
+    VariationAttempt,
     apply_candidate_patch,
+    attempt_has_repairable_compile_failure,
+    attempt_has_repairable_transform_materialization_failure,
     cleanup_rejected_candidate_patch,
+    compile_failure_class_for_attempt,
     finalize_attempt,
     load_promoted_preflight_classes,
+    pending_compile_only_transform,
     planning_failure_step,
     run_decision_command,
     summarize_attempt_history,
@@ -53,6 +60,7 @@ GENERAL_CUDA_PRACTICE_QUERY = (
 )
 GENERAL_CUDA_PRACTICE_MAX_CHARS = 8_000
 GENERAL_CUDA_PRACTICE_MAX_CHUNKS = 4
+DEFAULT_COMPILE_REPAIR_ATTEMPTS = 2
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -129,6 +137,11 @@ def main(argv: list[str] | None = None) -> int:
     evolve_parser.add_argument("--step-json", type=Path, default=None)
     evolve_parser.add_argument("--env-file", type=Path, default=None)
     evolve_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
+    evolve_parser.add_argument(
+        "--compile-repair-attempts",
+        type=int,
+        default=DEFAULT_COMPILE_REPAIR_ATTEMPTS,
+    )
     add_attempt_history_args(evolve_parser)
 
     loop_parser = subparsers.add_parser("evolve-loop")
@@ -140,6 +153,11 @@ def main(argv: list[str] | None = None) -> int:
     loop_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
     loop_parser.add_argument("--max-steps", type=int, default=3)
     loop_parser.add_argument("--loop-json", type=Path, default=None)
+    loop_parser.add_argument(
+        "--compile-repair-attempts",
+        type=int,
+        default=DEFAULT_COMPILE_REPAIR_ATTEMPTS,
+    )
     add_attempt_history_args(loop_parser)
 
     args = parser.parse_args(argv)
@@ -366,7 +384,7 @@ def _score(args: argparse.Namespace) -> int:
         worker_args,
         timeout_s=args.timeout_s,
         cwd=Path.cwd(),
-        env=os.environ.copy(),
+        env=_torch_extension_worker_env(os.environ.copy()),
     )
     print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     return 0 if result.ok else 2
@@ -399,6 +417,7 @@ def _seed_baseline(args: argparse.Namespace) -> int:
     if args.candidate:
         worker_args.extend(["--candidate", str(args.candidate)])
     baseline_env = _baseline_build_env(os.environ.copy())
+    _prepend_env_path(baseline_env, str(Path(sys.executable).parent))
     if args.backend == "flash-attn" and importlib.util.find_spec("flash_attn") is None:
         build_status = _baseline_build_status(baseline_env)
         if not build_status["ok_for_torch_extension_build"]:
@@ -440,6 +459,17 @@ def _worker_score(args: argparse.Namespace) -> int:
     return 0
 
 
+def _torch_extension_worker_env(env: dict[str, str]) -> dict[str, str]:
+    updated = prepare_torch_extension_env(env, max_jobs="1")
+    _prepend_env_path(updated, str(Path(sys.executable).parent))
+    return updated
+
+
+def _prepend_env_path(env: dict[str, str], path: str) -> None:
+    existing = [part for part in env.get("PATH", "").split(os.pathsep) if part]
+    env["PATH"] = os.pathsep.join([path, *(part for part in existing if part != path)])
+
+
 def _agent_plan(args: argparse.Namespace) -> int:
     if args.env_file:
         load_env_file(args.env_file)
@@ -450,7 +480,9 @@ def _agent_plan(args: argparse.Namespace) -> int:
         attempt_history=attempt_history,
         repo_context=repo_context,
         model=args.model,
+        normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
     )
+    validate_decision_against_attempt_history(decision, args.attempts_dir)
     print(json.dumps(decision.as_dict(), indent=2, sort_keys=True))
     return 0
 
@@ -544,6 +576,7 @@ def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
             attempt_history=attempt_history,
             repo_context=repo_context,
             model=args.model,
+            normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
         )
         validate_decision_against_attempt_history(decision, args.attempts_dir)
     except ValueError as exc:
@@ -555,8 +588,249 @@ def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
         env=os.environ.copy(),
         promoted_preflight_classes=load_promoted_preflight_classes(args.attempts_dir),
     )
-    step = finalize_attempt(args.lineage, attempt, source_root=args.cwd)
+    repaired = _run_compile_repair_loop(
+        args,
+        initial_attempt=attempt,
+        lineage_summary=lineage_summary,
+        attempt_history=attempt_history,
+        repo_context=repo_context,
+        knowledge=knowledge,
+    )
+    if isinstance(repaired, EvolutionStep):
+        return repaired
+    attempt, repair_attempts, repair_cleanup_results = repaired
+    step = finalize_attempt(
+        args.lineage,
+        attempt,
+        source_root=args.cwd,
+        repair_attempts=tuple(repair_attempts),
+        repair_cleanup_results=tuple(repair_cleanup_results),
+    )
     return cleanup_rejected_candidate_patch(step, cwd=args.cwd)
+
+
+def _run_compile_repair_loop(
+    args: argparse.Namespace,
+    *,
+    initial_attempt: VariationAttempt,
+    lineage_summary: str,
+    attempt_history: str,
+    repo_context: str,
+    knowledge: str,
+) -> EvolutionStep | tuple[VariationAttempt, list[VariationAttempt], list[Any]]:
+    repair_limit = max(
+        0,
+        int(getattr(args, "compile_repair_attempts", DEFAULT_COMPILE_REPAIR_ATTEMPTS)),
+    )
+    repair_attempts: list[VariationAttempt] = []
+    repair_cleanup_results = []
+    current_attempt = initial_attempt
+
+    for repair_index in range(1, repair_limit + 1):
+        repair_kind = _repair_kind_for_attempt(current_attempt)
+        if repair_kind is None:
+            break
+        cleanup_step = cleanup_rejected_candidate_patch(
+            EvolutionStep(attempt=current_attempt, gate_decision=None),
+            cwd=args.cwd,
+        )
+        if cleanup_step.patch_cleanup_result is not None:
+            repair_cleanup_results.append(cleanup_step.patch_cleanup_result)
+            if not cleanup_step.patch_cleanup_result.ok:
+                return EvolutionStep(
+                    attempt=current_attempt,
+                    gate_decision=None,
+                    patch_cleanup_result=cleanup_step.patch_cleanup_result,
+                    repair_attempts=tuple(repair_attempts),
+                    repair_cleanup_results=tuple(repair_cleanup_results),
+                )
+        repair_attempts.append(current_attempt)
+        repair_history = _edit_repair_attempt_history(
+            attempt_history,
+            failed_attempt=current_attempt,
+            cleanup_result=cleanup_step.patch_cleanup_result,
+            repair_index=repair_index,
+            repair_kind=repair_kind,
+        )
+        try:
+            repair_decision = request_variation_decision(
+                lineage_summary=lineage_summary,
+                knowledge=knowledge,
+                attempt_history=repair_history,
+                repo_context=repo_context,
+                model=args.model,
+                normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
+            )
+            _validate_edit_repair_decision(repair_decision, current_attempt, repair_kind)
+            validate_decision_against_attempt_history(repair_decision, args.attempts_dir)
+        except ValueError as exc:
+            return planning_failure_step(
+                exc,
+                repair_attempts=tuple(repair_attempts),
+                repair_cleanup_results=tuple(repair_cleanup_results),
+            )
+        current_attempt = run_decision_command(
+            repair_decision,
+            cwd=args.cwd,
+            timeout_s=args.timeout_s,
+            env=os.environ.copy(),
+            promoted_preflight_classes=load_promoted_preflight_classes(args.attempts_dir),
+        )
+
+    return current_attempt, repair_attempts, repair_cleanup_results
+
+
+def _repair_kind_for_attempt(attempt: VariationAttempt) -> str | None:
+    if attempt_has_repairable_compile_failure(attempt):
+        return "compile"
+    if attempt_has_repairable_transform_materialization_failure(attempt):
+        return "structured-transform-materialization"
+    return None
+
+
+def _edit_repair_attempt_history(
+    attempt_history: str,
+    *,
+    failed_attempt: VariationAttempt,
+    cleanup_result: Any,
+    repair_index: int,
+    repair_kind: str,
+) -> str:
+    cleanup_status = "not needed"
+    if cleanup_result is not None:
+        cleanup_status = "ok" if cleanup_result.ok else "failed"
+    if repair_kind == "compile":
+        request = (
+            "Immediate compile-repair request:\n"
+            f"- repair_attempt={repair_index}\n"
+            f"- failure_class={compile_failure_class_for_attempt(failed_attempt)}\n"
+            f"- failed_command={failed_attempt.decision.next_command}\n"
+            f"- worktree_cleanup_before_repair={cleanup_status}\n"
+            "- The previous candidate edit was applied and the CUDA build failed. "
+            "The failed edit has been reverted before this repair request. Return a "
+            "revised executable edit against the current source, not a no-edit retry. "
+            "Use candidate_transform when repairing CUDA sources, keep candidate_patch "
+            "empty in transform mode, and make the smallest coherent semantic repair "
+            "that addresses the compiler output.\n"
+            f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
+            f"- compiler_stderr_tail:\n{failed_attempt.command_result.stderr_tail or '<empty>'}\n"
+            f"- compiler_stdout_tail:\n{failed_attempt.command_result.stdout_tail or '<empty>'}"
+        )
+    else:
+        patch_result = failed_attempt.patch_result
+        materialization_error = ""
+        if patch_result is not None:
+            materialization_error = patch_result.rejected_reason or patch_result.stderr_tail
+        request = (
+            "Immediate structured-transform materialization repair request:\n"
+            f"- repair_attempt={repair_index}\n"
+            f"- failed_command={failed_attempt.decision.next_command}\n"
+            f"- worktree_cleanup_before_repair={cleanup_status}\n"
+            "- The previous candidate_transform failed before command execution because "
+            "one or more anchors/matches did not select exactly one source span. Return "
+            "a revised candidate_transform with larger unique surrounding-code snippets, "
+            "not a no-edit retry and not prose-only CUDA edits. Keep candidate_patch "
+            "empty in transform mode and make the smallest coherent semantic repair "
+            "that preserves the candidate's intended invariant.\n"
+            f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
+            f"- materialization_error:\n{materialization_error or '<empty>'}"
+        )
+    sections = [
+        attempt_history.strip(),
+        request,
+    ]
+    return "\n\n".join(section for section in sections if section)
+
+
+def _validate_edit_repair_decision(
+    repair_decision: VariationDecision,
+    failed_attempt: VariationAttempt,
+    repair_kind: str,
+) -> None:
+    if repair_decision.candidate_transform is None and not repair_decision.candidate_patch.strip():
+        raise ValueError(
+            f"{repair_kind} repair decision must include a revised candidate_transform "
+            "or candidate_patch; no-edit retries do not repair failed executable edits"
+        )
+    if (
+        repair_kind == "structured-transform-materialization"
+        and failed_attempt.decision.candidate_transform is not None
+        and repair_decision.candidate_transform is None
+    ):
+        raise ValueError(
+            "structured-transform materialization repair must return a revised "
+            "candidate_transform; prose-only retries and raw CUDA patches are not a "
+            "valid repair for failed transform materialization"
+        )
+    if _same_edit_payload(repair_decision, failed_attempt.decision):
+        raise ValueError(
+            f"{repair_kind} repair decision repeats the failed edit payload unchanged; "
+            "revise the structured transform or patch to address the failure"
+        )
+
+
+def _same_edit_payload(left: VariationDecision, right: VariationDecision) -> bool:
+    return (
+        left.candidate_transform == right.candidate_transform
+        and left.candidate_patch.strip() == right.candidate_patch.strip()
+    )
+
+
+def _attempt_edit_payload_summary(attempt: VariationAttempt) -> str:
+    if attempt.decision.candidate_transform is not None:
+        return json.dumps(attempt.decision.candidate_transform, sort_keys=True)
+    patch_text = attempt.materialized_patch or attempt.decision.candidate_patch
+    if patch_text.strip():
+        return _short_text(patch_text, 3000)
+    return "<no edit payload>"
+
+
+def _short_text(text: str, limit: int) -> str:
+    if len(text) <= limit:
+        return text
+    return text[: limit - 3] + "..."
+
+
+def _pending_transform_payload_normalizer(attempts_dir: Path | None):
+    pending_transform = pending_compile_only_transform(attempts_dir)
+    if pending_transform is None:
+        return None
+
+    def normalize(payload: dict[str, Any]) -> dict[str, Any]:
+        if str(payload.get("candidate_patch") or "").strip():
+            return payload
+        edit_mode = str(payload.get("edit_mode") or "")
+        if edit_mode not in {"", "transform", "no_edit"}:
+            return payload
+        if not _payload_wants_pending_transform_score(payload):
+            return payload
+        updated = dict(payload)
+        updated["edit_mode"] = "transform"
+        updated["candidate_patch"] = ""
+        updated["candidate_transform"] = pending_transform
+        return updated
+
+    return normalize
+
+
+def _payload_wants_pending_transform_score(payload: dict[str, Any]) -> bool:
+    if _payload_subcommand(payload) == "score":
+        return True
+    text = " ".join(
+        str(payload.get(key) or "")
+        for key in ("hypothesis", "candidate_edit", "expected_effect", "risk", "next_command")
+    ).lower()
+    return "score" in text and "compiled" in text and "transform" in text
+
+
+def _payload_subcommand(payload: dict[str, Any]) -> str:
+    try:
+        parts = shlex.split(str(payload.get("next_command") or ""))
+    except ValueError:
+        return ""
+    if len(parts) < 2 or parts[0] != "avo":
+        return ""
+    return parts[1]
 
 
 def _planning_context(args: argparse.Namespace) -> tuple[str, str, str, str]:

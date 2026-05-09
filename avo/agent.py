@@ -499,7 +499,14 @@ def load_env_file(path: Path) -> None:
         os.environ.setdefault(key, value)
 
 
-def parse_decision_text(text: str) -> VariationDecision:
+PayloadNormalizer = Callable[[dict[str, Any]], dict[str, Any]]
+
+
+def parse_decision_text(
+    text: str,
+    *,
+    normalize_payload: PayloadNormalizer | None = None,
+) -> VariationDecision:
     try:
         payload = json.loads(text)
     except json.JSONDecodeError as exc:
@@ -508,10 +515,16 @@ def parse_decision_text(text: str) -> VariationDecision:
             raise ValueError(f"agent returned malformed JSON: {exc}") from exc
     if not isinstance(payload, dict):
         raise ValueError("agent JSON response must be an object")
+    if normalize_payload is not None:
+        payload = normalize_payload(payload)
     return VariationDecision.from_mapping(payload)
 
 
-def parse_decision_response(response: Any) -> VariationDecision:
+def parse_decision_response(
+    response: Any,
+    *,
+    normalize_payload: PayloadNormalizer | None = None,
+) -> VariationDecision:
     for block in getattr(response, "content", []):
         if _block_type(block) != "tool_use":
             continue
@@ -520,11 +533,13 @@ def parse_decision_response(response: Any) -> VariationDecision:
         payload = _block_value(block, "input")
         if not isinstance(payload, dict):
             raise ValueError("variation decision tool input must be an object")
+        if normalize_payload is not None:
+            payload = normalize_payload(payload)
         return VariationDecision.from_mapping(payload)
 
     text = _response_text(response)
     if text.strip():
-        return parse_decision_text(text)
+        return parse_decision_text(text, normalize_payload=normalize_payload)
     raise ValueError(f"agent did not call {DECISION_TOOL_NAME}")
 
 
@@ -535,6 +550,7 @@ def request_variation_decision(
     attempt_history: str = "",
     repo_context: str = "",
     model: str = DEFAULT_AGENT_MODEL,
+    normalize_payload: PayloadNormalizer | None = None,
 ) -> VariationDecision:
     try:
         import anthropic
@@ -560,7 +576,7 @@ def request_variation_decision(
         "max_tokens": 4000,
         "messages": [{"role": "user", "content": prompt}],
     }
-    return _request_valid_decision(client, kwargs)
+    return _request_valid_decision(client, kwargs, normalize_payload=normalize_payload)
 
 
 def build_variation_prompt(
@@ -735,13 +751,14 @@ def _request_valid_decision(
     *,
     attempts: int = DEFAULT_AGENT_REQUEST_ATTEMPTS,
     retry_delay_s: float = DEFAULT_AGENT_RETRY_DELAY_S,
+    normalize_payload: PayloadNormalizer | None = None,
 ) -> VariationDecision:
     last_error: ValueError | None = None
     for attempt in range(attempts):
         request_kwargs = _decision_kwargs_with_feedback(kwargs, last_error)
         response = _request_decision_response(client, request_kwargs)
         try:
-            return parse_decision_response(response)
+            return parse_decision_response(response, normalize_payload=normalize_payload)
         except ValueError as exc:
             last_error = exc
             if attempt + 1 >= attempts:
@@ -1275,6 +1292,10 @@ def _infer_candidate_transform_from_edit(
         return steps[0] if len(steps) == 1 else {"op": "batch", "steps": steps}
     const_match = _infer_integer_constant_change(candidate_edit)
     if const_match is None:
+        const_alias = _infer_integer_constant_alias_change(candidate_edit)
+    else:
+        const_alias = (const_match.group("name"), int(const_match.group("value")))
+    if const_alias is None:
         return None
     if include_header is not None:
         steps.append({"op": "add_include", "path": source_path, "header": include_header})
@@ -1282,8 +1303,8 @@ def _infer_candidate_transform_from_edit(
         {
             "op": "set_constexpr_int",
             "path": source_path,
-            "name": const_match.group("name"),
-            "value": int(const_match.group("value")),
+            "name": const_alias[0],
+            "value": const_alias[1],
         }
     )
     replace_match = re.search(
@@ -1373,13 +1394,15 @@ def _is_exact_transform_snippet(value: str) -> bool:
 
 def _infer_integer_constant_change(candidate_edit: str) -> re.Match[str] | None:
     patterns = (
-        r"\b(?:change|decrease|decreasing|extend|extending|increase|increasing|retune|"
-        r"retuning|set|setting|update|updating)\s+"
+        r"\b(?:change|changing|decrease|decreasing|extend|extending|increase|"
+        r"increasing|narrow|narrowing|retune|retuning|set|setting|update|updating|"
+        r"widen|widening)\s+"
         r"(?:the\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
         r"(?:\s+(?:constant|cap|value))?"
         r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
-        r"\b(?:change|decrease|decreasing|extend|extending|increase|increasing|retune|"
-        r"retuning|set|setting|update|updating)\b"
+        r"\b(?:change|changing|decrease|decreasing|extend|extending|increase|"
+        r"increasing|narrow|narrowing|retune|retuning|set|setting|update|updating|"
+        r"widen|widening)\b"
         r"(?:(?!\b(?:to|=)\b).){0,96}?"
         r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+(?:constant|cap|value)"
         r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
@@ -1388,6 +1411,22 @@ def _infer_integer_constant_change(candidate_edit: str) -> re.Match[str] | None:
         match = re.search(pattern, candidate_edit, flags=re.IGNORECASE)
         if match is not None:
             return match
+    return None
+
+
+def _infer_integer_constant_alias_change(candidate_edit: str) -> tuple[str, int] | None:
+    patterns = (
+        r"\b(?:change|changing|decrease|decreasing|increase|increasing|retune|"
+        r"retuning|set|setting|update|updating)\s+(?:the\s+)?(?:block\s+)?thread\s+count"
+        r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
+        r"\b(?:change|changing|decrease|decreasing|increase|increasing|retune|"
+        r"retuning|set|setting|update|updating)\s+(?:threads\s+per\s+block|block\s+threads)"
+        r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, candidate_edit, flags=re.IGNORECASE)
+        if match is not None:
+            return "kThreads", int(match.group("value"))
     return None
 
 
@@ -2388,6 +2427,11 @@ def _candidate_edit_requires_patch(candidate_edit: str) -> bool:
     normalized = " ".join(candidate_edit.lower().replace("-", " ").split())
     if any(phrase in normalized for phrase in NO_EDIT_PHRASES):
         return False
+    if (
+        _infer_integer_constant_change(candidate_edit) is not None
+        or _infer_integer_constant_alias_change(candidate_edit) is not None
+    ):
+        return True
     words = re.findall(r"[a-z]+", normalized)
     return any(word in PATCH_REQUIRED_EDIT_VERBS for word in words)
 
