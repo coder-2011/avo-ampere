@@ -330,6 +330,29 @@ def test_parse_variation_decision_infers_set_constexpr_transform_from_edit() -> 
     }
 
 
+def test_parse_variation_decision_infers_increase_constexpr_transform_from_edit() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Increase kThreads from 128 to 256 in "
+        "candidates/cuda_mma_attention/attention_kernel.cu to retune the existing block "
+        "contract, then compile-check the change."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_256"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+    assert decision.candidate_transform == {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 256,
+    }
+
+
 def test_parse_variation_decision_infers_exact_backtick_replace_transform() -> None:
     payload = decision_payload()
     payload["files_to_inspect"] = []

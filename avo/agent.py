@@ -1353,11 +1353,13 @@ def _is_exact_transform_snippet(value: str) -> bool:
 
 def _infer_integer_constant_change(candidate_edit: str) -> re.Match[str] | None:
     patterns = (
-        r"\b(?:change|extend|extending|set|setting|update|updating)\s+"
+        r"\b(?:change|decrease|decreasing|extend|extending|increase|increasing|retune|"
+        r"retuning|set|setting|update|updating)\s+"
         r"(?:the\s+)?(?P<name>[A-Za-z_][A-Za-z0-9_]*)"
         r"(?:\s+(?:constant|cap|value))?"
         r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
-        r"\b(?:change|extend|extending|set|setting|update|updating)\b"
+        r"\b(?:change|decrease|decreasing|extend|extending|increase|increasing|retune|"
+        r"retuning|set|setting|update|updating)\b"
         r"(?:(?!\b(?:to|=)\b).){0,96}?"
         r"\b(?P<name>[A-Za-z_][A-Za-z0-9_]*)\s+(?:constant|cap|value)"
         r"(?:\s+from\s+[-+]?\d+)?\s*(?:to|=)\s*(?P<value>[-+]?\d+)\b",
