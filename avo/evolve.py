@@ -599,6 +599,16 @@ def validate_decision_against_attempt_history(
     pending_transform = _pending_compile_only_transform(payloads)
     if pending_transform is None:
         return
+    if (
+        _decision_subcommand(decision) == "score"
+        and decision.candidate_transform is None
+        and not decision.candidate_patch.strip()
+    ):
+        raise ValueError(
+            "next_command scores without the pending compile-only candidate_transform; "
+            "include the exact candidate_transform JSON from the follow-up signal or choose "
+            "a materially different transform family"
+        )
     if decision.candidate_transform != pending_transform:
         return
     if _decision_subcommand(decision) != "compile":
@@ -1660,6 +1670,8 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
 def _classify_planning_failure(detail: str) -> str:
     if "candidate_patch and candidate_transform are mutually exclusive" in detail:
         return "planning_edit_channel"
+    if "pending compile-only candidate_transform" in detail:
+        return "planning_missing_pending_transform"
     if "candidate_transform or candidate_patch" in detail:
         return "planning_missing_edit_payload"
     if "recorded no-patch compile diagnostic" in detail:
