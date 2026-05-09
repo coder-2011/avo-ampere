@@ -10,7 +10,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Target workload: BF16 forward attention with head dimension 128 and sequence lengths 4096, 8192, 16384, and 32768.
 - Baseline: FlashAttention-2. FlashAttention-4 is intentionally excluded because its Blackwell path uses primitives that are not available on Ampere.
 - Candidate support: Python candidate modules plus CUDA-extension attention candidates, including a BF16 WMMA QK/PV seed accepted through the seq32768 lane.
-- Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, and a candidate-only patch application substrate.
+- Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, a local searchable knowledge-corpus retriever, and a candidate-only patch application substrate.
 - Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, and environment metadata in JSON.
 - Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage, classify failure classes, and persist recurring classes as active hard preflight tracks in `preflight_tracks.json`, including the concrete structural checks activated by each promoted class.
 - Research state: the autonomous loop has accepted benchmark lanes across the full target shape set through seq32768. The open result is still optimizing that seed toward beating FlashAttention-2 on the target suite.
@@ -80,6 +80,18 @@ uv run python -m avo compile --source kernels/smoke.cu --out-dir /tmp/avo-build
 uv run --extra cuda python -m avo env
 uv run --extra agent --extra cuda python -m avo env --env-file ../avo/.env.local
 ```
+
+Search the local knowledge corpus that is supplied to the planner:
+
+```bash
+uv run python -m avo knowledge-search knowledge/ampere.md \
+  --query "Ampere cp.async shared staging WMMA head_dim 128"
+```
+
+`agent-plan`, `evolve-once`, and `evolve-loop` use the same deterministic lexical
+retriever internally. The query is built from the current lineage summary, recent
+attempt history, and local repo context, so the planner receives relevant snippets
+from `knowledge/` instead of the entire corpus as one flat prompt block.
 
 Score the PyTorch seed backend:
 

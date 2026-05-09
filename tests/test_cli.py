@@ -114,6 +114,32 @@ def test_baseline_env_command_prints_json(monkeypatch, capsys) -> None:
     }
 
 
+def test_knowledge_search_command_prints_retrieved_context(tmp_path: Path, capsys) -> None:
+    knowledge = tmp_path / "knowledge"
+    knowledge.mkdir()
+    (knowledge / "ampere.md").write_text(
+        "Ampere cp.async uses aligned shared-memory staging.\n",
+        encoding="utf-8",
+    )
+
+    exit_code = main(
+        [
+            "knowledge-search",
+            str(knowledge),
+            "--query",
+            "cp.async shared staging",
+            "--max-chunks",
+            "1",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    assert exit_code == 0
+    assert "Retrieved knowledge context" in output
+    assert "ampere.md#chunk-0" in output
+    assert "cp.async" in output
+
+
 def test_baseline_build_env_uses_python_cuda_home(monkeypatch) -> None:
     monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: "/venv/nvidia/cu13")
     monkeypatch.setattr("avo.cuda_env.cuda_env_is_build_compatible", lambda env: False)
@@ -499,9 +525,11 @@ def test_evolve_loop_runs_until_accepted_and_records_attempts(
         loop_decision("second accepted"),
     ]
     seen_attempt_histories = []
+    seen_knowledge_contexts = []
 
     def fake_request_variation_decision(**kwargs):
         seen_attempt_histories.append(kwargs["attempt_history"])
+        seen_knowledge_contexts.append(kwargs["knowledge"])
         return decisions.pop(0)
 
     def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
@@ -551,6 +579,8 @@ def test_evolve_loop_runs_until_accepted_and_records_attempts(
     assert len(list((tmp_path / "attempts").glob("*.json"))) == 2
     assert seen_attempt_histories[0] == ""
     assert "first rejected" in seen_attempt_histories[1]
+    assert "Retrieved knowledge context" in seen_knowledge_contexts[0]
+    assert "Ampere only." in seen_knowledge_contexts[0]
     assert json.loads((tmp_path / "loop.json").read_text(encoding="utf-8"))["accepted"] is True
 
 

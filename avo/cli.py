@@ -42,6 +42,7 @@ from .evolve import (
     write_step_record,
 )
 from .isolation import module_worker_args, print_result, run_json_worker
+from .knowledge import build_knowledge_context
 from .lineage import commit_score, init_lineage_repo, lineage_score_summary, seed_baseline
 
 
@@ -54,6 +55,12 @@ def main(argv: list[str] | None = None) -> int:
 
     baseline_env_parser = subparsers.add_parser("baseline-env")
     baseline_env_parser.add_argument("--format", choices=["shell", "json"], default="shell")
+
+    knowledge_parser = subparsers.add_parser("knowledge-search")
+    knowledge_parser.add_argument("path", type=Path)
+    knowledge_parser.add_argument("--query", required=True)
+    knowledge_parser.add_argument("--max-chunks", type=int, default=10)
+    knowledge_parser.add_argument("--max-chars", type=int, default=24_000)
 
     compile_parser = subparsers.add_parser("compile")
     compile_parser.add_argument("--source", type=Path, required=True)
@@ -132,6 +139,8 @@ def main(argv: list[str] | None = None) -> int:
         return _env(args)
     if args.command == "baseline-env":
         return _baseline_env(args)
+    if args.command == "knowledge-search":
+        return _knowledge_search(args)
     if args.command == "compile":
         return _compile(args)
     if args.command == "score":
@@ -185,6 +194,18 @@ def add_score_args(parser: argparse.ArgumentParser) -> None:
 def add_attempt_history_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--attempts-dir", type=Path, default=None)
     parser.add_argument("--attempt-limit", type=int, default=DEFAULT_ATTEMPT_HISTORY_LIMIT)
+
+
+def _knowledge_search(args: argparse.Namespace) -> int:
+    print(
+        build_knowledge_context(
+            args.path,
+            query=args.query,
+            max_chunks=args.max_chunks,
+            max_chars=args.max_chars,
+        )
+    )
+    return 0
 
 
 BASELINE_ENV_EXPORT_KEYS = (
@@ -413,13 +434,12 @@ def _worker_score(args: argparse.Namespace) -> int:
 def _agent_plan(args: argparse.Namespace) -> int:
     if args.env_file:
         load_env_file(args.env_file)
-    knowledge = args.knowledge.read_text(encoding="utf-8")
-    lineage_summary = _lineage_summary(args.lineage)
+    lineage_summary, attempt_history, repo_context, knowledge = _planning_context(args)
     decision = request_variation_decision(
         lineage_summary=lineage_summary,
         knowledge=knowledge,
-        attempt_history=summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit),
-        repo_context=build_repo_context(args.cwd),
+        attempt_history=attempt_history,
+        repo_context=repo_context,
         model=args.model,
     )
     print(json.dumps(decision.as_dict(), indent=2, sort_keys=True))
@@ -456,8 +476,7 @@ def _apply_patch(args: argparse.Namespace) -> int:
 def _evolve_once(args: argparse.Namespace) -> int:
     if args.env_file:
         load_env_file(args.env_file)
-    knowledge = args.knowledge.read_text(encoding="utf-8")
-    step = _run_evolve_step(args, knowledge)
+    step = _run_evolve_step(args)
     if args.step_json:
         write_step(args.step_json, step)
     if args.attempts_dir:
@@ -474,13 +493,12 @@ def _evolve_loop(args: argparse.Namespace) -> int:
         raise ValueError("evolve-loop requires --attempts-dir for cross-step memory")
     if args.env_file:
         load_env_file(args.env_file)
-    knowledge = args.knowledge.read_text(encoding="utf-8")
 
     steps: list[EvolutionStep] = []
     stopped_reason = "max_steps"
     update_promoted_preflight_tracks(args.attempts_dir)
     for _ in range(args.max_steps):
-        step = _run_evolve_step(args, knowledge)
+        step = _run_evolve_step(args)
         steps.append(step)
         write_step_record(args.attempts_dir, step)
         update_promoted_preflight_tracks(args.attempts_dir)
@@ -508,13 +526,14 @@ def _evolve_loop(args: argparse.Namespace) -> int:
     return 0 if payload["accepted"] else 2
 
 
-def _run_evolve_step(args: argparse.Namespace, knowledge: str) -> EvolutionStep:
+def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
     try:
+        lineage_summary, attempt_history, repo_context, knowledge = _planning_context(args)
         decision = request_variation_decision(
-            lineage_summary=_lineage_summary(args.lineage),
+            lineage_summary=lineage_summary,
             knowledge=knowledge,
-            attempt_history=summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit),
-            repo_context=build_repo_context(args.cwd),
+            attempt_history=attempt_history,
+            repo_context=repo_context,
             model=args.model,
         )
         validate_decision_against_attempt_history(decision, args.attempts_dir)
@@ -529,6 +548,39 @@ def _run_evolve_step(args: argparse.Namespace, knowledge: str) -> EvolutionStep:
     )
     step = finalize_attempt(args.lineage, attempt, source_root=args.cwd)
     return cleanup_rejected_candidate_patch(step, cwd=args.cwd)
+
+
+def _planning_context(args: argparse.Namespace) -> tuple[str, str, str, str]:
+    lineage_summary = _lineage_summary(args.lineage)
+    attempt_history = summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit)
+    repo_context = build_repo_context(args.cwd)
+    knowledge = build_knowledge_context(
+        args.knowledge,
+        query=_knowledge_query(
+            lineage_summary=lineage_summary,
+            attempt_history=attempt_history,
+            repo_context=repo_context,
+        ),
+    )
+    return lineage_summary, attempt_history, repo_context, knowledge
+
+
+def _knowledge_query(
+    *,
+    lineage_summary: str,
+    attempt_history: str,
+    repo_context: str,
+) -> str:
+    return "\n\n".join(
+        part
+        for part in (
+            "Ampere sm86 FlashAttention-2 CUDA attention kernel evolution",
+            lineage_summary,
+            attempt_history,
+            repo_context[:12_000],
+        )
+        if part.strip()
+    )
 
 
 def _step_exit_code(step: EvolutionStep) -> int:
