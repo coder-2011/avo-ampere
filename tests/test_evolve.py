@@ -463,7 +463,11 @@ def test_run_decision_command_materializes_transform_before_command(tmp_path: Pa
     assert attempt.patch_result.ok
     assert attempt.command_result.ok
     assert attempt.decision.candidate_transform is not None
-    assert attempt.decision.candidate_patch.startswith("diff --git")
+    assert attempt.decision.candidate_patch == ""
+    assert attempt.materialized_patch is not None
+    assert attempt.materialized_patch.startswith("diff --git")
+    assert attempt.as_dict()["decision"]["candidate_patch"] == ""
+    assert attempt.as_dict()["materialized_patch"].startswith("diff --git")
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
@@ -627,6 +631,36 @@ def test_cleanup_rejected_candidate_patch_reverts_nonaccepted_patch(tmp_path: Pa
 
     cleaned = cleanup_rejected_candidate_patch(step, cwd=tmp_path)
 
+    assert cleaned.patch_cleanup_result is not None
+    assert cleaned.patch_cleanup_result.ok
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_cleanup_rejected_transform_uses_materialized_patch(tmp_path: Path) -> None:
+    seed = write_seed_candidate(tmp_path)
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+    attempt = run_decision_command(
+        decision(
+            "avo worker-sleep --seconds 0",
+            candidate_transform={
+                "op": "replace_once",
+                "path": "candidates/seed.py",
+                "find": "VALUE = 1",
+                "replace": "VALUE = 2",
+            },
+        ),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+    step = EvolutionStep(attempt=attempt, gate_decision=None)
+
+    cleaned = cleanup_rejected_candidate_patch(step, cwd=tmp_path)
+
+    assert attempt.decision.candidate_patch == ""
+    assert attempt.materialized_patch is not None
     assert cleaned.patch_cleanup_result is not None
     assert cleaned.patch_cleanup_result.ok
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"

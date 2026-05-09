@@ -7,7 +7,7 @@ import re
 import shlex
 import subprocess
 import sys
-from dataclasses import dataclass, replace
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
@@ -116,6 +116,7 @@ class VariationAttempt:
     completed_at: str
     score_payload: dict[str, Any] | None = None
     patch_result: PatchResult | None = None
+    materialized_patch: str | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -127,6 +128,7 @@ class VariationAttempt:
             "patch_result": (
                 self.patch_result.as_dict() if self.patch_result is not None else None
             ),
+            "materialized_patch": self.materialized_patch,
         }
 
 
@@ -361,14 +363,14 @@ def run_decision_command(
 ) -> VariationAttempt:
     command = command_from_decision(decision, allowed_subcommands=allowed_subcommands)
     started_at = _utc_now()
-    patch_result, effective_decision = _maybe_apply_candidate_edit(
+    patch_result, materialized_patch = _maybe_apply_candidate_edit(
         decision,
         cwd=cwd,
         promoted_preflight_classes=promoted_preflight_classes or frozenset(),
     )
     if patch_result is not None and not patch_result.ok:
         return VariationAttempt(
-            decision=effective_decision,
+            decision=decision,
             command_result=CommandResult(
                 command=command,
                 returncode=None,
@@ -379,6 +381,7 @@ def run_decision_command(
             started_at=started_at,
             completed_at=_utc_now(),
             patch_result=patch_result,
+            materialized_patch=materialized_patch,
         )
 
     try:
@@ -410,12 +413,13 @@ def run_decision_command(
         )
         score_payload = None
     return VariationAttempt(
-        decision=effective_decision,
+        decision=decision,
         command_result=result,
         started_at=started_at,
         completed_at=_utc_now(),
         score_payload=score_payload,
         patch_result=patch_result,
+        materialized_patch=materialized_patch,
     )
 
 
@@ -430,7 +434,7 @@ def finalize_attempt(
     if attempt.score_payload is not None:
         source_files = _candidate_source_snapshot(source_root, attempt)
         candidate_patch = (
-            attempt.decision.candidate_patch
+            _attempt_patch_text(attempt)
             if attempt.patch_result is not None and attempt.patch_result.ok
             else None
         )
@@ -476,7 +480,7 @@ def cleanup_rejected_candidate_patch(step: EvolutionStep, *, cwd: Path) -> Evolu
     patch_result = step.attempt.patch_result
     if patch_result is None or not patch_result.ok:
         return step
-    cleanup_result = revert_candidate_patch(step.attempt.decision.candidate_patch, cwd=cwd)
+    cleanup_result = revert_candidate_patch(_attempt_patch_text(step.attempt), cwd=cwd)
     if cleanup_result.ok:
         cleanup_result = _verify_rejected_patch_cleanup(cwd, cleanup_result)
     return EvolutionStep(
@@ -508,6 +512,10 @@ def write_step_record(directory: Path, step: EvolutionStep) -> Path:
         suffix += 1
     write_step(path, step)
     return path
+
+
+def _attempt_patch_text(attempt: VariationAttempt) -> str:
+    return attempt.materialized_patch or attempt.decision.candidate_patch
 
 
 def summarize_attempt_history(
@@ -1148,7 +1156,7 @@ def _maybe_apply_candidate_edit(
     *,
     cwd: Path,
     promoted_preflight_classes: frozenset[str],
-) -> tuple[PatchResult | None, VariationDecision]:
+) -> tuple[PatchResult | None, str | None]:
     if decision.candidate_transform is not None:
         try:
             patch_text = materialize_candidate_transform(decision.candidate_transform, cwd=cwd)
@@ -1167,12 +1175,11 @@ def _maybe_apply_candidate_edit(
                     stderr_tail="",
                     rejected_reason=f"candidate transform rejected: {exc}",
                 ),
-                decision,
+                None,
             )
-        effective_decision = replace(decision, candidate_patch=patch_text)
-        return apply_candidate_patch(patch_text, cwd=cwd), effective_decision
+        return apply_candidate_patch(patch_text, cwd=cwd), patch_text
     if not decision.candidate_patch.strip():
-        return None, decision
+        return None, None
     try:
         _preflight_materialized_candidate_patch(
             decision.candidate_patch,
@@ -1189,9 +1196,9 @@ def _maybe_apply_candidate_edit(
                 stderr_tail="",
                 rejected_reason=f"candidate structural preflight rejected: {exc}",
             ),
-            decision,
+            None,
         )
-    return apply_candidate_patch(decision.candidate_patch, cwd=cwd), decision
+    return apply_candidate_patch(decision.candidate_patch, cwd=cwd), decision.candidate_patch
 
 
 def _preflight_materialized_candidate_patch(
