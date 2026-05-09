@@ -957,6 +957,12 @@ source files.
   seed on supported `16x16x16` WMMA fragments; larger query tiles require
   multiple 16-row fragments or a different implementation strategy, not direct
   M=32 WMMA fragment instantiation.
+  A later `kTile=32` repair attempt avoided unsupported WMMA shapes but still
+  only changed constants, buffer sizes, and row-loop bounds. The planner then
+  self-rejected because the existing MMA fragments would cover only the first
+  16 rows of the widened 32-row tile. Treat this as a structural invariant:
+  widening the query tile beyond 16 rows requires a coherent second 16-row
+  sub-tile MMA/softmax/output dataflow, not only larger arrays or loop bounds.
   A later MMA warp-reduction helper patch inserted `__device__ __forceinline__`
   helper definitions between the `__global__ void mma_attention_kernel(` token
   and the existing parameter list, duplicating the kernel declaration and making
@@ -1042,6 +1048,13 @@ source files.
   another raw hunk. Parser recovery also infers generic uppercase Python set
   names from prose and `files_to_inspect`, not just the historical
   `SMOKE_SEQUENCES` case.
+  Later parser recovery broadened simple integer-transform recovery from only
+  "change/set/update" phrasing to natural constant-retune verbs such as
+  "increase", "decrease", and "retune". It also accepts an `op=batch` object
+  with a top-level default `path` and fills that path into steps that omit it.
+  The strict Anthropic tool schema still advertises compact `steps_json` for
+  batch transforms to avoid schema-complexity errors, but the parser can recover
+  the common default-path shorthand when it appears in a response.
   Live loops after the batch interface repeatedly compiled the same seq512 MMA
   shape-graduation transform (`kMaxSeqLen=512` plus wrapper sequence cap `512`).
   The compile passed on sm86 with no spills, 40 registers, 1 barrier, and 9920

@@ -284,6 +284,15 @@ reject a bad transform family, or explain a score/gate result.
   failures.
 - Retrieval query: `wmma_fragment_shape Ampere BF16 fragment dimension outside supported 16x16x16`.
 
+- Claim: widening the MMA query tile beyond 16 rows requires a coherent second
+  16-row sub-tile MMA/softmax/output dataflow; changing `kTile`, buffer sizes,
+  or row-loop bounds alone leaves rows uncovered.
+- Evidence source: local `kTile=32` transform attempts and planner
+  self-rejection after the anchor repair loop.
+- Why useful: steers wider-tile work toward real multi-subtile dataflow instead
+  of another constant/buffer-only transform that cannot be correct.
+- Retrieval query: `kTile 32 query tile second 16-row subtile MMA dataflow rows uncovered`.
+
 ## Search Evidence
 
 - Claim: the current best accepted local candidate is the MMA seed with

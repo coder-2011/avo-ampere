@@ -103,6 +103,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("wmma", "bf16", "16x16x16"),
         ),
         (
+            "kTile 32 query tile second 16-row subtile MMA dataflow rows uncovered",
+            ("ktile=32", "second 16-row", "sub-tile", "rows uncovered"),
+        ),
+        (
             "kThreads 64 rejected geomean 7.587127963961811 occupancy",
             ("kthreads=64", "7.587127963961811", "occupancy"),
         ),
