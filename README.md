@@ -197,14 +197,22 @@ Seed a FlashAttention-2 baseline lineage:
 ```bash
 uv run --extra cuda python -m avo env
 
-FLASH_ATTN_CUDA_ARCHS=80 MAX_JOBS=1 NVCC_THREADS=1 \
-  uv pip install flash-attn --no-build-isolation
+eval "$(uv run --extra cuda python -m avo baseline-env)"
+uv pip install flash-attn --no-build-isolation
 
 uv run --extra cuda python -m avo seed-baseline ./lineage \
   --backend flash-attn \
   --seq-lens 4096,8192,16384,32768 \
-  --repeats 3 \
-  --warmup 1
+  --total-tokens 32768 \
+  --num-heads 16 \
+  --head-dim 128 \
+  --dtype bf16 \
+  --causal both \
+  --trials 3 \
+  --repeats 1 \
+  --warmup 1 \
+  --timeout-s 900 \
+  --force
 ```
 
 Check the `baseline_build` block from `avo env` before installing FA2. Source builds need
@@ -213,10 +221,10 @@ PyTorch extension setup before any attention benchmark can run. When a matching 
 NVIDIA CUDA root is present, AVO's baseline worker selects it even if the host image exports an
 incompatible system `CUDA_HOME`. The `baseline` extra intentionally does not install `flash-attn`
 because package resolution would build it before AVO can apply `FLASH_ATTN_CUDA_ARCHS=80`; use the
-explicit `uv pip install` command above. The `cuda` extra pins the CUDA 13 nvcc, CRT, NVVM, and CCCL
-header wheels needed for Torch `cu130` extension builds; the candidate wrapper also filters ambient
-`/usr/local/cuda*` include/lib paths and creates a local `libcudart.so` link shim for NVIDIA wheels
-that only ship the versioned runtime library.
+explicit `uv pip install` command above after `baseline-env` has exported the CUDA root, compile
+limits, library paths, and the local `libcudart.so` link shim. The `cuda` extra pins the CUDA 13
+nvcc, CRT, NVVM, and CCCL header wheels needed for Torch `cu130` extension builds; the candidate
+wrapper uses the same CUDA-root and link-shim logic for extension builds.
 
 ## Agent workflow
 

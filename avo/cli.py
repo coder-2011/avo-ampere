@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import os
+import shlex
 import sysconfig
 from pathlib import Path
 
@@ -50,6 +51,9 @@ def main(argv: list[str] | None = None) -> int:
 
     env_parser = subparsers.add_parser("env")
     env_parser.add_argument("--env-file", type=Path, default=None)
+
+    baseline_env_parser = subparsers.add_parser("baseline-env")
+    baseline_env_parser.add_argument("--format", choices=["shell", "json"], default="shell")
 
     compile_parser = subparsers.add_parser("compile")
     compile_parser.add_argument("--source", type=Path, required=True)
@@ -126,6 +130,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "env":
         return _env(args)
+    if args.command == "baseline-env":
+        return _baseline_env(args)
     if args.command == "compile":
         return _compile(args)
     if args.command == "score":
@@ -181,6 +187,22 @@ def add_attempt_history_args(parser: argparse.ArgumentParser) -> None:
     parser.add_argument("--attempt-limit", type=int, default=DEFAULT_ATTEMPT_HISTORY_LIMIT)
 
 
+BASELINE_ENV_EXPORT_KEYS = (
+    "FLASH_ATTN_CUDA_ARCHS",
+    "MAX_JOBS",
+    "NVCC_THREADS",
+    "CUDA_HOME",
+    "CUDA_PATH",
+    "CUDACXX",
+    "PATH",
+    "CPATH",
+    "C_INCLUDE_PATH",
+    "CPLUS_INCLUDE_PATH",
+    "LIBRARY_PATH",
+    "LD_LIBRARY_PATH",
+)
+
+
 def _env(args: argparse.Namespace) -> int:
     torch_cuda: str | None = None
     payload = {
@@ -214,6 +236,21 @@ def _env(args: argparse.Namespace) -> int:
         torch_cuda=torch_cuda,
     )
     print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def _baseline_env(args: argparse.Namespace) -> int:
+    baseline_env = _baseline_build_env(os.environ.copy())
+    payload = {
+        key: baseline_env[key]
+        for key in BASELINE_ENV_EXPORT_KEYS
+        if baseline_env.get(key)
+    }
+    if args.format == "json":
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 0
+    for key, value in payload.items():
+        print(f"export {key}={shlex.quote(value)}")
     return 0
 
 

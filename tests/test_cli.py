@@ -79,6 +79,41 @@ def test_baseline_build_env_preserves_explicit_parallelism_limits() -> None:
     assert updated["NVCC_THREADS"] == "2"
 
 
+def test_baseline_env_command_prints_shell_exports(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "avo.cli._baseline_build_env",
+        lambda env: {
+            "FLASH_ATTN_CUDA_ARCHS": "80",
+            "MAX_JOBS": "3",
+            "NVCC_THREADS": "1",
+            "CUDA_HOME": "/venv/nvidia/cu13",
+            "LIBRARY_PATH": "/tmp/cuda links/lib:/venv/nvidia/cu13/lib",
+        },
+    )
+
+    assert main(["baseline-env"]) == 0
+
+    output = capsys.readouterr().out
+    assert "export FLASH_ATTN_CUDA_ARCHS=80" in output
+    assert "export MAX_JOBS=3" in output
+    assert "export CUDA_HOME=/venv/nvidia/cu13" in output
+    assert "export LIBRARY_PATH='/tmp/cuda links/lib:/venv/nvidia/cu13/lib'" in output
+
+
+def test_baseline_env_command_prints_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "avo.cli._baseline_build_env",
+        lambda env: {"FLASH_ATTN_CUDA_ARCHS": "80", "MAX_JOBS": "1"},
+    )
+
+    assert main(["baseline-env", "--format", "json"]) == 0
+
+    assert json.loads(capsys.readouterr().out) == {
+        "FLASH_ATTN_CUDA_ARCHS": "80",
+        "MAX_JOBS": "1",
+    }
+
+
 def test_baseline_build_env_uses_python_cuda_home(monkeypatch) -> None:
     monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: "/venv/nvidia/cu13")
     monkeypatch.setattr("avo.cuda_env.cuda_env_is_build_compatible", lambda env: False)

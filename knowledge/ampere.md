@@ -38,6 +38,12 @@ variation steps.
   sm86/Ampere build environment, so upstream setup falls back to its broad
   default arch list. Install FA2 explicitly with the pinned environment, then
   run `seed-baseline` from the existing CUDA environment.
+- Use `eval "$(uv run --extra cuda python -m avo baseline-env)"` before
+  `uv pip install flash-attn --no-build-isolation`. This exports the same CUDA
+  root, compile target, parallelism caps, and `libcudart.so` link shim that AVO
+  uses for baseline and candidate extension builds. A raw manual install command
+  that sets only `CUDA_HOME` can still fail at link time when the Python CUDA
+  wheel ships `libcudart.so.13` without an unversioned `libcudart.so`.
 - Run `avo env` before FA2 installation and inspect `baseline_build`. If
   `torch_cuda` and `nvcc_cuda` have different major versions, PyTorch extension
   setup will fail; fix `CUDA_HOME`/`CUDA_PATH`/`PATH` or use a torch build that
