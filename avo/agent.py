@@ -911,6 +911,16 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "you are compile-checking a code change, include candidate_transform with a "
             "single operation or scoped batch and keep candidate_patch as ''. For an "
             "integer constant change, use set_constexpr_int with path, name, and value. "
+            "If you are following up a successful compile-only transform, score that exact "
+            "candidate_transform; do not score or compile the unmodified seed again. "
+        )
+    if "score cannot collect profiler metrics" in message:
+        return (
+            "Do not claim that avo score can provide profiler metrics. It reports "
+            "correctness, timing, and TFLOPS only. Either use it to validate a concrete "
+            "candidate_transform, or choose a different supported diagnostic; do not ask "
+            "for bandwidth, occupancy, scheduler, instruction-mix, roofline, or tensor-core "
+            "utilization evidence from a score command. "
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
@@ -2431,6 +2441,7 @@ def _validate_subcommand_arguments(
         if out_dir is not None:
             _validate_command_path(out_dir, "--out-dir", allowed_roots=("build/",))
     elif subcommand == "score":
+        _validate_score_command_context(planning_text)
         backend = _single_option_value(parts, "--backend")
         if backend is None:
             raise ValueError("next_command score requires --backend")
@@ -2534,9 +2545,44 @@ def _validate_compile_source_not_recorded_baseline(
         return
     raise ValueError(
         "next_command repeats a recorded no-patch compile diagnostic; include "
-        "candidate_transform/candidate_patch to build-check a change or run a bounded "
-        "score instead"
+        "candidate_transform/candidate_patch to build-check a source change or score a "
+        "pending compiled transform instead"
     )
+
+
+def _validate_score_command_context(planning_text: str) -> None:
+    text = " ".join(planning_text.lower().replace("-", " ").split())
+    if not text:
+        return
+    profiler_intent = (
+        "profile" in text
+        or "profiling" in text
+        or "nsight" in text
+        or "ncu" in text
+        or "classify the bottleneck" in text
+    )
+    unavailable_metrics = (
+        "achieved bandwidth",
+        "bank conflict",
+        "bottleneck",
+        "compute bound",
+        "instruction mix",
+        "memory bandwidth",
+        "memory bound",
+        "occupancy",
+        "roofline",
+        "scheduler",
+        "stall",
+        "tensor core utilization",
+        "tensor core under utilization",
+    )
+    if profiler_intent and any(metric in text for metric in unavailable_metrics):
+        raise ValueError(
+            "next_command score cannot collect profiler metrics; avo score measures "
+            "correctness, timing, and TFLOPS only. Use score for candidate validation, "
+            "or add an actual supported profiler diagnostic before requesting bandwidth, "
+            "occupancy, scheduler, instruction-mix, or tensor-core-utilization evidence"
+        )
 
 
 def _validate_known_candidate_score_shape(
@@ -2696,6 +2742,7 @@ def _is_recorded_mma_seed_score(
             ((8192,), 128, 32768, 16),
             ((16384,), 128, 32768, 16),
             ((32768,), 128, 32768, 16),
+            ((4096, 8192, 16384, 32768), 128, 32768, 16),
         }
     )
 

@@ -1155,6 +1155,42 @@ def test_parse_variation_decision_rejects_unpatched_mma_beyond_current_seq_cap()
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_rejects_score_claiming_profiler_metrics() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = (
+        "No edit; profile the accepted MMA seed at the target workload to measure "
+        "memory bandwidth, tensor-core utilization, occupancy, and instruction mix."
+    )
+    payload["expected_effect"] = (
+        "Profiling data will classify the bottleneck as memory-bound or compute-bound."
+    )
+    payload["risk"] = "No source risk."
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 4096,8192,16384,32768 "
+        "--total-tokens 32768 --num-heads 16 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="score cannot collect profiler metrics"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_recorded_unpatched_mma_target_suite_score() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "No edit; score the accepted MMA seed target suite again."
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 4096,8192,16384,32768 "
+        "--total-tokens 32768 --num-heads 16 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="recorded unpatched MMA seed score"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_unpatched_tiled_score_outside_validated_cap() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Score the existing tiled seed at the larger smoke shape."
@@ -3140,8 +3176,8 @@ def test_decision_feedback_explains_recorded_no_patch_compile_error() -> None:
         kwargs,
         ValueError(
             "next_command repeats a recorded no-patch compile diagnostic; include "
-            "candidate_transform/candidate_patch to build-check a change or run a bounded "
-            "score instead"
+            "candidate_transform/candidate_patch to build-check a source change or score a "
+            "pending compiled transform instead"
         ),
     )
 
@@ -3149,6 +3185,25 @@ def test_decision_feedback_explains_recorded_no_patch_compile_error() -> None:
     assert "Do not retry a no-edit compile" in content
     assert "include candidate_transform" in content
     assert "set_constexpr_int" in content
+    assert "do not score or compile the unmodified seed again" in content
+
+
+def test_decision_feedback_explains_score_profiler_metric_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command score cannot collect profiler metrics; avo score measures "
+            "correctness, timing, and TFLOPS only"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not claim that avo score can provide profiler metrics" in content
+    assert "correctness, timing, and TFLOPS only" in content
+    assert "candidate_transform" in content
+    assert "tensor-core utilization" in content
 
 
 def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
