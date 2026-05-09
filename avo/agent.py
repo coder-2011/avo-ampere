@@ -905,6 +905,13 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "Return a valid candidate_transform for a representable CUDA edit, or choose a "
             "no-edit compile/score diagnostic that directly informs the kernel search. "
         )
+    if "avo env cannot inspect source files" in message:
+        return (
+            "Do not use avo env for source inspection. The planner already receives local "
+            "candidate excerpts in repo context; choose a structured candidate_transform, "
+            "a compile/score diagnostic tied to a concrete source change, or a supported "
+            "CUDA/build environment diagnostic. "
+        )
     if "recorded no-patch compile diagnostic" in message:
         return (
             "Do not retry a no-edit compile of an already-recorded candidate source. If "
@@ -2963,6 +2970,11 @@ def _validate_env_command_context(planning_text: str) -> None:
             "next_command repeats a recorded environment stability diagnostic; use avo env "
             "only after a concrete CUDA/build environment failure"
         )
+    if _env_command_is_source_inspection(normalized):
+        raise ValueError(
+            "next_command avo env cannot inspect source files; repo context already includes "
+            "candidate excerpts, and env is only for CUDA/build environment diagnostics"
+        )
     if any(keyword in normalized for keyword in ENV_COMMAND_KEYWORDS):
         return
     raise ValueError(
@@ -3012,6 +3024,34 @@ def _env_command_repeats_recorded_stability_check(normalized_planning_text: str)
     )
     return any(claim in normalized_planning_text for claim in stability_claims) and not any(
         term in normalized_planning_text for term in concrete_failure_terms
+    )
+
+
+def _env_command_is_source_inspection(normalized_planning_text: str) -> bool:
+    inspection_actions = (
+        "examine",
+        "file inspection",
+        "inspect",
+        "look at",
+        "read",
+        "review",
+        "understand",
+    )
+    source_targets = (
+        ".cu",
+        ".py",
+        "candidate",
+        "file",
+        "files",
+        "kernel",
+        "seed",
+        "source",
+        "staging",
+        "vectorization",
+        "wrapper",
+    )
+    return any(action in normalized_planning_text for action in inspection_actions) and any(
+        target in normalized_planning_text for target in source_targets
     )
 
 

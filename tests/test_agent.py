@@ -698,7 +698,7 @@ def test_parse_variation_decision_rejects_env_for_source_inspection() -> None:
     payload["candidate_edit"] = "Inspect the warp-row wrapper cap before patching."
     payload["next_command"] = "avo env"
 
-    with pytest.raises(ValueError, match="only for CUDA/build environment diagnostics"):
+    with pytest.raises(ValueError, match="cannot inspect source files"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -3167,6 +3167,23 @@ def test_decision_feedback_explains_planner_recovery_env_error() -> None:
     content = updated["messages"][0]["content"]
     assert "Do not spend a loop step on avo env for planner-interface" in content
     assert "valid candidate_transform" in content
+
+
+def test_decision_feedback_explains_env_source_inspection_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command avo env cannot inspect source files; repo context already "
+            "includes candidate excerpts"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not use avo env for source inspection" in content
+    assert "candidate excerpts" in content
+    assert "structured candidate_transform" in content
 
 
 def test_decision_feedback_explains_recorded_no_patch_compile_error() -> None:
