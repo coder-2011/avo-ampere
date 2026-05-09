@@ -1384,6 +1384,79 @@ def test_summarize_attempt_history_drops_compile_followup_after_preflight_reject
     )
 
 
+def test_summarize_attempt_history_requests_transform_anchor_repair(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "insert_after_once",
+                "path": "candidates/kernel.cu",
+                "anchor": "  __syncthreads();",
+                "text": "  staged();",
+            },
+            {
+                "op": "replace_once",
+                "path": "candidates/kernel.cu",
+                "find": "load_global_q();",
+                "replace": "load_shared_q();",
+            },
+        ],
+    }
+    rejected_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=None,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail=(
+                "candidate patch rejected: candidate transform rejected: insert transform "
+                "expected exactly one anchor, found 5; matching start lines: "
+                "54, 84, 121, 127, 155. Use a larger unique anchor including surrounding code."
+            ),
+        ),
+        patch_result=PatchResult(
+            ok=False,
+            patch_paths=[],
+            returncode=None,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=(
+                "candidate transform rejected: insert transform expected exactly one anchor, "
+                "found 5; matching start lines: 54, 84, 121, 127, 155. Use a larger unique "
+                "anchor including surrounding code."
+            ),
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=rejected_attempt, gate_decision=None))
+    write_step_record(
+        attempts,
+        planning_failure_step(
+            ValueError(
+                "edit_mode transform requires candidate_transform; candidate_transform or "
+                "candidate_patch must be provided when candidate_edit describes a code change"
+            )
+        ),
+    )
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "failed materialization before compile" in summary
+    assert "repair the candidate_transform anchors/matches" in summary
+    assert "matching start lines: 54, 84, 121, 127, 155" in summary
+    assert "do not restate the CUDA edit in prose" in summary
+    assert '"anchor":"  __syncthreads();"' in summary
+    assert '"replace":"load_shared_q();"' in summary
+
+
 def test_summarize_attempt_history_drops_stale_compile_followup_after_later_score(
     tmp_path: Path,
 ) -> None:

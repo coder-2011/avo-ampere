@@ -815,15 +815,59 @@ def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
     if not payloads:
         return ""
     pending_transform = _pending_compile_only_transform(payloads)
-    if pending_transform is None:
+    if pending_transform is not None:
+        transform_json = json.dumps(pending_transform, sort_keys=True, separators=(",", ":"))
+        return (
+            "Follow-up signal: the latest semantic structured transform compiled successfully but "
+            "has not been scored. Do not repeat the compile-only check; score the same "
+            "candidate_transform on the next validation workload, or choose a materially "
+            "different transform family. Exact pending candidate_transform JSON: "
+            f"{transform_json}"
+        )
+    materialization_failure = _latest_transform_materialization_failure(payloads)
+    if materialization_failure is None:
         return ""
-    transform_json = json.dumps(pending_transform, sort_keys=True, separators=(",", ":"))
+    rejected_reason, transform = materialization_failure
+    transform_json = json.dumps(transform, sort_keys=True, separators=(",", ":"))
     return (
-        "Follow-up signal: the latest semantic structured transform compiled successfully but "
-        "has not been scored. Do not repeat the compile-only check; score the same "
-        "candidate_transform on the next validation workload, or choose a materially "
-        "different transform family. Exact pending candidate_transform JSON: "
+        "Follow-up signal: the latest semantic structured transform failed materialization "
+        "before compile. Keep the same semantic move only if it remains useful, but repair "
+        "the candidate_transform anchors/matches with larger unique surrounding-code "
+        "snippets; do not restate the CUDA edit in prose without candidate_transform. "
+        f"Materialization error: {_shorten(rejected_reason, 500)}. "
+        "Rejected candidate_transform JSON to repair, not reuse unchanged: "
         f"{transform_json}"
+    )
+
+
+def _latest_transform_materialization_failure(
+    payloads: list[dict[str, Any]],
+) -> tuple[str, dict[str, Any]] | None:
+    for payload in reversed(payloads):
+        if _step_payload_accepted(payload) or isinstance(_step_score_payload(payload), dict):
+            return None
+        if _successful_compile_only_transform(payload) is not None:
+            return None
+        attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+        patch_result = attempt.get("patch_result")
+        if not isinstance(patch_result, dict) or patch_result.get("ok") is not False:
+            continue
+        rejected_reason = str(patch_result.get("rejected_reason") or "")
+        if not _is_repairable_transform_materialization_error(rejected_reason):
+            continue
+        transform = _decision_transform(payload)
+        if transform is None or not _transform_has_semantic_step(transform):
+            continue
+        return rejected_reason, transform
+    return None
+
+
+def _is_repairable_transform_materialization_error(rejected_reason: str) -> bool:
+    text = rejected_reason.lower()
+    return (
+        "candidate transform rejected" in text
+        and "expected exactly one" in text
+        and ("anchor" in text or "match" in text)
     )
 
 
