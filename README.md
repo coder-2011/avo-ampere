@@ -19,16 +19,19 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 
 Recent commits show the work moved in layers:
 
-- `feat: scaffold ampere AVO runtime` created the package, CLI, config model, isolated execution, transcript handling, lineage repository flow, and Ampere knowledge notes.
-- `chore: checkpoint fa2 baseline seed env verification` added environment and baseline verification paths for A6000 work.
-- `feat: enforce strict agent decisions` constrained the agent output to a validated decision schema.
-- `feat: add bounded variation executor` added `run-decision`, which executes only selected `avo` subcommands without a shell.
-- `feat: add candidate scoring backend` added the candidate interface and a PyTorch SDPA seed candidate.
-- `fix: harden Anthropic agent planning` improved structured-tool fallbacks and validation.
-- `feat: add CUDA extension candidate smoke` added a minimal compiled CUDA extension path that copies an SDPA result, proving the candidate build/load path before replacing the attention computation itself.
-- `feat: add tiny mma attention seed` added a 16/32/64/128/256-token BF16 WMMA QK/PV candidate so the local search has a tensor-core attention-math foothold.
-- `feat: promote structural cuda preflights` added structured transform preflights for recurring failure classes, generalized WMMA fragment-shape validation, and class-oriented promotion state for recurring CUDA syntax and symbol-lifecycle failures.
-- `fix: align mma sequence guard with wrapper` made wrapper-advertised MMA sequence caps match the CUDA guard; follow-up bounded loops advanced the MMA source to accepted seq2048, seq4096, seq8192, seq16384, and seq32768 lanes.
+The project now has a working Ampere-focused AVO runtime for evolving CUDA attention kernels. It includes a Python package, CLI, typed configuration, isolated candidate execution,
+transcript capture, lineage tracking, and a small CUDA knowledge base for guiding the search loop.
+
+The system can verify the local A6000 environment, run a known FA2-style baseline, and score candidate implementations through a controlled candidate interface. Early candidates include
+a PyTorch SDPA seed, a compiled CUDA extension smoke path, and a BF16 WMMA attention seed that gives the search loop a real tensor-core starting point instead of beginning from arbitrary
+CUDA text.
+
+The agent loop is now constrained around structured decisions rather than free-form shell or raw patch behavior. It validates plans, executes only bounded avo subcommands, materializes
+structured candidate transforms, and records classified failures so recurring CUDA issues can become preflight checks instead of one-off prompt warnings.
+
+The CUDA side has also gained structural guardrails for common failure classes: malformed transforms, invalid WMMA fragment shapes, syntax errors, duplicate declarations, symbol-
+lifecycle mistakes, and wrapper/kernel sequence-cap mismatches. The MMA path has been advanced through bounded loops to accepted large-sequence coverage, including seq2048 through
+seq32768, while keeping the search process reviewable and recoverable.
 
 ## Repository layout
 
