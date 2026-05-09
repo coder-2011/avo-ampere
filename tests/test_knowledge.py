@@ -124,6 +124,42 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             "CUDA optimization workflow hypothesis measure profile transform",
             ("hypothesis", "correctness", "profile", "negative results"),
         ),
+        (
+            "CUDA work decomposition thread block tile warp row mapping coalesced layout",
+            ("work decomposition", "warp", "tile", "coalesced"),
+        ),
+        (
+            "CUDA indexing threadIdx x fastest linearization data layout tail predicates",
+            ("threadidx.x", "fastest", "linearization", "tail"),
+        ),
+        (
+            "CUDA memory movement shared tile global load sync reuse bank conflict padding",
+            ("shared-memory tile", "global load", "reuse", "bank"),
+        ),
+        (
+            "CUDA synchronization __syncthreads warp shuffle atomics cross block reduction",
+            ("__syncthreads", "warp shuffles", "atomics", "global barrier"),
+        ),
+        (
+            "CUDA tiling double buffering cp.async memcpy_async pipeline producer consumer overlap",
+            ("double buffering", "cp.async", "producer/consumer", "overlap"),
+        ),
+        (
+            "CUDA tensor core WMMA fragments opaque shape layout leading dimension",
+            ("tensor cores", "wmma fragments", "opaque", "leading dimension"),
+        ),
+        (
+            "CUDA streams events asynchronous host device default stream synchronization",
+            ("streams", "events", "default stream", "synchronization"),
+        ),
+        (
+            "CUDA profiling realistic workloads SpeedOfLight occupancy memory workload roofline",
+            ("realistic workloads", "speedoflight", "occupancy", "memory workload"),
+        ),
+        (
+            "CUDA semantic transform smallest coherent transformation invariants hypothesis",
+            ("smallest coherent transformation", "invariants", "hypothesis"),
+        ),
     ],
 )
 def test_real_ampere_corpus_retrieves_useful_claims(
@@ -199,7 +235,10 @@ def test_general_cuda_grounding_is_indexed_from_ampere_entrypoint() -> None:
     )
 
     assert "b/cuda_general.md" in context
+    assert "b/cuda_programming_practice.md" in context
     assert "General CUDA Working Knowledge" in context
+    assert "Profiling And Optimization Workflow" in context
+    assert "smallest coherent transformation" in context
     assert "Execution Model" in context
     assert "How CUDA Programmers Usually Approach Optimization" in context
 

@@ -108,6 +108,95 @@ reject a bad transform family, or explain a score/gate result.
   improve kernels rather than accumulating reactive phrase bans.
 - Retrieval query: `CUDA optimization workflow hypothesis measure profile transform`.
 
+- Claim: CUDA work decomposition starts from output ownership and the mapping of
+  work to threads, warps, blocks, and tiles; a constant edit is not a real
+  work-mapping change unless indexing, data ownership, synchronization, or
+  resources change with it.
+- Evidence source: NVIDIA CUDA Programming Guide and
+  `knowledge/b/cuda_programming_practice.md`.
+- Why useful: keeps planner proposals focused on semantic work ownership rather
+  than tiny textual edits that do not change the kernel's execution structure.
+- Retrieval query: `CUDA work decomposition thread block tile warp row mapping coalesced layout`.
+
+- Claim: CUDA indexing and layout decisions are coupled: `threadIdx.x` is the
+  fastest-linearized block coordinate, warp-lane memory addresses determine
+  coalescing, and tail predicates must protect non-divisible shapes from
+  out-of-bounds accesses.
+- Evidence source: NVIDIA CUDA Programming Guide and
+  `knowledge/b/cuda_programming_practice.md`.
+- Why useful: gives the planner a general way to reason about address patterns
+  before changing vectorization, tile shapes, or work mapping.
+- Retrieval query: `CUDA indexing threadIdx x fastest linearization data layout tail predicates`.
+
+- Claim: a useful shared-memory tile has a complete dataflow: cooperative global
+  load, optional layout conversion or padding, synchronization, compute reuse,
+  and overwrite safety; otherwise shared memory can just add copies and
+  barriers.
+- Evidence source: NVIDIA CUDA C++ Best Practices Guide and
+  `knowledge/b/cuda_programming_practice.md`.
+- Why useful: encourages semantic staging transforms and rejects scaffolding
+  that declares storage without changing memory traffic or reuse.
+- Retrieval query: `CUDA memory movement shared tile global load sync reuse bank conflict padding`.
+
+- Claim: CUDA synchronization choices should match the communication scope:
+  block-shared data needs block-wide barriers, warp-local reductions can often
+  use shuffles, atomics do not replace algorithm design, and ordinary kernels do
+  not have a global barrier.
+- Evidence source: NVIDIA CUDA Programming Guide and
+  `knowledge/b/cuda_programming_practice.md`.
+- Why useful: helps future transforms preserve correctness while reducing
+  unnecessary synchronization or avoiding invalid cross-block dependencies.
+- Retrieval query: `CUDA synchronization __syncthreads warp shuffle atomics cross block reduction`.
+
+- Claim: `cp.async`/`cuda::memcpy_async` is most useful as part of a
+  producer/consumer pipeline with double buffering or equivalent overlap; an
+  immediate copy/commit/wait sequence often preserves correctness without adding
+  meaningful latency hiding.
+- Evidence source: NVIDIA CUDA Programming Guide pipelines/asynchronous-copy
+  chapters and `knowledge/b/cuda_programming_practice.md`.
+- Why useful: steers async-copy attempts toward real overlap and complete stage
+  invariants instead of cosmetic instruction substitution.
+- Retrieval query: `CUDA tiling double buffering cp.async memcpy_async pipeline producer consumer overlap`.
+
+- Claim: tensor-core transforms must treat WMMA fragments as opaque and keep
+  fragment shape, operand layout, data type, leading dimension, loads, MMA
+  operations, and stores as one coherent contract.
+- Evidence source: NVIDIA CUDA Programming Guide WMMA/Tensor Core material,
+  local WMMA preflight failures, and `knowledge/b/cuda_programming_practice.md`.
+- Why useful: prevents isolated fragment-shape or layout edits that compile
+  poorly or break tensor-core dataflow.
+- Retrieval query: `CUDA tensor core WMMA fragments opaque shape layout leading dimension`.
+
+- Claim: streams and events express host/device and inter-stream ordering:
+  operations in one stream are ordered, work in separate streams may overlap,
+  legacy default-stream behavior can add implicit synchronization, and GPU
+  timings need event or synchronization discipline.
+- Evidence source: NVIDIA CUDA Programming Guide asynchronous-execution chapter
+  and `knowledge/b/cuda_programming_practice.md`.
+- Why useful: lets the planner distinguish kernel-internal changes from
+  host-side launch, timing, and overlap issues.
+- Retrieval query: `CUDA streams events asynchronous host device default stream synchronization`.
+
+- Claim: CUDA profiling should use realistic workloads and broad bottleneck
+  classification first: launch configuration, occupancy, SpeedOfLight
+  compute/memory utilization, scheduler behavior, memory workload, source
+  counters, and timing distributions.
+- Evidence source: NVIDIA CUDA C++ Best Practices Guide, NVIDIA Nsight Compute
+  Profiling Guide, and `knowledge/b/cuda_programming_practice.md`.
+- Why useful: discourages optimizing tiny unrealistic shapes and ties future
+  transforms to measured bottleneck classes.
+- Retrieval query: `CUDA profiling realistic workloads SpeedOfLight occupancy memory workload roofline`.
+
+- Claim: small CUDA edits should be small coherent semantic transformations:
+  scoped, reviewable, recoverable, tied to a hypothesis, and preserving concrete
+  invariants such as bounds, alignment, synchronization, masks, accumulation,
+  supported fragment shapes, and launch feasibility.
+- Evidence source: local design critique, CUDA programming practice notes, and
+  `knowledge/b/cuda_programming_practice.md`.
+- Why useful: captures the desired planner behavior directly: avoid raw diffs
+  and tiny no-effect text edits while still allowing meaningful kernel evolution.
+- Retrieval query: `CUDA semantic transform smallest coherent transformation invariants hypothesis`.
+
 ## Transform Interface Lessons
 
 - Claim: `set_constexpr_int` and Python set updates are contract-only

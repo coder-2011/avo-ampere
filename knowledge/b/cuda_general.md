@@ -3,6 +3,7 @@
 This file is general CUDA grounding for the AVO planner. It should help the
 agent reason like a CUDA programmer before it reasons about Ampere attention
 details. Prefer these notes for broad kernel-design decisions; use
+`cuda_programming_practice.md` for broader CUDA optimization workflow and use
 `knowledge/ampere.md` for architecture-specific constraints and local search
 evidence.
 

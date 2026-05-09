@@ -53,6 +53,8 @@ kernels/smoke.cu             NVCC smoke source
 tests/                       Unit coverage for the orchestration layer
 knowledge/ampere.md          Ampere-specific constraints and assumptions
 knowledge/b/cuda_general.md  General CUDA execution, memory, profiling, and optimization grounding
+knowledge/b/cuda_programming_practice.md
+                             General CUDA kernel design and optimization practice
 ```
 
 ## Candidate interface
