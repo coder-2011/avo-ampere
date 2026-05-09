@@ -98,6 +98,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("chunk-loop unroll-by-2", "7.758592599549404", "regressed"),
         ),
         (
+            "q_shared Q staging repaired anchors geomean 6.686302249012325 shared memory 14016",
+            ("q-staging", "6.686302249012325", "14016 bytes", "regressed"),
+        ),
+        (
             "CUDA execution model grid block thread warp SIMT divergence",
             ("grid", "blocks", "warps", "simt"),
         ),

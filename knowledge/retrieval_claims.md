@@ -278,6 +278,17 @@ reject a bad transform family, or explain a score/gate result.
   dataflow instead of isolated synchronous Q-tile loading.
 - Retrieval query: `synchronous Q shared memory staging regression geomean 6.722112165053056`.
 
+- Claim: the repaired full-target `q_shared` Q-staging transform compiled and
+  passed correctness, but regressed geomean to `6.686302249012325` TFLOPS while
+  increasing shared memory to 14016 bytes.
+- Evidence source: loop after transform-anchor repair and compiled-transform
+  scoring.
+- Why useful: confirms that isolated synchronous Q staging is not the current
+  winning direction; future shared-memory work should combine Q/K/V layout,
+  vectorized copies, swizzling, or async overlap rather than only moving Q loads
+  into shared memory.
+- Retrieval query: `q_shared Q staging repaired anchors geomean 6.686302249012325 shared memory 14016`.
+
 - Claim: WMMA chunk-loop unroll-by-2 preserved full-target correctness but
   regressed geomean to `7.758592599549404` TFLOPS versus best
   `7.777584666360881`.

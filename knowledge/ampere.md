@@ -1250,3 +1250,14 @@ source files.
   useful negative evidence: simple WMMA chunk-loop unrolling is not the current
   bottleneck, and the search should return to real dataflow/layout work rather
   than more local unroll-only edits.
+- After adding explicit anchor-repair follow-up signals, the planner repaired
+  the Q-staging transform with unique surrounding-code anchors. The transform
+  compiled on sm86 with no spills, 40 registers, 1 barrier, and 14016 bytes
+  shared memory, then scored the full target suite correctly. However, it
+  regressed geomean to `6.686302249012325` TFLOPS versus the current best
+  `7.777584666360881`. Per-case TFLOPS were about 9.13/4.98 for
+  seq4096 noncausal/causal, 9.48/4.92 for seq8192, 9.23/4.78 for seq16384, and
+  9.26/4.61 for seq32768. This confirms the earlier Q-staging negative result:
+  isolated synchronous Q staging adds shared-memory footprint and barriers
+  without enough benefit. Future staging should move toward a broader FA2-like
+  Q/K/V copy-layout-pipeline change, not another standalone `q_shared` tile.
