@@ -15,6 +15,16 @@ reject a bad transform family, or explain a score/gate result.
   Blackwell edits.
 - Retrieval query: `Ampere sm86 A6000 cp.async mma.sync no TMA WGMMA FA4`.
 
+- Claim: compile-only diagnostics should use the same CUDA half/BF16 disabling
+  macros as score-time Torch extension builds, including
+  `__CUDA_NO_BFLOAT16_CONVERSIONS__`.
+- Evidence source: local score failure after K/V staging compiled under
+  standalone nvcc but failed during Torch extension build on `__nv_bfloat16(0.0f)`.
+- Why useful: prevents false compile-only success and forces BF16 zeroing,
+  constructors, and conversions to be valid under the actual scoring build
+  contract.
+- Retrieval query: `compile score torch extension CUDA_NO_BFLOAT16_CONVERSIONS __nv_bfloat16 constructor`.
+
 - Claim: FlashAttention-2 is the comparison baseline, but not the lineage
   acceptance threshold.
 - Evidence source: local architecture notes and `knowledge/ampere.md`.

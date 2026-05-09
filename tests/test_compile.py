@@ -31,6 +31,10 @@ def test_compile_uses_sm86_gencode_with_fake_nvcc(tmp_path: Path) -> None:
     assert "-gencode=arch=compute_86,code=sm_86" in args
     assert "--expt-relaxed-constexpr" in args
     assert "--ptxas-options=-v" in args
+    assert "-D__CUDA_NO_HALF_OPERATORS__" in args
+    assert "-D__CUDA_NO_HALF_CONVERSIONS__" in args
+    assert "-D__CUDA_NO_BFLOAT16_CONVERSIONS__" in args
+    assert "-D__CUDA_NO_HALF2_OPERATORS__" in args
     assert "-c" in args
 
 

@@ -9,6 +9,13 @@ from typing import Any
 
 from .config import AMPERE_A6000
 
+TORCH_EXTENSION_CUDA_DEFINES = (
+    "__CUDA_NO_HALF_OPERATORS__",
+    "__CUDA_NO_HALF_CONVERSIONS__",
+    "__CUDA_NO_BFLOAT16_CONVERSIONS__",
+    "__CUDA_NO_HALF2_OPERATORS__",
+)
+
 
 @dataclass(frozen=True)
 class CompileResult:
@@ -51,6 +58,7 @@ def compile_cuda_source(
         "-O3",
         "-lineinfo",
         "--expt-relaxed-constexpr",
+        *[f"-D{define}" for define in TORCH_EXTENSION_CUDA_DEFINES],
         "--ptxas-options=-v",
         *[flag for include_dir in include_dirs for flag in ("-I", str(include_dir))],
         "-c",

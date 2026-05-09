@@ -61,6 +61,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("cp.async", "16-byte", "bf16", "real overlap"),
         ),
         (
+            "compile score torch extension CUDA_NO_BFLOAT16_CONVERSIONS __nv_bfloat16 constructor",
+            ("compile", "__cuda_no_bfloat16_conversions__", "__nv_bfloat16", "torch extension"),
+        ),
+        (
             "CUTLASS Ampere FlashAttention v2 128x128 128 threads swizzled online softmax",
             ("cutlass", "128x128", "128 threads", "online softmax"),
         ),
@@ -189,7 +193,7 @@ def test_real_ampere_corpus_retrieves_useful_claims(
         Path("knowledge/ampere.md"),
         query=query,
         max_chunks=8,
-        max_chars=16_000,
+        max_chars=20_000,
     ).lower()
 
     assert "retrieved knowledge context" in context

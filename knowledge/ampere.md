@@ -72,6 +72,13 @@ history.
   the A6000/sm86 target, Python/PyTorch/CUDA versions, and visible GPU
   properties so accepted lineage commits carry enough provenance for later
   comparison.
+- Compile diagnostics should match the Torch extension build contract used by
+  scoring. `avo compile` now passes the same CUDA half/BF16 disabling macros
+  (`__CUDA_NO_HALF_OPERATORS__`, `__CUDA_NO_HALF_CONVERSIONS__`,
+  `__CUDA_NO_BFLOAT16_CONVERSIONS__`, `__CUDA_NO_HALF2_OPERATORS__`) that
+  PyTorch extension builds use. This prevents false compile-only success for
+  code such as `__nv_bfloat16(0.0f)`, which standalone `nvcc` may accept but the
+  score-time extension build rejects.
 - FlashAttention-2 v2.8.3 has a device-specific block-size heuristic for sm8x
   that treats sm86/sm89 separately from sm80. For head dimension 128, it chooses
   smaller N-blocks on sm86 in some cases: 64 for causal/no-dropout and 32 for
