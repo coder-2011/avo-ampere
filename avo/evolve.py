@@ -821,7 +821,10 @@ def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
             "Follow-up signal: the latest semantic structured transform compiled successfully but "
             "has not been scored. Do not repeat the compile-only check; score the same "
             "candidate_transform on the next validation workload, or choose a materially "
-            "different transform family. Exact pending candidate_transform JSON: "
+            "different transform family. Compile-only patches are cleaned up before "
+            "follow-up scoring, so a no_edit score would score the unmodified seed; include "
+            "this candidate_transform again with edit_mode=transform and candidate_patch=\"\". "
+            "Exact pending candidate_transform JSON: "
             f"{transform_json}"
         )
     materialization_failure = _latest_transform_materialization_failure(payloads)

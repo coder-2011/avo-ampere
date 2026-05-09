@@ -2929,6 +2929,9 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "one-line constant edit as a stand-in" in prompt
     assert "support-only edits" in prompt
     assert "do not describe a broad CUDA rewrite in candidate_edit" in prompt
+    assert "Exact pending candidate_transform JSON" in prompt
+    assert "compile-only patches are cleaned up" in prompt
+    assert "A no_edit score would score the unmodified seed" in prompt
     assert "Legacy edit mode" in prompt
     assert "must not edit .cu/.cuh kernel sources directly" in prompt
     assert 'candidate_edit starts with "No edit; "' in prompt
