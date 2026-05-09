@@ -242,6 +242,45 @@ def test_parse_variation_decision_infers_set_constexpr_transform_from_edit() -> 
     }
 
 
+def test_parse_variation_decision_infers_exact_backtick_replace_transform() -> None:
+    payload = decision_payload()
+    payload["files_to_inspect"] = []
+    payload["candidate_edit"] = (
+        "Replace the flat `__shared__ __nv_bfloat16 probabilities[kScoreElements];` "
+        "declaration with `__shared__ __nv_bfloat16 probabilities[kScoreElements + 8];` "
+        "in the MMA kernel to test shared-memory padding."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_replace"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": "__shared__ __nv_bfloat16 probabilities[kScoreElements];",
+        "replace": "__shared__ __nv_bfloat16 probabilities[kScoreElements + 8];",
+    }
+
+
+def test_parse_variation_decision_does_not_infer_placeholder_replace_transform() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Replace `__shared__ __nv_bfloat16 probabilities[...]` with "
+        "`__shared__ __nv_bfloat16 probabilities[kScoreElements + 8];` "
+        "in candidates/cuda_mma_attention/attention_kernel.cu."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_replace"
+    )
+
+    with pytest.raises(ValueError, match="candidate_transform or candidate_patch"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_infers_constant_transform_without_channel_word() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = (

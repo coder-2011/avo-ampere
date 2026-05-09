@@ -1000,10 +1000,23 @@ def _infer_candidate_transform_from_edit(
     if source_path is None:
         return None
     steps: list[dict[str, Any]] = []
+    include_header = _infer_include_header_from_edit(candidate_edit)
+    literal_replace = _infer_backtick_replace_from_edit(candidate_edit)
+    if literal_replace is not None:
+        if include_header is not None:
+            steps.append({"op": "add_include", "path": source_path, "header": include_header})
+        steps.append(
+            {
+                "op": "replace_once",
+                "path": source_path,
+                "find": literal_replace[0],
+                "replace": literal_replace[1],
+            }
+        )
+        return steps[0] if len(steps) == 1 else {"op": "batch", "steps": steps}
     const_match = _infer_integer_constant_change(candidate_edit)
     if const_match is None:
         return None
-    include_header = _infer_include_header_from_edit(candidate_edit)
     if include_header is not None:
         steps.append({"op": "add_include", "path": source_path, "header": include_header})
     steps.append(
@@ -1077,6 +1090,26 @@ def _infer_include_header_from_edit(candidate_edit: str) -> str | None:
         if match is not None:
             return match.group("header")
     return None
+
+
+def _infer_backtick_replace_from_edit(candidate_edit: str) -> tuple[str, str] | None:
+    patterns = (
+        r"\breplace\b.*?`(?P<find>[^`]+)`.*?\bwith\s+`(?P<replace>[^`]+)`",
+        r"\bchange\b.*?`(?P<find>[^`]+)`.*?\bto\s+`(?P<replace>[^`]+)`",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, candidate_edit, flags=re.IGNORECASE | re.DOTALL)
+        if match is None:
+            continue
+        find = match.group("find").strip()
+        replacement = match.group("replace").strip()
+        if _is_exact_transform_snippet(find) and _is_exact_transform_snippet(replacement):
+            return find, replacement
+    return None
+
+
+def _is_exact_transform_snippet(value: str) -> bool:
+    return bool(value and "..." not in value and "…" not in value)
 
 
 def _infer_integer_constant_change(candidate_edit: str) -> re.Match[str] | None:
