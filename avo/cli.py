@@ -45,6 +45,15 @@ from .isolation import module_worker_args, print_result, run_json_worker
 from .knowledge import build_knowledge_context
 from .lineage import commit_score, init_lineage_repo, lineage_score_summary, seed_baseline
 
+GENERAL_CUDA_PRACTICE_QUERY = (
+    "CUDA Kernel Design Practice Basic Mental Model Decomposing Work Indexing "
+    "Data Layout Memory Movement Synchronization Communication Tiling Pattern "
+    "Tensor Cores Launch Configuration Profiling Optimization Workflow Semantic "
+    "Transform Guidance"
+)
+GENERAL_CUDA_PRACTICE_MAX_CHARS = 8_000
+GENERAL_CUDA_PRACTICE_MAX_CHUNKS = 4
+
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="avo")
@@ -554,15 +563,34 @@ def _planning_context(args: argparse.Namespace) -> tuple[str, str, str, str]:
     lineage_summary = _lineage_summary(args.lineage)
     attempt_history = summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit)
     repo_context = build_repo_context(args.cwd)
+    knowledge_query = _knowledge_query(
+        lineage_summary=lineage_summary,
+        attempt_history=attempt_history,
+        repo_context=repo_context,
+    )
     knowledge = build_knowledge_context(
         args.knowledge,
-        query=_knowledge_query(
-            lineage_summary=lineage_summary,
-            attempt_history=attempt_history,
-            repo_context=repo_context,
-        ),
+        query=knowledge_query,
     )
+    knowledge = _with_general_cuda_practice_context(knowledge, args.knowledge)
     return lineage_summary, attempt_history, repo_context, knowledge
+
+
+def _with_general_cuda_practice_context(knowledge: str, source: Path) -> str:
+    if "b/cuda_programming_practice.md" in knowledge:
+        return knowledge
+    supplemental = build_knowledge_context(
+        source,
+        query=GENERAL_CUDA_PRACTICE_QUERY,
+        max_chunks=GENERAL_CUDA_PRACTICE_MAX_CHUNKS,
+        max_chars=GENERAL_CUDA_PRACTICE_MAX_CHARS,
+    )
+    if (
+        "b/cuda_programming_practice.md" not in supplemental
+        or "No supported knowledge files were found" in supplemental
+    ):
+        return knowledge
+    return f"{knowledge}\n\nSupplemental broad CUDA practice context:\n{supplemental}"
 
 
 def _knowledge_query(
@@ -575,6 +603,7 @@ def _knowledge_query(
         part
         for part in (
             "Ampere sm86 FlashAttention-2 CUDA attention kernel evolution",
+            GENERAL_CUDA_PRACTICE_QUERY,
             lineage_summary,
             attempt_history,
             repo_context[:12_000],

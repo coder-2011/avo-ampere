@@ -13,6 +13,7 @@ from avo.cli import (
     _baseline_build_status,
     _evolve_loop,
     _evolve_once,
+    _planning_context,
     _score,
     _seed_baseline,
     main,
@@ -138,6 +139,27 @@ def test_knowledge_search_command_prints_retrieved_context(tmp_path: Path, capsy
     assert "Retrieved knowledge context" in output
     assert "ampere.md#chunk-0" in output
     assert "cp.async" in output
+
+
+def test_planning_context_includes_general_cuda_practice(tmp_path: Path) -> None:
+    lineage = tmp_path / "lineage"
+    attempts = tmp_path / "attempts"
+    lineage.mkdir()
+    attempts.mkdir()
+
+    args = SimpleNamespace(
+        lineage=lineage,
+        attempts_dir=attempts,
+        attempt_limit=6,
+        cwd=Path.cwd(),
+        knowledge=Path("knowledge/ampere.md"),
+    )
+
+    _, _, _, knowledge = _planning_context(args)
+
+    assert "b/cuda_programming_practice.md" in knowledge
+    assert "CUDA Kernel Design Practice" in knowledge
+    assert "smallest coherent transformation" in knowledge
 
 
 def test_baseline_build_env_uses_python_cuda_home(monkeypatch) -> None:

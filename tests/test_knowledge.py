@@ -3,6 +3,7 @@ from pathlib import Path
 
 import pytest
 
+from avo.cli import _knowledge_query
 from avo.knowledge import build_knowledge_context, search_knowledge
 
 
@@ -241,6 +242,31 @@ def test_general_cuda_grounding_is_indexed_from_ampere_entrypoint() -> None:
     assert "smallest coherent transformation" in context
     assert "Execution Model" in context
     assert "How CUDA Programmers Usually Approach Optimization" in context
+
+
+def test_agent_planning_query_retrieves_cuda_practice_context() -> None:
+    query = _knowledge_query(
+        lineage_summary="Current lineage is an sm86 BF16 WMMA attention seed.",
+        attempt_history=(
+            "Recent attempts include K shared-memory staging and chunk-loop unrolling."
+        ),
+        repo_context=(
+            "candidate_transform should make the smallest coherent semantic "
+            "transformation under candidates/."
+        ),
+    )
+
+    context = build_knowledge_context(
+        Path("knowledge/ampere.md"),
+        query=query,
+        max_chunks=10,
+        max_chars=24_000,
+    )
+
+    assert "b/cuda_programming_practice.md" in context
+    assert "CUDA Kernel Design Practice" in context
+    assert "work decomposition" in context.lower()
+    assert "smallest coherent transformation" in context
 
 
 def test_every_claim_manifest_query_retrieves_useful_manifest_context() -> None:
