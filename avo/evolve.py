@@ -855,21 +855,13 @@ def _has_successful_compile_only_transform(
 
 
 def _pending_compile_only_transform(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
-    scored_transforms = {
-        _transform_identity(transform)
-        for transform in (
-            _decision_transform(payload)
-            for payload in payloads
-            if isinstance(_step_score_payload(payload), dict)
-        )
-        if transform is not None
-    }
     for payload in reversed(payloads):
+        if isinstance(_step_score_payload(payload), dict):
+            return None
         transform = _successful_compile_only_transform(payload)
         if transform is None:
             continue
-        if _transform_identity(transform) not in scored_transforms:
-            return transform
+        return transform
     return None
 
 
