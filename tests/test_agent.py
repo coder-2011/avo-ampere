@@ -71,6 +71,51 @@ def test_parse_variation_decision_accepts_structured_transform() -> None:
     assert decision.edit_mode == "transform"
 
 
+def test_parse_variation_decision_allows_contract_only_constant_retune() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Set kThreads from 256 to 128 to retune the existing block contract and reduce "
+        "inactive thread overhead."
+    )
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 128,
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_128"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
+def test_parse_variation_decision_rejects_constant_proxy_for_dataflow_claim() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Change kThreads from 128 to 256 to support two concurrent 16-row query tiles "
+        "per block and double active WMMA thread utilization."
+    )
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 256,
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_256"
+    )
+
+    with pytest.raises(ValueError, match="candidate_transform semantic mismatch"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_explicit_transform_mode_without_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"
@@ -2720,6 +2765,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Legacy candidate_patch raw diffs are allowed only for non-CUDA" in context
     assert ".cu/.cuh kernel edits must use candidate_transform" in context
     assert "smallest coherent transformation" in context
+    assert "fewer text edits are not better" in context
     assert "support-only edits" in context
     assert "do not describe a broad kernel rewrite without candidate_transform" in context
     assert "Structural CUDA preflight tracks are class-oriented hard checks" in context
@@ -2804,6 +2850,8 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert 'edit_mode="no_edit"' in prompt
     assert "Supported ops are add_include" in prompt
     assert "smallest coherent transformation" in prompt
+    assert "not the smallest possible textual edit" in prompt
+    assert "one-line constant edit as a stand-in" in prompt
     assert "support-only edits" in prompt
     assert "do not describe a broad CUDA rewrite in candidate_edit" in prompt
     assert "Legacy edit mode" in prompt
@@ -2853,9 +2901,27 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     assert "exact candidate_transform object from the follow-up signal" in content
     assert "Do not restate a broad CUDA change" in content
     assert "smallest coherent semantic transform" in content
-    assert "at-most-four-step materialization batch" in content
+    assert "bounded coherent materialization batch" in content
     assert "Small means scoped, reviewable, recoverable" in content
     assert "Support-only edits" in content
+
+
+def test_decision_feedback_explains_transform_semantic_mismatch_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "candidate_transform semantic mismatch: contract-only transforms cannot "
+            "implement new dataflow"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Make the transform match the semantic claim" in content
+    assert "constant/set transform" in content
+    assert "must not be used as a proxy" in content
+    assert "coherent candidate_transform batch" in content
 
 
 def test_decision_feedback_explains_mutually_exclusive_edit_channels() -> None:
@@ -3126,7 +3192,7 @@ def test_decision_feedback_explains_structural_preflight_error() -> None:
 
     content = updated["messages"][0]["content"]
     assert "failed transform family" in content
-    assert "smaller candidate_transform operation or batch" in content
+    assert "coherent candidate_transform operation or batch" in content
     assert "avoids the same structural class" in content
 
 

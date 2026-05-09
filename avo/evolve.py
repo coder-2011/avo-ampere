@@ -35,6 +35,8 @@ PROMOTABLE_FAILURE_CLASS_TRACKS = {
     "planning_edit_channel": "edit_channel_consistency",
     "planning_missing_edit_payload": "edit_channel_consistency",
     "planning_no_patch_compile": "compile_diagnostic_repetition",
+    "planning_support_only_transform": "semantic_transform_contract",
+    "planning_transform_semantic_mismatch": "semantic_transform_contract",
     "planning_transform_preflight": "transform_materialization",
     "planning_validation": "planning_validation",
     "raw_diff_preflight": "edit_channel_integrity",
@@ -1678,6 +1680,8 @@ def _classify_planning_failure(detail: str) -> str:
         return "planning_edit_channel"
     if "pending compile-only candidate_transform" in detail:
         return "planning_missing_pending_transform"
+    if "candidate_transform semantic mismatch" in detail:
+        return "planning_transform_semantic_mismatch"
     if "support-only" in detail:
         return "planning_support_only_transform"
     if "candidate_transform or candidate_patch" in detail:

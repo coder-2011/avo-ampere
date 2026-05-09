@@ -104,8 +104,9 @@ STRUCTURED_TRANSFORM_STEP_OPS = frozenset(
     }
 )
 STRUCTURED_TRANSFORM_OPS = STRUCTURED_TRANSFORM_STEP_OPS | frozenset({"batch"})
-MAX_TRANSFORM_BATCH_STEPS = 4
+MAX_TRANSFORM_BATCH_STEPS = 8
 SUPPORT_ONLY_TRANSFORM_OPS = frozenset({"add_include"})
+CONTRACT_ONLY_TRANSFORM_OPS = frozenset({"set_constexpr_int", "add_int_to_python_set"})
 PLANNING_EDIT_TERMS = frozenset(
     {
         "change",
@@ -146,6 +147,54 @@ PLANNING_CODE_ARTIFACT_TERMS = frozenset(
         "transform",
         "variable",
         "variables",
+    }
+)
+PLANNING_DATAFLOW_ACTION_TERMS = frozenset(
+    {
+        "add",
+        "coalesce",
+        "consume",
+        "double",
+        "enable",
+        "feed",
+        "implement",
+        "introduce",
+        "load",
+        "move",
+        "pipeline",
+        "prefetch",
+        "process",
+        "replace",
+        "reuse",
+        "route",
+        "split",
+        "stage",
+        "store",
+        "support",
+    }
+)
+PLANNING_DATAFLOW_ARTIFACT_TERMS = frozenset(
+    {
+        "async",
+        "buffer",
+        "buffers",
+        "concurrent",
+        "cp",
+        "dataflow",
+        "load",
+        "loads",
+        "pipeline",
+        "query",
+        "reduction",
+        "shared",
+        "softmax",
+        "stage",
+        "staging",
+        "store",
+        "tile",
+        "tiles",
+        "tiling",
+        "warp",
     }
 )
 
@@ -398,6 +447,10 @@ class VariationDecision:
         )
         _validate_candidate_edit_matches_patch(candidate_edit, edit_payload)
         planning_text = "\n".join((hypothesis, candidate_edit, expected_effect, risk))
+        _validate_candidate_transform_matches_semantic_claim(
+            candidate_transform,
+            planning_text,
+        )
         _validate_candidate_patch_not_self_rejected(edit_payload, planning_text)
         _validate_candidate_patch_preflight(candidate_patch)
         next_command = _validate_next_command(
@@ -533,17 +586,19 @@ def build_variation_prompt(
         "candidate_patch to exactly the empty string \"\". "
         "Supported ops are add_include, replace_once, insert_before_once, "
         "insert_after_once, set_constexpr_int, and add_int_to_python_set; use op=batch "
-        "with steps_json containing up to four primitive materialization steps when one "
-        "coherent candidate needs coordinated wrapper/kernel edits. The orchestrator "
+        "with steps_json containing the materialization steps needed when one coherent "
+        "candidate needs coordinated wrapper/kernel edits. The orchestrator "
         "materializes and preflights the patch. Make the smallest coherent "
         "transformation that preserves kernel invariants and can be validated against "
         "the hypothesis. Scoped means reviewable and recoverable, not the smallest "
-        "possible textual edit. Primitive steps are only the representation; do not "
-        "submit support-only edits such as adding a header, unused helper, or unused "
-        "buffer as a standalone candidate. If a CUDA idea cannot be "
+        "possible textual edit; do not use a one-line constant edit as a stand-in for "
+        "a dataflow, tiling, or scheduling change that it does not actually implement. "
+        "Primitive steps are only the representation; do not submit support-only edits "
+        "such as adding a header, unused helper, or unused buffer as a standalone "
+        "candidate. If a CUDA idea cannot be "
         "expressed as an exact coherent transform over the current source excerpts, choose a "
-        "smaller semantic transform or a no-edit diagnostic; do not describe a broad CUDA "
-        "rewrite in candidate_edit without that exact transform. "
+        "smaller coherent transform unit or a no-edit diagnostic; do not describe a broad "
+        "CUDA rewrite in candidate_edit without that exact transform. "
         "Legacy edit mode: set edit_mode=\"legacy_patch\" and provide candidate_patch as "
         "one scoped raw git-style unified diff under candidates/ starting with 'diff --git'. "
         "It may edit wrappers or other non-CUDA candidate files, but it must not edit "
@@ -599,11 +654,13 @@ def build_repo_context(root: Path) -> str:
         "candidate_patch raw diffs are allowed only for non-CUDA candidate files; "
         ".cu/.cuh kernel edits must use candidate_transform.",
         "Make the smallest coherent transformation that preserves invariants and can be "
-        "validated. Primitive steps are not the objective: support-only edits such as "
-        "adding a header, unused helper, or unused buffer must be part of a semantic batch "
-        "that changes executable dataflow or a validation contract.",
+        "validated. Primitive steps are not the objective, and fewer text edits are not "
+        "better when the semantic move requires coordinated contract/dataflow changes; "
+        "support-only edits such as adding a header, unused helper, or unused buffer must "
+        "be part of a semantic batch that changes executable dataflow or a validation "
+        "contract.",
         "If a CUDA idea is not representable as an exact coherent transform, shrink it to "
-        "a smaller semantic anchor-based edit or choose a no-edit diagnostic; do not "
+        "the smallest coherent transform unit or choose a no-edit diagnostic; do not "
         "describe a broad kernel rewrite without candidate_transform.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compiles of existing CUDA candidates are baseline diagnostics, not "
@@ -733,11 +790,20 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "the exact candidate_transform object from the follow-up signal. Do not "
             "restate a broad CUDA change in candidate_edit without an exact "
             "candidate_transform; reduce it to the smallest coherent semantic transform "
-            "or an at-most-four-step materialization batch over current source excerpts. "
+            "or a bounded coherent materialization batch over current source excerpts. "
             "Small means scoped, reviewable, recoverable, and tied to a clear hypothesis; "
             "it does not mean the smallest possible textual edit. Support-only "
             "edits such as adding a header or unused helper are not valid standalone "
             "optimization candidates. "
+        )
+    if "candidate_transform semantic mismatch" in message:
+        return (
+            "Make the transform match the semantic claim. A constant/set transform may "
+            "retune an existing invariant or validation contract, but it must not be used "
+            "as a proxy for a dataflow, tiling, staging, or scheduling change. Either "
+            "narrow the hypothesis to the constant change being made, or provide one "
+            "coherent candidate_transform batch that implements the claimed executable "
+            "behavior and preserves its invariants. "
         )
     if "candidate_patch and candidate_transform are mutually exclusive" in message:
         return (
@@ -767,9 +833,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
     if "structural preflight track" in message:
         return (
             "Treat the rejected edit as a failed transform family, not as a phrase to patch "
-            "around. Choose a smaller candidate_transform operation or batch that changes "
-            "real dataflow and avoids the same structural class, or switch to a bounded "
-            "diagnostic that gives new information for a different transform family. "
+            "around. Choose a coherent candidate_transform operation or batch that changes "
+            "the claimed executable behavior and avoids the same structural class, or "
+            "switch to a bounded diagnostic that gives new information for a different "
+            "transform family. "
         )
     if "support-only" in message:
         return (
@@ -1039,6 +1106,58 @@ def _validate_candidate_transform_semantic_coherence(transform: dict[str, Any]) 
             "steps such as add_include must be part of a batch with a real dataflow or "
             "validation-contract change."
         )
+
+
+def _validate_candidate_transform_matches_semantic_claim(
+    candidate_transform: dict[str, Any] | None,
+    planning_text: str,
+) -> None:
+    if candidate_transform is None or not _candidate_transform_is_contract_only(
+        candidate_transform
+    ):
+        return
+    claim = _planning_text_dataflow_claim(planning_text)
+    if claim is None:
+        return
+    raise ValueError(
+        "candidate_transform semantic mismatch: contract-only transforms such as "
+        "set_constexpr_int/add_int_to_python_set may retune an existing invariant or "
+        "shape contract, but they do not implement new dataflow, tiling, staging, or "
+        f"scheduling behavior claimed by planning text: {claim!r}"
+    )
+
+
+def _candidate_transform_is_contract_only(transform: dict[str, Any]) -> bool:
+    steps = transform.get("steps") if transform.get("op") == "batch" else [transform]
+    if not isinstance(steps, list):
+        return False
+    non_support_ops = [
+        str(step.get("op") or "")
+        for step in steps
+        if isinstance(step, dict) and str(step.get("op") or "") not in SUPPORT_ONLY_TRANSFORM_OPS
+    ]
+    return bool(non_support_ops) and all(
+        op in CONTRACT_ONLY_TRANSFORM_OPS for op in non_support_ops
+    )
+
+
+def _planning_text_dataflow_claim(planning_text: str) -> str | None:
+    normalized_text = planning_text.lower().replace("-", " ")
+    windows = [
+        " ".join(window.split())
+        for window in re.split(r"(?<=[.;!?])\s+|\n+", normalized_text)
+        if window.strip()
+    ]
+    if not windows:
+        windows = [" ".join(normalized_text.split())]
+    for window in windows:
+        words = set(re.findall(r"[a-z_]+", window))
+        if (
+            words & PLANNING_DATAFLOW_ACTION_TERMS
+            and words & PLANNING_DATAFLOW_ARTIFACT_TERMS
+        ):
+            return _validation_excerpt(window)
+    return None
 
 
 def _validate_candidate_transform_step(value: Any, *, label: str = "operation") -> dict[str, Any]:

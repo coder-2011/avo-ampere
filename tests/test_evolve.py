@@ -1059,6 +1059,23 @@ def test_summarize_attempt_history_classifies_support_only_transform(
     assert "class=planning_support_only_transform" in summary
 
 
+def test_summarize_attempt_history_classifies_transform_semantic_mismatch(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    step = planning_failure_step(
+        ValueError(
+            "candidate_transform semantic mismatch: contract-only transforms do not "
+            "implement dataflow"
+        )
+    )
+    write_step_record(attempts, step)
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=planning_transform_semantic_mismatch" in summary
+
+
 def test_summarize_attempt_history_does_not_fingerprint_different_planning_errors(
     tmp_path: Path,
 ) -> None:
