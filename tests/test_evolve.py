@@ -149,6 +149,43 @@ def test_materialize_candidate_transform_generates_batch_patch(tmp_path: Path) -
     assert "+VALUES = {1, 2}" in patch
 
 
+def test_materialize_candidate_transform_adds_include(tmp_path: Path) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir()
+    kernel.write_text(
+        "#include <cuda_bf16.h>\n#include <mma.h>\n\nnamespace test {}\n",
+        encoding="utf-8",
+    )
+
+    patch = materialize_candidate_transform(
+        {
+            "op": "add_include",
+            "path": "candidates/kernel.cu",
+            "header": "cuda_pipeline_primitives.h",
+        },
+        cwd=tmp_path,
+    )
+
+    assert "+#include <cuda_pipeline_primitives.h>" in patch
+    assert " #include <mma.h>\n+#include <cuda_pipeline_primitives.h>" in patch
+
+
+def test_materialize_candidate_transform_rejects_duplicate_include(tmp_path: Path) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir()
+    kernel.write_text("#include <cuda_pipeline_primitives.h>\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="produced no source change"):
+        materialize_candidate_transform(
+            {
+                "op": "add_include",
+                "path": "candidates/kernel.cu",
+                "header": "<cuda_pipeline_primitives.h>",
+            },
+            cwd=tmp_path,
+        )
+
+
 def test_materialize_candidate_transform_rejects_non_object_batch_step(tmp_path: Path) -> None:
     write_seed_candidate(tmp_path).write_text("VALUES = {1}\n", encoding="utf-8")
 

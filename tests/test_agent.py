@@ -69,6 +69,99 @@ def test_parse_variation_decision_accepts_structured_transform() -> None:
     assert decision.candidate_transform == payload["candidate_transform"]
 
 
+def test_parse_variation_decision_accepts_add_include_transform() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add the CUDA pipeline header through a structured transform."
+    payload["candidate_transform"] = {
+        "op": "add_include",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "header": "cuda_pipeline_primitives.h",
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_include"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
+def test_parse_variation_decision_infers_add_include_transform_from_edit() -> None:
+    payload = decision_payload()
+    payload["files_to_inspect"] = []
+    payload["candidate_edit"] = (
+        "Add cuda_pipeline_primitives.h include to MMA kernel to enable future cp.async work."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_include"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "add_include",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "header": "cuda_pipeline_primitives.h",
+    }
+
+
+def test_parse_variation_decision_rejects_add_include_on_python_file() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Add a C++ include to the Python wrapper."
+    payload["candidate_transform"] = {
+        "op": "add_include",
+        "path": "candidates/cuda_mma_attention_seed.py",
+        "header": "cuda_pipeline_primitives.h",
+    }
+
+    with pytest.raises(ValueError, match="add_include path"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_structured_transform_allows_conditional_compile_risk_language() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Set the MMA tile constant through a structured transform."
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kTile",
+        "value": 16,
+    }
+    payload["risk"] = (
+        "If compile fails on shared memory limits or undefined async copy symbols, "
+        "choose a different substrate."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_transform"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
+def test_structured_transform_rejects_declared_incomplete_edit() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = "Set the MMA tile constant through a structured transform."
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kTile",
+        "value": 16,
+    }
+    payload["risk"] = "The patch is incomplete and leaves undefined symbols."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_transform"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_accepts_transform_batch() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Batch wrapper and kernel cap changes for seq_len 512."
@@ -478,6 +571,18 @@ def test_parse_variation_decision_rejects_recorded_env_stability_check() -> None
     payload["next_command"] = "avo env"
 
     with pytest.raises(ValueError, match="recorded environment stability diagnostic"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_env_for_planner_interface_recovery() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = "The recent attempts failed planning validation."
+    payload["candidate_edit"] = "No edit; run environment diagnostic."
+    payload["expected_effect"] = "Confirm the CUDA environment is still stable."
+    payload["risk"] = "This only recovers from a missing edit payload."
+    payload["next_command"] = "avo env"
+
+    with pytest.raises(ValueError, match="planner-interface failure"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -2406,6 +2511,9 @@ def test_decision_tool_uses_strict_schema() -> None:
         "description"
     ]
     assert "candidate_transform" in tool["input_schema"]["properties"]
+    assert "add_include" in tool["input_schema"]["properties"]["candidate_transform"][
+        "properties"
+    ]["op"]["enum"]
     assert "replace_once" in tool["input_schema"]["properties"]["candidate_transform"][
         "properties"
     ]["op"]["enum"]
@@ -2436,6 +2544,8 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Preferred edit channel: candidate_transform" in context
     assert "Legacy candidate_patch raw diffs are allowed only for non-CUDA" in context
     assert ".cu/.cuh kernel edits must use candidate_transform" in context
+    assert "at most four exact transform steps" in context
+    assert "do not describe a broad kernel rewrite without candidate_transform" in context
     assert "Structural CUDA preflight tracks are class-oriented hard checks" in context
     assert "wrapper/kernel shape-contract consistency" in context
     assert "tensor-core fragment declarations must match" in context
@@ -2513,7 +2623,9 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "candidate_patch" in prompt
     assert "candidate_transform" in prompt
     assert "No-edit mode" in prompt
-    assert "Supported ops are replace_once" in prompt
+    assert "Supported ops are add_include" in prompt
+    assert "at most four exact transform steps" in prompt
+    assert "do not describe a broad CUDA rewrite in candidate_edit" in prompt
     assert "Legacy edit mode" in prompt
     assert "must not edit .cu/.cuh kernel sources directly" in prompt
     assert 'candidate_edit starts with "No edit; "' in prompt
@@ -2558,6 +2670,8 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     assert "diff --git" in content
     assert "Do not mention fixing" in content
     assert "exact candidate_transform object from the follow-up signal" in content
+    assert "Do not restate a broad CUDA change" in content
+    assert "at-most-four-step batch" in content
 
 
 def test_decision_feedback_explains_mutually_exclusive_edit_channels() -> None:
@@ -2598,6 +2712,7 @@ def test_decision_feedback_explains_raw_cuda_patch_error() -> None:
     content = updated["messages"][0]["content"]
     assert "Do not use raw candidate_patch for .cu or .cuh files" in content
     assert "Express the CUDA edit as candidate_transform" in content
+    assert "add_include" in content
     assert "op=batch" in content
     assert "Raw candidate_patch is only for non-CUDA candidate files" in content
 
@@ -2709,6 +2824,22 @@ def test_decision_feedback_explains_recorded_env_stability_error() -> None:
     assert "already-recorded CUDA/build environment" in content
     assert "concrete recent build or environment failure" in content
     assert "CUDA version mismatch" in content
+
+
+def test_decision_feedback_explains_planner_recovery_env_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command avo env is not useful for a planner-interface failure; return "
+            "a valid candidate_transform or a kernel-search diagnostic instead"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not spend a loop step on avo env for planner-interface" in content
+    assert "valid candidate_transform" in content
 
 
 def test_decision_feedback_explains_recorded_no_patch_compile_error() -> None:

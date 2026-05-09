@@ -94,6 +94,7 @@ NO_EDIT_PHRASES = (
 )
 STRUCTURED_TRANSFORM_STEP_OPS = frozenset(
     {
+        "add_include",
         "add_int_to_python_set",
         "replace_once",
         "insert_before_once",
@@ -198,6 +199,10 @@ TRANSFORM_STEP_SCHEMA: dict[str, Any] = {
         "text": {
             "type": "string",
             "description": "Inserted text for insert_before_once or insert_after_once.",
+        },
+        "header": {
+            "type": "string",
+            "description": "Header for add_include, such as cuda_pipeline_primitives.h.",
         },
         "name": {
             "type": "string",
@@ -489,11 +494,15 @@ def build_variation_prompt(
         "Use one of exactly three modes. Preferred edit mode: candidate_transform is one "
         "tiny structured operation or a small ordered batch under candidates/, and "
         "candidate_patch is exactly the empty string \"\". "
-        "Supported ops are replace_once, insert_before_once, insert_after_once, "
-        "set_constexpr_int, and add_int_to_python_set; use op=batch with steps_json "
-        "containing up to four tiny "
+        "Supported ops are add_include, replace_once, insert_before_once, "
+        "insert_after_once, set_constexpr_int, and add_int_to_python_set; use op=batch "
+        "with steps_json containing up to four tiny "
         "steps when a coherent candidate needs coordinated wrapper/kernel edits. The "
-        "orchestrator materializes and preflights the patch. "
+        "orchestrator materializes and preflights the patch. If a CUDA idea cannot be "
+        "expressed as at most four exact transform steps over the current source "
+        "excerpts, choose a smaller representable first transform or a no-edit "
+        "diagnostic; do not describe a broad CUDA rewrite in candidate_edit without "
+        "that exact transform. "
         "Legacy edit mode: candidate_patch is one small raw git-style unified diff under "
         "candidates/ starting with 'diff --git'. It may edit wrappers or other non-CUDA "
         "candidate files, but it must not edit .cu/.cuh kernel sources directly. No-edit "
@@ -541,12 +550,15 @@ def build_repo_context(root: Path) -> str:
         "head_dim 128, and both causal modes. Small candidate shapes are smoke fences, "
         "not the optimization objective.",
         "Preferred edit channel: candidate_transform, one tiny structured operation or "
-        "a small ordered batch under candidates/. Supported step ops: replace_once, "
-        "insert_before_once, insert_after_once, set_constexpr_int, "
+        "a small ordered batch under candidates/. Supported step ops: add_include, "
+        "replace_once, insert_before_once, insert_after_once, set_constexpr_int, "
         "add_int_to_python_set. Use op=batch with steps_json when wrapper and kernel "
         "caps must change together. Legacy "
         "candidate_patch raw diffs are allowed only for non-CUDA candidate files; "
         ".cu/.cuh kernel edits must use candidate_transform.",
+        "If a CUDA idea is not representable as at most four exact transform steps, "
+        "shrink it to the first exact anchor-based edit or choose a no-edit diagnostic; "
+        "do not describe a broad kernel rewrite without candidate_transform.",
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compiles of existing CUDA candidates are baseline diagnostics, not "
         "optimization steps; compile only when build-checking a materialized edit.",
@@ -668,7 +680,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "bounded score/compile/env diagnostic to run. "
             "Do not mention fixing, extending, updating, modifying, or implementing code in "
             "no-edit mode. If this is a follow-up score for a compiled transform, include "
-            "the exact candidate_transform object from the follow-up signal. "
+            "the exact candidate_transform object from the follow-up signal. Do not "
+            "restate a broad CUDA change in candidate_edit without an exact "
+            "candidate_transform; reduce it to one exact replace/insert/set operation "
+            "or an at-most-four-step batch over current source excerpts. "
         )
     if "candidate_patch and candidate_transform are mutually exclusive" in message:
         return (
@@ -689,8 +704,8 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "Do not use raw candidate_patch for .cu or .cuh files. Express the CUDA edit "
             "as candidate_transform: one operation, or op=batch when coordinated "
             "wrapper/kernel changes are required. Each step must be representable by "
-            "replace_once, insert_before_once, insert_after_once, set_constexpr_int, "
-            "or add_int_to_python_set. "
+            "add_include, replace_once, insert_before_once, insert_after_once, "
+            "set_constexpr_int, or add_int_to_python_set. "
             "Raw candidate_patch is only for non-CUDA candidate files. "
         )
     if "structural preflight track" in message:
@@ -753,6 +768,12 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "CUDA/build environment. Use avo env only when the decision cites a concrete "
             "recent build or environment failure such as a CUDA version mismatch, missing "
             "compiler, missing package, or extension-build error. "
+        )
+    if "planner-interface failure" in message:
+        return (
+            "Do not spend a loop step on avo env for planner-interface or schema failures. "
+            "Return a valid candidate_transform for a representable CUDA edit, or choose a "
+            "no-edit compile/score diagnostic that directly informs the kernel search. "
         )
     if "recorded no-patch compile diagnostic" in message:
         return (
@@ -909,6 +930,10 @@ def _validate_candidate_transform_step(value: Any, *, label: str = "operation") 
     elif op in {"insert_before_once", "insert_after_once"}:
         _require_transform_string(value, "anchor")
         _require_transform_string(value, "text")
+    elif op == "add_include":
+        _require_transform_string(value, "header")
+        if PurePosixPath(path).suffix not in (".cpp", ".cu", ".cuh", ".h", ".hpp"):
+            raise ValueError("candidate_transform add_include path must be a C++/CUDA source file")
     elif op in {"set_constexpr_int", "add_int_to_python_set"}:
         _require_transform_string(value, "name")
         if not isinstance(value.get("value"), int):
@@ -926,6 +951,8 @@ def _infer_candidate_transform_from_edit(
         candidate_edit,
     )
     candidate_paths.extend(files_to_inspect or [])
+    candidate_paths.extend(_candidate_source_alias_paths_from_edit(candidate_edit))
+    candidate_paths = [path for path in candidate_paths if path.startswith("candidates/")]
     candidate_paths = list(dict.fromkeys(candidate_paths))
     if not candidate_paths:
         return None
@@ -937,6 +964,9 @@ def _infer_candidate_transform_from_edit(
     if source_path is None:
         return None
     steps: list[dict[str, Any]] = []
+    include_header = _infer_include_header_from_edit(candidate_edit)
+    if include_header is not None:
+        return {"op": "add_include", "path": source_path, "header": include_header}
     const_match = _infer_integer_constant_change(candidate_edit)
     if const_match is None:
         return None
@@ -980,6 +1010,37 @@ def _infer_candidate_transform_from_edit(
     if len(steps) == 1:
         return steps[0]
     return {"op": "batch", "steps": steps}
+
+
+def _candidate_source_alias_paths_from_edit(candidate_edit: str) -> list[str]:
+    normalized = " ".join(candidate_edit.lower().replace("-", " ").split())
+    paths: list[str] = []
+    if "kernel" not in normalized:
+        return paths
+    if "mma" in normalized:
+        paths.append(MMA_KERNEL_SOURCE)
+    if "warp row" in normalized or "warp rows" in normalized:
+        paths.append("candidates/cuda_warp_rows_attention/attention_kernel.cu")
+    if "tiled" in normalized:
+        paths.append("candidates/cuda_tiled_attention/attention_kernel.cu")
+    if "naive" in normalized:
+        paths.append("candidates/cuda_naive_attention/attention_kernel.cu")
+    return paths
+
+
+def _infer_include_header_from_edit(candidate_edit: str) -> str | None:
+    header_pattern = r"(?P<header><[^>\n]+>|\"[^\"\n]+\"|[A-Za-z0-9_./+-]+\.(?:cuh|hpp|hh|h))"
+    patterns = (
+        rf"\b(?:add|insert)\s+(?:the\s+)?(?:#include\s+)?{header_pattern}\s+"
+        r"(?:header|include)\b",
+        rf"\b(?:add|insert)\s+(?:the\s+)?include\s+(?:for\s+)?{header_pattern}\b",
+        rf"\b#include\s+{header_pattern}",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, candidate_edit, flags=re.IGNORECASE)
+        if match is not None:
+            return match.group("header")
+    return None
 
 
 def _infer_integer_constant_change(candidate_edit: str) -> re.Match[str] | None:
@@ -1077,16 +1138,16 @@ def _validate_candidate_patch_not_self_rejected(
 
 
 def _planning_text_risk(planning_text: str) -> tuple[str, str] | None:
-    normalized = " ".join(planning_text.lower().replace("-", " ").split())
-    if not normalized:
+    normalized_text = planning_text.lower().replace("-", " ")
+    if not normalized_text.strip():
         return None
     windows = [
-        window.strip()
-        for window in re.split(r"(?<=[.;!?])\s+|\n+", normalized)
+        " ".join(window.split())
+        for window in re.split(r"(?<=[.;!?])\s+|\n+", normalized_text)
         if window.strip()
     ]
     if not windows:
-        windows = [normalized]
+        windows = [" ".join(normalized_text.split())]
     for window in windows:
         if _planning_window_predicts_compile_failure(window):
             return "predicted_compile_failure", _validation_excerpt(window)
@@ -1160,6 +1221,8 @@ def _planning_window_self_rejects_edit(text: str) -> bool:
 
 
 def _planning_window_describes_incomplete_edit(text: str) -> bool:
+    if _planning_window_is_conditional_execution_risk(text):
+        return False
     words = set(re.findall(r"[a-z_]+", text))
     has_incomplete_signal = bool(
         words
@@ -1176,6 +1239,21 @@ def _planning_window_describes_incomplete_edit(text: str) -> bool:
         }
     )
     return has_incomplete_signal and bool(words & PLANNING_CODE_ARTIFACT_TERMS)
+
+
+def _planning_window_is_conditional_execution_risk(text: str) -> bool:
+    if not re.match(r"^(?:if|when)\b", text):
+        return False
+    if re.match(r"^(?:if|when)\s+(?:the\s+)?(?:diff|edit|patch|transform)\b", text):
+        return False
+    execution_risk = (
+        r"(?:compile|compilation|nvcc|score|scoring|benchmark|correctness)"
+    )
+    failure_signal = r"(?:error|fail|fails|failure|regress|regresses|regression)"
+    return bool(
+        re.search(rf"\b{execution_risk}\b.{{0,80}}\b{failure_signal}\b", text)
+        or re.search(rf"\b{failure_signal}\b.{{0,80}}\b{execution_risk}\b", text)
+    )
 
 
 def _planning_window_predicts_compile_failure(text: str) -> bool:
@@ -2454,6 +2532,11 @@ def _python_int_set_values_from_assignment(text: str, *, name: str) -> frozenset
 
 def _validate_env_command_context(planning_text: str) -> None:
     normalized = " ".join(planning_text.lower().replace("_", " ").replace("-", " ").split())
+    if _env_command_is_planner_interface_recovery(normalized):
+        raise ValueError(
+            "next_command avo env is not useful for a planner-interface failure; return a "
+            "valid candidate_transform or a kernel-search diagnostic instead"
+        )
     if _env_command_repeats_recorded_stability_check(normalized):
         raise ValueError(
             "next_command repeats a recorded environment stability diagnostic; use avo env "
@@ -2465,6 +2548,21 @@ def _validate_env_command_context(planning_text: str) -> None:
         "next_command avo env is only for CUDA/build environment diagnostics, "
         "not source-file inspection"
     )
+
+
+def _env_command_is_planner_interface_recovery(normalized_planning_text: str) -> bool:
+    planner_failure_terms = (
+        "decision payload",
+        "edit payload",
+        "invalid decision",
+        "planner interface",
+        "planner returned invalid",
+        "planning validation",
+        "planning validation failure",
+        "planning missing edit payload",
+        "schema failure",
+    )
+    return any(term in normalized_planning_text for term in planner_failure_terms)
 
 
 def _env_command_repeats_recorded_stability_check(normalized_planning_text: str) -> bool:

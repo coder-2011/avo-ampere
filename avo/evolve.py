@@ -1163,6 +1163,8 @@ def _apply_candidate_transform_step(step: dict[str, Any], content: str) -> str:
             text=str(step["text"]),
             before=False,
         )
+    if op == "add_include":
+        return _transform_add_include(content, header=str(step["header"]))
     if op == "set_constexpr_int":
         return _transform_set_constexpr_int(
             content,
@@ -1204,6 +1206,34 @@ def _transform_insert_once(content: str, *, anchor: str, text: str, before: bool
     if not before:
         index += len(anchor)
     return f"{content[:index]}{text}{content[index:]}"
+
+
+def _transform_add_include(content: str, *, header: str) -> str:
+    include_line = f"#include {_normalize_include_header(header)}"
+    if re.search(rf"(?m)^\s*{re.escape(include_line)}\s*$", content):
+        return content
+    matches = list(
+        re.finditer(
+            r"(?m)^#\s*include[^\S\n]+[<\"][^>\"]+[>\"][^\S\n]*(?:\n|$)",
+            content,
+        )
+    )
+    if not matches:
+        return f"{include_line}\n{content}"
+    insert_at = matches[-1].end()
+    separator = "" if content[:insert_at].endswith("\n") else "\n"
+    return f"{content[:insert_at]}{separator}{include_line}\n{content[insert_at:]}"
+
+
+def _normalize_include_header(raw_header: str) -> str:
+    header = raw_header.strip()
+    if not header or any(char in header for char in "\r\n"):
+        raise ValueError("add_include header must be a single non-empty header")
+    if re.fullmatch(r"<[^<>\"\n]+>", header) or re.fullmatch(r'"[^"\n]+"', header):
+        return header
+    if not re.fullmatch(r"[A-Za-z0-9_./+-]+", header):
+        raise ValueError("add_include header contains unsupported characters")
+    return f"<{header}>"
 
 
 def _transform_set_constexpr_int(content: str, *, name: str, value: int) -> str:
