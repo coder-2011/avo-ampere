@@ -83,6 +83,30 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             "kThreads 64 rejected geomean 7.587127963961811 occupancy",
             ("kthreads=64", "7.587127963961811", "occupancy"),
         ),
+        (
+            "CUDA execution model grid block thread warp SIMT divergence",
+            ("grid", "blocks", "warps", "simt"),
+        ),
+        (
+            "CUDA memory spaces global shared register local constant cache",
+            ("global memory", "shared memory", "registers", "local memory"),
+        ),
+        (
+            "CUDA global memory coalescing warp consecutive lanes transactions",
+            ("coalescing", "warp", "consecutive lanes", "transactions"),
+        ),
+        (
+            "CUDA shared memory synchronization bank conflicts tiling",
+            ("shared memory", "__syncthreads", "bank", "tiling"),
+        ),
+        (
+            "CUDA occupancy registers shared memory spills ptxas",
+            ("occupancy", "registers", "shared memory", "ptxas"),
+        ),
+        (
+            "CUDA optimization workflow hypothesis measure profile transform",
+            ("hypothesis", "correctness", "profile", "negative results"),
+        ),
     ],
 )
 def test_real_ampere_corpus_retrieves_useful_claims(
@@ -149,11 +173,25 @@ def test_retrieval_claim_manifest_is_indexed_from_ampere_entrypoint() -> None:
     assert "kThreads=64" in context
 
 
+def test_general_cuda_grounding_is_indexed_from_ampere_entrypoint() -> None:
+    context = build_knowledge_context(
+        Path("knowledge/ampere.md"),
+        query="CUDA execution model memory spaces occupancy profiling workflow",
+        max_chunks=8,
+        max_chars=16_000,
+    )
+
+    assert "b/cuda_general.md" in context
+    assert "General CUDA Working Knowledge" in context
+    assert "Execution Model" in context
+    assert "How CUDA Programmers Usually Approach Optimization" in context
+
+
 def test_every_claim_manifest_query_retrieves_useful_manifest_context() -> None:
     manifest = Path("knowledge/retrieval_claims.md")
     queries = re.findall(r"Retrieval query: `([^`]+)`", manifest.read_text(encoding="utf-8"))
 
-    assert len(queries) >= 10
+    assert len(queries) >= 16
     for query in queries:
         context = build_knowledge_context(
             Path("knowledge/ampere.md"),

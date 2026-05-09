@@ -44,6 +44,61 @@ reject a bad transform family, or explain a score/gate result.
   query-tile or split-work dataflow.
 - Retrieval query: `FlashAttention SM80 NumThreads tiled MMA workload distribution`.
 
+## General CUDA Grounding
+
+- Claim: CUDA kernel design starts from the execution hierarchy: grids contain
+  blocks, blocks contain threads, and hardware executes threads in 32-lane warps
+  under the SIMT model.
+- Evidence source: NVIDIA CUDA Programming Guide and `knowledge/b/cuda_general.md`.
+- Why useful: helps the planner reason about whether a proposed work mapping
+  changes real parallel execution or just changes a constant.
+- Retrieval query: `CUDA execution model grid block thread warp SIMT divergence`.
+
+- Claim: CUDA memory spaces have different scopes and costs: global memory is
+  grid-visible and persistent, shared memory is block-local scratchpad storage,
+  registers are thread-local, and local memory is thread-local in scope but
+  device-memory backed.
+- Evidence source: NVIDIA CUDA Programming Guide and `knowledge/b/cuda_general.md`.
+- Why useful: prevents confusing "local" memory with fast storage and helps the
+  planner choose between registers, shared memory, and global memory.
+- Retrieval query: `CUDA memory spaces global shared register local constant cache`.
+
+- Claim: global-memory performance depends on warp-level coalescing; consecutive
+  lanes reading consecutive words use transactions efficiently, while strided or
+  scattered lanes waste bandwidth.
+- Evidence source: NVIDIA CUDA Programming Guide, NVIDIA CUDA Best Practices
+  Guide, and `knowledge/b/cuda_general.md`.
+- Why useful: gives the planner a general reason to inspect address patterns
+  before proposing a shared-memory or vectorized-copy change.
+- Retrieval query: `CUDA global memory coalescing warp consecutive lanes transactions`.
+
+- Claim: shared memory is useful when it creates reuse, coalesces otherwise poor
+  global access, performs a needed layout transform, or feeds a warp/tensor-core
+  operation; it must include a correct producer/consumer synchronization story.
+- Evidence source: NVIDIA CUDA Programming Guide, NVIDIA CUDA Best Practices
+  Guide, and `knowledge/b/cuda_general.md`.
+- Why useful: stops the planner from treating shared-memory staging as free and
+  connects staging proposals to a concrete benefit.
+- Retrieval query: `CUDA shared memory synchronization bank conflicts tiling`.
+
+- Claim: occupancy is a resource tradeoff constrained by block size, registers,
+  shared memory, and hardware resident-block/warp limits; maximum occupancy is
+  not automatically maximum performance.
+- Evidence source: NVIDIA CUDA Programming Guide, NVIDIA Ampere tuning guide,
+  and `knowledge/b/cuda_general.md`.
+- Why useful: discourages blind thread-count or register-cap retunes and asks for
+  a bottleneck hypothesis plus measurements.
+- Retrieval query: `CUDA occupancy registers shared memory spills ptxas`.
+
+- Claim: CUDA optimization should be measurement driven: establish correctness,
+  time with warmups/replicates, profile bottlenecks, make one coherent transform,
+  and treat regressions as search evidence.
+- Evidence source: NVIDIA CUDA Best Practices Guide, NVIDIA Nsight Compute
+  profiling guide, local AVO loop design, and `knowledge/b/cuda_general.md`.
+- Why useful: aligns future planner steps with how CUDA programmers actually
+  improve kernels rather than accumulating reactive phrase bans.
+- Retrieval query: `CUDA optimization workflow hypothesis measure profile transform`.
+
 ## Transform Interface Lessons
 
 - Claim: `set_constexpr_int` and Python set updates are contract-only

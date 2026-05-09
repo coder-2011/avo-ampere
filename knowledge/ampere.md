@@ -4,6 +4,11 @@ This is the initial static knowledge seed for the AVO agent. It is deliberately
 small; the agent should consult external docs and local source reactively during
 variation steps.
 
+For general CUDA execution, memory, profiling, and optimization workflow
+grounding, also retrieve `knowledge/b/cuda_general.md`. This file stays focused
+on Ampere-specific constraints, attention-kernel evidence, and local search
+history.
+
 ## Hardware
 
 - Target GPU: NVIDIA RTX A6000, compute capability 8.6.

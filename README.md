@@ -52,6 +52,7 @@ candidates/
 kernels/smoke.cu             NVCC smoke source
 tests/                       Unit coverage for the orchestration layer
 knowledge/ampere.md          Ampere-specific constraints and assumptions
+knowledge/b/cuda_general.md  General CUDA execution, memory, profiling, and optimization grounding
 ```
 
 ## Candidate interface
@@ -94,7 +95,8 @@ attempt history, and local repo context, so the planner receives relevant snippe
 from `knowledge/` instead of the entire corpus as one flat prompt block.
 `knowledge/retrieval_claims.md` defines the high-value claims in that corpus,
 including their evidence source, why each claim is useful, and the query expected
-to retrieve it.
+to retrieve it. General CUDA grounding lives under `knowledge/b/`, while
+Ampere/attention-specific search evidence lives in `knowledge/ampere.md`.
 
 Score the PyTorch seed backend:
 
