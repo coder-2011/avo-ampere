@@ -92,6 +92,9 @@ uv run python -m avo knowledge-search knowledge/ampere.md \
 retriever internally. The query is built from the current lineage summary, recent
 attempt history, and local repo context, so the planner receives relevant snippets
 from `knowledge/` instead of the entire corpus as one flat prompt block.
+`knowledge/retrieval_claims.md` defines the high-value claims in that corpus,
+including their evidence source, why each claim is useful, and the query expected
+to retrieve it.
 
 Score the PyTorch seed backend:
 
