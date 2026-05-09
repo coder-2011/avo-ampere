@@ -1193,3 +1193,17 @@ source files.
   not a substitute for implementing new K/V staging, multiple query tiles,
   split-Q work distribution, or an async pipeline. Runtime preflight now
   classifies that mismatch as `planning_transform_semantic_mismatch`.
+- A bounded loop after that refresh produced two useful negative signals. First,
+  the semantic preflight rejected another contract-only `kThreads=64` proposal
+  because its planning text claimed register/shared-memory/dataflow effects not
+  materialized by the constant edit. Second, a real synchronous Q shared-memory
+  staging transform passed correctness but regressed full-target geomean to
+  `6.722112165053056` TFLOPS versus the current best `7.777584666360881`.
+  The Q-staging patch added a static 16x128 BF16 Q tile, cooperatively loaded it
+  once before the K loop, synchronized, and changed QK WMMA loads to read
+  tile-local shared memory. This suggests that adding synchronous shared-memory
+  staging without swizzle/vector-copy design or overlap can cost more than it
+  saves. Future staging attempts should be more FA2-like: preserve 16-byte copy
+  granularity, use swizzled/shared layouts that match `ldmatrix`/MMA access, and
+  introduce overlap or a broader K/V/Q dataflow reason rather than another
+  isolated synchronous Q-tile load.
