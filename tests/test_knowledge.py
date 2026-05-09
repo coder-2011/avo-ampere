@@ -65,6 +65,11 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("cutlass", "128x128", "128 threads", "online softmax"),
         ),
         (
+            "FlashAttention SM80 Q in regs Share_Q_K_smem cp_async K V "
+            "pipeline q_shared regression",
+            ("q-in-register", "share q/k", "cp.async", "q_shared"),
+        ),
+        (
             "semantic transform mismatch contract-only set_constexpr_int dataflow staging",
             ("set_constexpr_int", "contract-only", "dataflow", "semantic"),
         ),

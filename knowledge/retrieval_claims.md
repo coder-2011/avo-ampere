@@ -44,6 +44,17 @@ reject a bad transform family, or explain a score/gate result.
   query-tile or split-work dataflow.
 - Retrieval query: `FlashAttention SM80 NumThreads tiled MMA workload distribution`.
 
+- Claim: FA2's SM80 forward kernel couples Q staging to tiled shared-memory
+  layouts, optional Q-in-register copies, and K/V `cp.async` copy/fence/wait
+  phases; a standalone synchronous `q_shared` allocation is not equivalent to
+  the FA2 dataflow.
+- Evidence source: Exa research over Dao-AILab FlashAttention SM80 forward
+  kernel and local Q-staging regression.
+- Why useful: redirects future staging attempts toward Q-in-register reuse,
+  K/V async pipeline structure, or broader Q/K/V layout changes instead of
+  isolated synchronous Q shared-memory staging.
+- Retrieval query: `FlashAttention SM80 Q in regs Share_Q_K_smem cp_async K V pipeline q_shared regression`.
+
 ## General CUDA Grounding
 
 - Claim: CUDA kernel design starts from the execution hierarchy: grids contain

@@ -1198,6 +1198,16 @@ source files.
   not a substitute for implementing new K/V staging, multiple query tiles,
   split-Q work distribution, or an async pipeline. Runtime preflight now
   classifies that mismatch as `planning_transform_semantic_mismatch`.
+- A later Exa refresh over Dao-AILab's FA2 SM80 forward kernel clarifies how Q
+  staging fits into the real Ampere design. The kernel constructs `sQ`, `sK`,
+  and `sV` shared-memory tensors through tiled copy layouts, can share Q/K
+  shared memory, and can copy Q from shared memory into MMA register fragments
+  when `Is_Q_in_regs` is active. K and V are then advanced through `cp.async`
+  copy/fence/wait phases around the QK and PV work. This means "put Q in
+  shared" is not the full idea: Q staging is coupled to swizzled smem layouts,
+  smem-to-register copies, and the K/V async pipeline. For the local seed,
+  future FA2-like moves should prefer Q-in-register reuse or K/V copy-pipeline
+  structure over another isolated synchronous `q_shared` allocation.
 - A bounded loop after that refresh produced two useful negative signals. First,
   the semantic preflight rejected another contract-only `kThreads=64` proposal
   because its planning text claimed register/shared-memory/dataflow effects not
