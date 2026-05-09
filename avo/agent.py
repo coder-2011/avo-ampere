@@ -15,6 +15,7 @@ DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250929"
 DEFAULT_AGENT_REQUEST_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_DELAY_S = 1.0
 ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "score"})
+EDIT_MODES = frozenset({"legacy_patch", "no_edit", "transform"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 TOOL_PARAMETER_MARKERS = ("<parameter ", "</parameter>")
 DEFAULT_SCORE_HEAD_DIM = 128
@@ -185,7 +186,10 @@ TRANSFORM_STEP_SCHEMA: dict[str, Any] = {
         "op": {
             "type": "string",
             "enum": sorted(STRUCTURED_TRANSFORM_STEP_OPS),
-            "description": "Single primitive edit step materialized by the orchestrator.",
+            "description": (
+                "Primitive materialization step for a scoped semantic move; the step "
+                "itself is not the optimization unit."
+            ),
         },
         "path": {
             "type": "string",
@@ -225,8 +229,8 @@ TRANSFORM_SCHEMA: dict[str, Any] = {
             "type": "string",
             "enum": sorted(STRUCTURED_TRANSFORM_OPS),
             "description": (
-                "Small coherent structured transform, or batch for a small ordered bundle "
-                "of primitive operations materialized by the orchestrator."
+                "Scoped coherent semantic transform, or batch for an ordered bundle "
+                "of primitive materialization steps."
             ),
         },
         "steps_json": {
@@ -256,26 +260,36 @@ DECISION_SCHEMA: dict[str, Any] = {
         "candidate_edit": {
             "type": "string",
             "description": (
-                "Small proposed change or inspection step. If both edit channels are empty, "
-                "this must start with 'No edit;' and describe only a bounded diagnostic."
+                "Scoped semantic move or inspection step tied to the hypothesis. If both "
+                "edit channels are empty, this must start with 'No edit;' and describe "
+                "only a bounded diagnostic."
             ),
         },
         "candidate_patch": {
             "type": "string",
             "description": (
-                "Legacy raw git-style unified diff for one small candidate edit under "
+                "Legacy raw git-style unified diff for one scoped candidate edit under "
                 "candidates/, starting with 'diff --git', or empty string. Prefer "
                 "candidate_transform for CUDA edits so the orchestrator materializes and "
                 "preflights the patch instead of trusting generated hunks. Do not use "
                 "markdown fences."
             ),
         },
+        "edit_mode": {
+            "type": "string",
+            "enum": sorted(EDIT_MODES),
+            "description": (
+                "Explicit channel selection. Use transform when candidate_edit describes a code "
+                "change represented by candidate_transform; legacy_patch only for non-CUDA raw "
+                "diffs; no_edit only for bounded diagnostics with no source change."
+            ),
+        },
         "candidate_transform": {
             **TRANSFORM_SCHEMA,
             "description": (
                 "Preferred edit channel for CUDA/kernel evolution. Use one coherent "
-                "structured transform or a small semantic batch of primitive steps, or omit "
-                "this field for no-edit/legacy patch mode."
+                "semantic transform or a scoped semantic batch of primitive materialization "
+                "steps, or omit this field for no-edit/legacy patch mode."
             ),
         },
         "expected_effect": {
@@ -300,6 +314,7 @@ DECISION_SCHEMA: dict[str, Any] = {
         "files_to_inspect",
         "candidate_edit",
         "candidate_patch",
+        "edit_mode",
         "expected_effect",
         "risk",
         "next_command",
@@ -328,21 +343,32 @@ class VariationDecision:
     expected_effect: str
     risk: str
     next_command: str
+    edit_mode: str = "no_edit"
     candidate_patch: str = ""
     candidate_transform: dict[str, Any] | None = None
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> VariationDecision:
         normalized_payload = {"candidate_patch": "", **payload}
+        edit_mode_explicit = "edit_mode" in normalized_payload
         missing = [key for key in DECISION_SCHEMA["required"] if key not in normalized_payload]
-        if missing:
-            raise ValueError(f"variation decision missing required keys: {', '.join(missing)}")
+        missing_without_edit_mode = [key for key in missing if key != "edit_mode"]
+        if missing_without_edit_mode:
+            raise ValueError(
+                f"variation decision missing required keys: {', '.join(missing_without_edit_mode)}"
+            )
         files = normalized_payload["files_to_inspect"]
         if not isinstance(files, list) or not all(isinstance(item, str) for item in files):
             raise ValueError("files_to_inspect must be a list of strings")
         hypothesis = _require_string(normalized_payload, "hypothesis")
         candidate_edit = _require_string(normalized_payload, "candidate_edit")
         candidate_patch = _validate_candidate_patch(normalized_payload, "candidate_patch")
+        if not edit_mode_explicit:
+            normalized_payload["edit_mode"] = _infer_edit_mode(
+                normalized_payload,
+                candidate_patch=candidate_patch,
+            )
+        edit_mode = _validate_edit_mode(normalized_payload)
         raw_candidate_transform = normalized_payload.get("candidate_transform")
         if raw_candidate_transform is None and not candidate_patch.strip():
             raw_candidate_transform = _infer_candidate_transform_from_edit(
@@ -355,6 +381,13 @@ class VariationDecision:
                 "candidate_patch and candidate_transform are mutually exclusive; "
                 "use one edit channel"
             )
+        _validate_edit_mode_payload(
+            edit_mode,
+            candidate_edit=candidate_edit,
+            candidate_patch=candidate_patch,
+            candidate_transform=candidate_transform,
+            explicit=edit_mode_explicit,
+        )
         expected_effect = _require_string(normalized_payload, "expected_effect")
         risk = _require_string(normalized_payload, "risk")
         edit_payload = candidate_patch or ("<structured-transform>" if candidate_transform else "")
@@ -381,6 +414,7 @@ class VariationDecision:
             expected_effect=expected_effect,
             risk=risk,
             next_command=next_command,
+            edit_mode=edit_mode,
             candidate_transform=candidate_transform,
         )
 
@@ -390,6 +424,7 @@ class VariationDecision:
             "files_to_inspect": self.files_to_inspect,
             "candidate_edit": self.candidate_edit,
             "candidate_patch": self.candidate_patch,
+            "edit_mode": self.edit_mode,
             "expected_effect": self.expected_effect,
             "risk": self.risk,
             "next_command": self.next_command,
@@ -492,25 +527,29 @@ def build_variation_prompt(
         "Use FlashAttention-2/Ampere assumptions only. FA4/Blackwell strategies are invalid.\n"
         "Optimize toward realistic long-sequence BF16 attention workloads; current small "
         "candidate smoke shapes are safety fences for unsupported seeds, not the end target.\n"
-        "Use one of exactly three modes. Preferred edit mode: candidate_transform is one "
-        "small coherent transformation or an ordered semantic batch under candidates/, and "
-        "candidate_patch is exactly the empty string \"\". "
+        "Use one of exactly three explicit edit_mode values. Preferred edit mode: set "
+        "edit_mode=\"transform\", provide candidate_transform as one scoped coherent "
+        "semantic transformation or an ordered semantic batch under candidates/, and set "
+        "candidate_patch to exactly the empty string \"\". "
         "Supported ops are add_include, replace_once, insert_before_once, "
         "insert_after_once, set_constexpr_int, and add_int_to_python_set; use op=batch "
-        "with steps_json containing up to four primitive steps when one coherent candidate "
-        "needs coordinated wrapper/kernel edits. The orchestrator materializes and "
-        "preflights the patch. Make the smallest coherent transformation that preserves "
-        "kernel invariants and can be validated against the hypothesis. Primitive steps are "
-        "only the representation; do not submit support-only edits such as adding a header, "
-        "unused helper, or unused buffer as a standalone candidate. If a CUDA idea cannot be "
+        "with steps_json containing up to four primitive materialization steps when one "
+        "coherent candidate needs coordinated wrapper/kernel edits. The orchestrator "
+        "materializes and preflights the patch. Make the smallest coherent "
+        "transformation that preserves kernel invariants and can be validated against "
+        "the hypothesis. Scoped means reviewable and recoverable, not the smallest "
+        "possible textual edit. Primitive steps are only the representation; do not "
+        "submit support-only edits such as adding a header, unused helper, or unused "
+        "buffer as a standalone candidate. If a CUDA idea cannot be "
         "expressed as an exact coherent transform over the current source excerpts, choose a "
         "smaller semantic transform or a no-edit diagnostic; do not describe a broad CUDA "
         "rewrite in candidate_edit without that exact transform. "
-        "Legacy edit mode: candidate_patch is one small raw git-style unified diff under "
-        "candidates/ starting with 'diff --git'. It may edit wrappers or other non-CUDA "
-        "candidate files, but it must not edit .cu/.cuh kernel sources directly. No-edit "
-        "mode: candidate_patch is exactly the "
-        "empty string \"\", candidate_edit starts with \"No edit; \", and next_command is only "
+        "Legacy edit mode: set edit_mode=\"legacy_patch\" and provide candidate_patch as "
+        "one scoped raw git-style unified diff under candidates/ starting with 'diff --git'. "
+        "It may edit wrappers or other non-CUDA candidate files, but it must not edit "
+        ".cu/.cuh kernel sources directly. No-edit mode: set edit_mode=\"no_edit\", "
+        "candidate_patch is exactly the empty string \"\", candidate_edit starts with "
+        "\"No edit; \", and next_command is only "
         "a bounded score, compile, or environment diagnostic for existing files. Do not include "
         "markdown fences or commentary in candidate_patch. Do not describe extending, updating, "
         "modifying, fixing, or implementing code unless candidate_transform or candidate_patch "
@@ -552,10 +591,10 @@ def build_repo_context(root: Path) -> str:
         "4096/8192/16384/32768, total_tokens around 32768, num_heads around 16, "
         "head_dim 128, and both causal modes. Small candidate shapes are smoke fences, "
         "not the optimization objective.",
-        "Preferred edit channel: candidate_transform, one small coherent transformation or "
-        "a small semantic batch under candidates/. Supported step ops: add_include, "
-        "replace_once, insert_before_once, insert_after_once, set_constexpr_int, "
-        "add_int_to_python_set. Use op=batch with steps_json when wrapper and kernel "
+        "Preferred edit channel: candidate_transform, one scoped coherent semantic "
+        "transformation or a scoped semantic batch under candidates/. Supported step ops: "
+        "add_include, replace_once, insert_before_once, insert_after_once, set_constexpr_int, "
+        "and add_int_to_python_set. Use op=batch with steps_json when wrapper and kernel "
         "caps must change together. Legacy "
         "candidate_patch raw diffs are allowed only for non-CUDA candidate files; "
         ".cu/.cuh kernel edits must use candidate_transform.",
@@ -669,7 +708,7 @@ def _validation_feedback_hint(error: ValueError) -> str:
     if "variation decision missing required keys" in message:
         return (
             "Return one complete variation decision object with every required field: "
-            "hypothesis, files_to_inspect, candidate_edit, candidate_patch, "
+            "hypothesis, files_to_inspect, candidate_edit, candidate_patch, edit_mode, "
             "expected_effect, risk, and next_command. Do not omit expected_effect, "
             "risk, or next_command even in no-edit diagnostic mode. "
         )
@@ -678,19 +717,22 @@ def _validation_feedback_hint(error: ValueError) -> str:
         or "candidate_transform or candidate_patch must be provided" in message
     ):
         return (
-            "Choose exactly one valid mode. Preferred edit mode: candidate_transform is "
-            "one structured operation or a small ordered batch and candidate_patch is ''. "
-            "Legacy edit mode: "
-            "candidate_patch must be a raw git-style unified diff under candidates/ "
-            "starting with 'diff --git'. No-edit mode: candidate_patch must be exactly "
-            "'' and candidate_edit must start with 'No edit;' followed only by the "
+            "Choose exactly one valid edit_mode. Preferred edit mode: set "
+            "edit_mode='transform', provide candidate_transform as one scoped semantic "
+            "transform or coherent batch, and set candidate_patch to ''. Legacy edit mode: set "
+            "edit_mode='legacy_patch' and provide candidate_patch as a raw git-style "
+            "unified diff under candidates/ starting with 'diff --git'. No-edit mode: set "
+            "edit_mode='no_edit', candidate_patch must be exactly '' and candidate_edit "
+            "must start with 'No edit;' followed only by the "
             "bounded score/compile/env diagnostic to run. "
             "Do not mention fixing, extending, updating, modifying, or implementing code in "
             "no-edit mode. If this is a follow-up score for a compiled transform, include "
             "the exact candidate_transform object from the follow-up signal. Do not "
             "restate a broad CUDA change in candidate_edit without an exact "
             "candidate_transform; reduce it to the smallest coherent semantic transform "
-            "or an at-most-four-step batch over current source excerpts. Support-only "
+            "or an at-most-four-step materialization batch over current source excerpts. "
+            "Small means scoped, reviewable, recoverable, and tied to a clear hypothesis; "
+            "it does not mean the smallest possible textual edit. Support-only "
             "edits such as adding a header or unused helper are not valid standalone "
             "optimization candidates. "
         )
@@ -749,7 +791,7 @@ def _validation_feedback_hint(error: ValueError) -> str:
     if "recorded unpatched MMA seed score" in message:
         return (
             "Do not retry a no-edit score that is already in lineage. To score the MMA "
-            "candidate again, use candidate_transform, preferably a small wrapper/kernel "
+            "candidate again, use candidate_transform, preferably a scoped wrapper/kernel "
             "batch, to make a real kernel-structure change; raw candidate_patch cannot "
             "edit CUDA kernel sources. Otherwise choose a diagnostic that provides new "
             "information for a different transform family. "
@@ -797,14 +839,14 @@ def _validation_feedback_hint(error: ValueError) -> str:
         return (
             "Do not retry a no-edit compile of an already-recorded candidate source. If "
             "you are compile-checking a code change, include candidate_transform with a "
-            "single operation or small batch and keep candidate_patch as ''. For an "
+            "single operation or scoped batch and keep candidate_patch as ''. For an "
             "integer constant change, use set_constexpr_int with path, name, and value. "
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
             "A valid Ampere async-copy transform must satisfy the async-copy structural "
             "contract: aligned group copies, real producer/consumer dataflow, and scalar "
-            "tails outside the async path. If that cannot be expressed as a small "
+            "tails outside the async path. If that cannot be expressed as a scoped "
             "candidate_transform, choose a different transform family. "
         )
     return ""
@@ -871,6 +913,59 @@ def _validate_candidate_patch(payload: dict[str, Any], key: str) -> str:
     if "```" in value:
         raise ValueError("candidate_patch must be raw diff text, not markdown")
     return value
+
+
+def _infer_edit_mode(payload: dict[str, Any], *, candidate_patch: str) -> str:
+    if candidate_patch.strip():
+        return "legacy_patch"
+    if isinstance(payload.get("candidate_transform"), dict):
+        return "transform"
+    candidate_edit = payload.get("candidate_edit")
+    if isinstance(candidate_edit, str) and _candidate_edit_requires_patch(candidate_edit):
+        return "transform"
+    return "no_edit"
+
+
+def _validate_edit_mode(payload: dict[str, Any]) -> str:
+    value = payload.get("edit_mode")
+    if not isinstance(value, str) or value not in EDIT_MODES:
+        allowed = ", ".join(sorted(EDIT_MODES))
+        raise ValueError(f"edit_mode must be one of: {allowed}")
+    return value
+
+
+def _validate_edit_mode_payload(
+    edit_mode: str,
+    *,
+    candidate_edit: str,
+    candidate_patch: str,
+    candidate_transform: dict[str, Any] | None,
+    explicit: bool,
+) -> None:
+    if edit_mode == "transform":
+        if candidate_patch.strip():
+            raise ValueError("edit_mode transform requires candidate_patch to be empty")
+        if candidate_transform is None:
+            raise ValueError(
+                "edit_mode transform requires candidate_transform; "
+                "candidate_transform or candidate_patch must be provided when candidate_edit "
+                "describes a code change; serialize the coherent semantic move as a "
+                "structured transform instead of prose; "
+                f"candidate_edit was {_validation_excerpt(candidate_edit)!r}"
+            )
+        return
+    if edit_mode == "legacy_patch":
+        if candidate_transform is not None:
+            raise ValueError("edit_mode legacy_patch must omit candidate_transform")
+        if not candidate_patch.strip():
+            raise ValueError("edit_mode legacy_patch requires non-empty candidate_patch")
+        return
+    if candidate_patch.strip() or candidate_transform is not None:
+        raise ValueError("edit_mode no_edit cannot include candidate_transform or candidate_patch")
+    if not explicit:
+        return
+    if not candidate_edit.lstrip().lower().startswith("no edit;"):
+        raise ValueError("edit_mode no_edit requires candidate_edit to start with 'No edit;'")
 
 
 def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:

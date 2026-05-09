@@ -51,6 +51,7 @@ def test_parse_variation_decision_defaults_missing_candidate_patch() -> None:
 
 def test_parse_variation_decision_accepts_structured_transform() -> None:
     payload = decision_payload()
+    payload["edit_mode"] = "transform"
     payload["candidate_edit"] = "Set the MMA tile constant through a structured transform."
     payload["candidate_transform"] = {
         "op": "set_constexpr_int",
@@ -67,6 +68,48 @@ def test_parse_variation_decision_accepts_structured_transform() -> None:
 
     assert decision.candidate_patch == ""
     assert decision.candidate_transform == payload["candidate_transform"]
+    assert decision.edit_mode == "transform"
+
+
+def test_parse_variation_decision_rejects_explicit_transform_mode_without_transform() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = "Add shared-memory K staging in the MMA kernel."
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_transform"
+    )
+
+    with pytest.raises(ValueError, match="edit_mode transform requires candidate_transform"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_explicit_no_edit_mode_without_prefix() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = "Score existing candidate."
+
+    with pytest.raises(ValueError, match="edit_mode no_edit requires"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_explicit_no_edit_mode_with_loose_phrase() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = "No code edit; score existing candidate."
+
+    with pytest.raises(ValueError, match="start with 'No edit;'"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_accepts_explicit_no_edit_mode() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = "No edit; score existing candidate."
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.edit_mode == "no_edit"
 
 
 def test_parse_variation_decision_rejects_standalone_add_include_transform() -> None:
@@ -346,7 +389,7 @@ def test_parse_variation_decision_infers_batch_from_files_to_inspect() -> None:
     payload["candidate_edit"] = (
         "Extend MMA seq support to 512 by updating SMOKE_SEQUENCES in the wrapper to "
         "add 512 and setting kMaxSeqLen to 512 in the kernel. Use op=batch with two "
-        "tiny steps."
+        "coordinated materialization steps."
     )
     payload["next_command"] = (
         "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
@@ -1082,7 +1125,7 @@ def test_parse_variation_decision_rejects_unpatched_tiled_score_outside_validate
 
 def test_parse_variation_decision_rejects_recorded_unpatched_tiled_smoke() -> None:
     payload = decision_payload()
-    payload["candidate_edit"] = "No edit needed; score the validated tiny tiled smoke."
+    payload["candidate_edit"] = "No edit needed; score the validated tiled smoke fence."
     payload["next_command"] = (
         "avo score --backend candidate "
         "--candidate candidates/cuda_tiled_attention_seed.py "
@@ -2569,6 +2612,12 @@ def test_decision_tool_uses_strict_schema() -> None:
     assert tool["strict"] is True
     assert tool["input_schema"]["additionalProperties"] is False
     assert "candidate_patch" in tool["input_schema"]["required"]
+    assert "edit_mode" in tool["input_schema"]["required"]
+    assert tool["input_schema"]["properties"]["edit_mode"]["enum"] == [
+        "legacy_patch",
+        "no_edit",
+        "transform",
+    ]
     assert "must start with 'No edit;'" in tool["input_schema"]["properties"]["candidate_edit"][
         "description"
     ]
@@ -2688,7 +2737,10 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "Local repo context:" in prompt
     assert "candidate_patch" in prompt
     assert "candidate_transform" in prompt
+    assert "edit_mode" in prompt
     assert "No-edit mode" in prompt
+    assert 'edit_mode="transform"' in prompt
+    assert 'edit_mode="no_edit"' in prompt
     assert "Supported ops are add_include" in prompt
     assert "smallest coherent transformation" in prompt
     assert "support-only edits" in prompt
@@ -2730,16 +2782,18 @@ def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "candidate_transform is one structured operation" in content
-    assert "candidate_patch must be a raw git-style unified diff" in content
-    assert "Choose exactly one valid mode" in content
+    assert "provide candidate_transform as one scoped semantic transform" in content
+    assert "provide candidate_patch as a raw git-style" in content
+    assert "Choose exactly one valid edit_mode" in content
+    assert "edit_mode='transform'" in content
     assert "'No edit;'" in content
     assert "diff --git" in content
     assert "Do not mention fixing" in content
     assert "exact candidate_transform object from the follow-up signal" in content
     assert "Do not restate a broad CUDA change" in content
     assert "smallest coherent semantic transform" in content
-    assert "at-most-four-step batch" in content
+    assert "at-most-four-step materialization batch" in content
+    assert "Small means scoped, reviewable, recoverable" in content
     assert "Support-only edits" in content
 
 
@@ -2827,7 +2881,7 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     content = updated["messages"][0]["content"]
     assert "valid Ampere async-copy transform" in content
     assert "async-copy structural contract" in content
-    assert "small candidate_transform" in content
+    assert "scoped candidate_transform" in content
     assert "different transform family" in content
 
 
@@ -2944,7 +2998,7 @@ def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
 
     content = updated["messages"][0]["content"]
     assert "Do not retry a no-edit score that is already in lineage" in content
-    assert "candidate_transform, preferably a small wrapper/kernel batch" in content
+    assert "candidate_transform, preferably a scoped wrapper/kernel batch" in content
     assert "make a real kernel-structure change" in content
     assert "raw candidate_patch cannot edit CUDA kernel sources" in content
 
