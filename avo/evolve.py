@@ -12,7 +12,11 @@ from datetime import UTC, datetime
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-from .agent import VariationDecision, validate_candidate_patch_structural_preflight
+from .agent import (
+    VariationDecision,
+    promoted_preflight_track_names_for_classes,
+    validate_candidate_patch_structural_preflight,
+)
 from .isolation import RESULT_PREFIX
 from .lineage import GateDecision, commit_score
 
@@ -553,10 +557,12 @@ def update_promoted_preflight_tracks(
     updated_at = _utc_now()
     for failure_class, count in sorted(promotable_classes.items()):
         existing = tracks.get(failure_class)
+        track_names = promoted_preflight_track_names_for_classes(frozenset({failure_class}))
         entry = {
             "active": True,
             "failure_class": failure_class,
             "track": PROMOTABLE_FAILURE_CLASS_TRACKS[failure_class],
+            "track_names": list(track_names),
             "threshold": threshold,
             "recent_count": count,
             "updated_at": updated_at,
@@ -670,8 +676,25 @@ def _summarize_promoted_preflight_tracks(directory: Path | None) -> str:
     for entry in sorted(entries, key=lambda item: str(item.get("failure_class") or "")):
         failure_class = str(entry.get("failure_class") or "unknown")
         track = str(entry.get("track") or "unknown")
-        lines.append(f"- class={failure_class}; track={track}; promoted from recurring attempts")
+        track_names = _entry_track_names(entry)
+        concrete = f"; checks={','.join(track_names)}" if track_names else ""
+        lines.append(
+            f"- class={failure_class}; track={track}{concrete}; "
+            "promoted from recurring attempts"
+        )
     return "\n".join(lines)
+
+
+def _entry_track_names(entry: dict[str, Any]) -> tuple[str, ...]:
+    raw_track_names = entry.get("track_names")
+    if isinstance(raw_track_names, list):
+        names = tuple(str(name) for name in raw_track_names if isinstance(name, str))
+        if names:
+            return tuple(sorted(names))
+    failure_class = entry.get("failure_class")
+    if isinstance(failure_class, str):
+        return promoted_preflight_track_names_for_classes(frozenset({failure_class}))
+    return ()
 
 
 def _is_step_payload(payload: dict[str, Any]) -> bool:
@@ -736,8 +759,9 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
         )
         if repeated_class is not None:
             message = (
-                f"{message} Failure class {repeated_class!r} also recurred; promote it "
-                "to a hard preflight track or choose a different transform family."
+                f"{message} Failure class {repeated_class!r} also recurred and is "
+                "eligible for hard preflight promotion; choose a different transform "
+                "family."
             )
         return message
     repeated_class = _repeated_unaccepted_failure_class(
@@ -748,8 +772,9 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
         return (
             "Supervisor signal: the last "
             f"{SUPERVISOR_REPEAT_THRESHOLD} attempts share failure class "
-            f"{repeated_class!r}. Promote this class to a hard preflight track, "
-            "then choose a different structured transform family before repeating it."
+            f"{repeated_class!r}. This class is eligible for hard preflight "
+            "promotion; choose a different structured transform family before "
+            "repeating it."
         )
     if recurring_classes:
         recurring = ", ".join(
@@ -758,8 +783,9 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
         )
         return (
             "Supervisor signal: recent unaccepted attempts include recurring failure "
-            f"classes: {recurring}. Promote recurring classes to hard preflight tracks "
-            "and choose a different structured transform family before repeating them."
+            f"classes: {recurring}. The attempt-memory updater promotes eligible "
+            "classes to hard preflight tracks; choose a different structured transform "
+            "family before repeating them."
         )
     if _unaccepted_tail_count(payloads) >= SUPERVISOR_EXHAUSTION_THRESHOLD:
         return (

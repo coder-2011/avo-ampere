@@ -12,7 +12,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Candidate support: Python candidate modules plus CUDA-extension attention candidates, including a BF16 WMMA QK/PV seed accepted through the seq32768 lane.
 - Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, and a candidate-only patch application substrate.
 - Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, and environment metadata in JSON.
-- Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage, classify failure classes, and persist recurring classes as active hard preflight tracks in `preflight_tracks.json`.
+- Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage, classify failure classes, and persist recurring classes as active hard preflight tracks in `preflight_tracks.json`, including the concrete structural checks activated by each promoted class.
 - Research state: the autonomous loop has accepted benchmark lanes across the full target shape set through seq32768. The open result is still optimizing that seed toward beating FlashAttention-2 on the target suite.
 
 ## What was built
@@ -27,7 +27,7 @@ Recent commits show the work moved in layers:
 - `fix: harden Anthropic agent planning` improved structured-tool fallbacks and validation.
 - `feat: add CUDA extension candidate smoke` added a minimal compiled CUDA extension path that copies an SDPA result, proving the candidate build/load path before replacing the attention computation itself.
 - `feat: add tiny mma attention seed` added a 16/32/64/128/256-token BF16 WMMA QK/PV candidate so the local search has a tensor-core attention-math foothold.
-- `feat: promote structural cuda preflights` added structured transform preflights for recurring failure classes and generalized WMMA fragment-shape validation.
+- `feat: promote structural cuda preflights` added structured transform preflights for recurring failure classes, generalized WMMA fragment-shape validation, and class-oriented promotion state for recurring CUDA syntax and symbol-lifecycle failures.
 - `fix: align mma sequence guard with wrapper` made wrapper-advertised MMA sequence caps match the CUDA guard; follow-up bounded loops advanced the MMA source to accepted seq2048, seq4096, seq8192, seq16384, and seq32768 lanes.
 
 ## Repository layout

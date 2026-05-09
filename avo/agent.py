@@ -26,6 +26,7 @@ MAX_REPO_CONTEXT_FILE_CHARS = 12_000
 MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
 MMA_SEED = "candidates/cuda_mma_attention_seed.py"
+MMA_KERNEL_SOURCE = "candidates/cuda_mma_attention/attention_kernel.cu"
 TILED_SEED = "candidates/cuda_tiled_attention_seed.py"
 RECORDED_NO_PATCH_COMPILE_SOURCES = frozenset(
     {
@@ -102,50 +103,47 @@ STRUCTURED_TRANSFORM_STEP_OPS = frozenset(
 )
 STRUCTURED_TRANSFORM_OPS = STRUCTURED_TRANSFORM_STEP_OPS | frozenset({"batch"})
 MAX_TRANSFORM_BATCH_STEPS = 4
-PLANNING_RISK_PATTERNS: tuple[tuple[str, tuple[str, ...]], ...] = (
-    (
-        "no_effect_or_skeleton",
-        (
-            r"\b(?:cannot|does not|do not)\s+(?:affect|improve)\s+"
-            r"(?:correctness(?:\s+or\s+throughput)?|throughput)",
-            r"\b(?:compile\s+only|no-effect|no\s+effect)\s+"
-            r"(?:probe|skeleton|stub|edit|change)\b",
-            r"\b(?:stub|helper|buffer|fragment|preload)\b"
-            r".*\b(?:empty|not wired|not called|not consumed|unused)\b",
-            r"\b(?:must not|do not)\s+be\s+scored\b",
-            r"\bunused\b.*\b(?:dataflow|helper|buffer|fragment|preload|skeleton)\b",
-        ),
-    ),
-    (
-        "incomplete_or_malformed_edit",
-        (
-            r"\b(?:diff|patch|edit|transform)\b.*\b(?:incomplete|malformed|invalid)\b",
-            r"\b(?:not ready|must be updated|missing|partial)\b.*\b(?:compile|score|scoring)\b",
-            r"\bdo not (?:apply this patch|use this diff)\b",
-            r"\b(?:reject this direction|should be rejected)\b",
-            r"\b(?:stale|undefined|undeclared|duplicate)\b"
-            r".*\b(?:symbols?|identifiers?|declarations?|fragments?|variables?)\b",
-            r"\bmust\s+(?:define|declare|remove)\b.*\bbefore\b",
-        ),
-    ),
-    (
-        "predicted_compile_failure",
-        (
-            r"\b(?:will|would|likely)\s+(?:cause\s+)?(?:nvcc\s+)?(?:compile|compilation)\s+failure\b",
-            r"\b(?:will|would)\s+(?:cause\s+)?(?:a\s+)?compile error\b",
-            r"\b(?:will|would)\s+(?:fail|break)\s+(?:compile|compilation)\b",
-            r"\bwill cause nvcc to fail\b",
-        ),
-    ),
-    (
-        "predicted_correctness_failure",
-        (
-            r"\b(?:will|would)\s+break correctness\b",
-            r"\b(?:will|would)\s+fail correctness\b",
-            r"\bwill compute the wrong\b",
-            r"\blikely\s+(?:segfault|.*produce incorrect results)\b",
-        ),
-    ),
+PLANNING_EDIT_TERMS = frozenset(
+    {
+        "change",
+        "diff",
+        "edit",
+        "patch",
+        "replace",
+        "rewrite",
+        "score",
+        "scored",
+        "scoring",
+        "transform",
+        "update",
+    }
+)
+PLANNING_CODE_ARTIFACT_TERMS = frozenset(
+    {
+        "buffer",
+        "buffers",
+        "dataflow",
+        "declaration",
+        "declarations",
+        "diff",
+        "edit",
+        "fragment",
+        "fragments",
+        "helper",
+        "helpers",
+        "include",
+        "identifier",
+        "identifiers",
+        "patch",
+        "preload",
+        "stub",
+        "stubs",
+        "symbol",
+        "symbols",
+        "transform",
+        "variable",
+        "variables",
+    }
 )
 
 
@@ -552,33 +550,21 @@ def build_repo_context(root: Path) -> str:
         "Candidate interface: module defines attention(q, k, v, causal: bool).",
         "No-patch compiles of existing CUDA candidates are baseline diagnostics, not "
         "optimization steps; compile only when build-checking a materialized edit.",
-        "Unpatched seed score caps are smoke-only safety fences: "
-        "candidates/cuda_mma_attention_seed.py supports "
-        "seq_lens up to the accepted seq32768 lane with head_dim 128; "
-        "candidates/cuda_warp_rows_attention_seed.py supports seq_lens <= 256 and "
-        "head_dim <= 128 with total_tokens <= 1024 and num_heads <= 4; "
-        "candidates/cuda_tiled_attention_seed.py is only validated at seq_lens 16 with "
-        "head_dim 16, total_tokens <= 16, and num_heads 1. Larger seed scores need "
-        "candidate_transform/candidate_patch to update the wrapper/kernel.",
-        "Structural CUDA preflight tracks are hard safety checks, not historical phrase "
-        "bans: edit-channel integrity, transform path/materialization, WMMA fragment "
-        "shape and element type, async-copy granularity/API shape, tile-local shared "
-        "memory addressing, symbol lifecycle, complete shape graduation, and no-effect "
-        "skeletons. Failed attempt classes can be promoted into active hard preflight "
-        "tracks by the evolve loop.",
-        "WMMA matrix fragments in generic PyTorch kernels must use explicit CUDA element "
-        "types, not scalar_t, because dispatch instantiates unsupported float/c10 types. "
-        "Ampere BF16 WMMA fragments used here stay on 16x16x16 shapes unless the kernel "
-        "is structurally rewritten around a supported shape.",
-        "Async copy must move aligned 16-byte groups in real dataflow. Wrapper-only API "
-        "proofs, scalar BF16 async copies, and compile-only preload fragments are "
-        "no-effect skeletons.",
-        "MMA shared tiles are tile-local after staging: shared-memory loads should use "
-        "tile-local offsets with the staged leading dimension, not global key_start "
-        "offsets.",
-        "Shape graduation beyond the current smoke caps should update the wrapper and "
-        "kernel together with a small transform batch, run avo compile first, then score "
-        "larger realistic shapes after that compile succeeds.",
+        "Unpatched seed caps are safety fences, not search targets. Use exact small-shape "
+        "caps only to avoid invalid no-edit scores; real optimization steps should move "
+        "toward the target workload or explain a targeted compile diagnostic.",
+        "Structural CUDA preflight tracks are class-oriented hard checks: edit-channel "
+        "integrity, transform path/materialization, wrapper/kernel shape-contract "
+        "consistency, WMMA contract validity, async-copy contract validity, shared-tile "
+        "scope, symbol lifecycle, and disconnected skeleton/dataflow. Failed attempt "
+        "classes can be promoted by the evolve loop into active hard tracks.",
+        "CUDA transforms should preserve executable contracts, not just compile text: "
+        "tensor-core fragment declarations must match Ampere-supported contracts, async "
+        "copies must be aligned and consumed by real dataflow, staged shared-memory "
+        "addresses must stay tile-local, declarations must have clear lifetimes, and "
+        "shape graduation must update wrapper and kernel contracts together.",
+        "After a shape-support compile succeeds, score the realistic target lane instead "
+        "of spending additional no-edit steps on smoke-only shapes.",
     ]
     if candidates:
         lines.append("Candidate modules:")
@@ -715,21 +701,11 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "diagnostic that gives new information for a different transform family. "
         )
     if "known invalid by the decision itself" in message:
-        if "must not be scored" in message:
-            return (
-                "The previous patch described itself as 'must not be scored', so do not "
-                "retry another compile-only skeleton. Choose exactly one valid mode: "
-                "edit mode with a structured candidate_transform or raw diff that is "
-                "complete enough to score after a successful compile and whose risk text "
-                "does not say it must not be scored, or No edit; mode for a different "
-                "already-bounded diagnostic. "
-            )
         return (
-            "Do not retry an edit whose own hypothesis, expected_effect, or risk puts it "
-            "in a failed planning-risk class such as predicted compile failure, predicted "
-            "correctness failure, no-effect skeleton, or incomplete edit. Prefer a "
-            "structured candidate_transform for the corrected change; otherwise switch to "
-            "No edit; mode for a bounded diagnostic. "
+            "The decision classified its own edit as invalid. Pick a different transform "
+            "family or return a complete structured candidate_transform whose hypothesis, "
+            "effect, and risk describe an executable edit instead of a known compile, "
+            "correctness, skeleton, or incomplete-edit failure. "
         )
     if "--out-dir must be under: build" in message:
         return (
@@ -739,12 +715,11 @@ def _validation_feedback_hint(error: ValueError) -> str:
         )
     if "recorded unpatched MMA seed score" in message:
         return (
-            "Do not retry a no-edit score of cuda_mma_attention_seed.py. That exact "
-            "MMA seed score is already in lineage. To score this candidate again, use "
-            "candidate_transform, preferably a small batch, to structurally change "
-            "candidates/cuda_mma_attention/attention_kernel.cu and its wrapper; raw "
-            "candidate_patch cannot edit CUDA kernel sources. Otherwise choose a "
-            "different diagnostic such as a compile check for a new edit. "
+            "Do not retry a no-edit score that is already in lineage. To score the MMA "
+            "candidate again, use candidate_transform, preferably a small wrapper/kernel "
+            "batch, to make a real kernel-structure change; raw candidate_patch cannot "
+            "edit CUDA kernel sources. Otherwise choose a diagnostic that provides new "
+            "information for a different transform family. "
         )
     if "below the current accepted seq" in message and "validation lane" in message:
         return (
@@ -767,11 +742,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
         )
     if "recorded no-patch warp-row seed score" in message:
         return (
-            "Do not retry a no-edit score of cuda_warp_rows_attention_seed.py on the "
-            "recorded seq256/head_dim128 workload. That diagnostic already passed "
-            "correctness and was gate-rejected for throughput. Use edit mode with "
-            "candidate_transform or a legacy candidate_patch before scoring that "
-            "workload again. "
+            "Do not retry a no-edit score of a smoke-only seed workload that was already "
+            "recorded. That diagnostic already produced its signal; use edit mode with "
+            "candidate_transform or a legacy non-CUDA candidate_patch before scoring "
+            "that seed family again. "
         )
     if "recorded environment stability diagnostic" in message:
         return (
@@ -789,10 +763,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
-            "A valid Ampere async-copy transform must copy aligned 16-byte groups in real "
-            "kernel dataflow, with scalar tails outside the async path. If that cannot be "
-            "expressed as a small candidate_transform, choose a different transform "
-            "family. "
+            "A valid Ampere async-copy transform must satisfy the async-copy structural "
+            "contract: aligned group copies, real producer/consumer dataflow, and scalar "
+            "tails outside the async path. If that cannot be expressed as a small "
+            "candidate_transform, choose a different transform family. "
         )
     return ""
 
@@ -1091,18 +1065,138 @@ def _validate_candidate_patch_not_self_rejected(
 ) -> None:
     if not candidate_patch.strip():
         return
+    risk = _planning_text_risk(planning_text)
+    if risk is None:
+        return
+    risk_class, excerpt = risk
+    raise ValueError(
+        "candidate_patch is described as known invalid by the decision itself; "
+        f"planning risk class {risk_class!r} matched {excerpt!r}. "
+        "Return a corrected transform/patch or choose no-edit mode."
+    )
+
+
+def _planning_text_risk(planning_text: str) -> tuple[str, str] | None:
     normalized = " ".join(planning_text.lower().replace("-", " ").split())
-    for risk_class, patterns in PLANNING_RISK_PATTERNS:
-        for pattern in patterns:
-            if not re.search(pattern, normalized):
-                continue
-            excerpt = re.search(pattern, normalized)
-            found = excerpt.group(0) if excerpt is not None else pattern
-            raise ValueError(
-                "candidate_patch is described as known invalid by the decision itself; "
-                f"planning risk class {risk_class!r} matched {found!r}. "
-                "Return a corrected transform/patch or choose no-edit mode."
-            )
+    if not normalized:
+        return None
+    windows = [
+        window.strip()
+        for window in re.split(r"(?<=[.;!?])\s+|\n+", normalized)
+        if window.strip()
+    ]
+    if not windows:
+        windows = [normalized]
+    for window in windows:
+        if _planning_window_predicts_compile_failure(window):
+            return "predicted_compile_failure", _validation_excerpt(window)
+        if _planning_window_predicts_correctness_failure(window):
+            return "predicted_correctness_failure", _validation_excerpt(window)
+        if not _planning_window_mentions_edit_surface(window):
+            continue
+        if _planning_window_self_rejects_edit(window):
+            return "incomplete_or_malformed_edit", _validation_excerpt(window)
+        if _planning_window_describes_no_effect_skeleton(window):
+            return "no_effect_or_skeleton", _validation_excerpt(window)
+        if _planning_window_describes_incomplete_edit(window):
+            return "incomplete_or_malformed_edit", _validation_excerpt(window)
+    return None
+
+
+def _planning_window_mentions_edit_surface(text: str) -> bool:
+    words = set(re.findall(r"[a-z_]+", text))
+    return bool(words & PLANNING_EDIT_TERMS) or bool(words & PLANNING_CODE_ARTIFACT_TERMS)
+
+
+def _planning_window_describes_no_effect_skeleton(text: str) -> bool:
+    words = set(re.findall(r"[a-z_]+", text))
+    has_skeleton_artifact = bool(
+        words
+        & {
+            "buffer",
+            "buffers",
+            "fragment",
+            "fragments",
+            "helper",
+            "helpers",
+            "preload",
+            "skeleton",
+            "stub",
+            "stubs",
+        }
+    )
+    has_disconnected_signal = bool(
+        re.search(
+            r"\b(?:unused|empty|not\s+(?:wired|called|consumed)|does\s+not\s+"
+            r"(?:affect|consume|improve)|cannot\s+(?:affect|improve))\b",
+            text,
+        )
+    )
+    return (
+        "no effect" in text
+        or "no-effect" in text
+        or ("compile only" in text and "does not affect" in text)
+        or ("compile only" in text and has_skeleton_artifact)
+        or (has_skeleton_artifact and has_disconnected_signal)
+        or bool(re.search(r"\b(?:must not|do not)\s+be\s+scored\b", text))
+    )
+
+
+def _planning_window_self_rejects_edit(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:do\s+not|don't|must\s+not|should\s+not)\s+"
+            r"(?:apply|compile|execute|score|use)\b.{0,80}\b"
+            r"(?:diff|edit|patch|transform)\b",
+            text,
+        )
+        or re.search(
+            r"\b(?:diff|edit|patch|transform)\b.{0,80}\b"
+            r"(?:do\s+not|don't|must\s+not|should\s+not)\s+"
+            r"(?:apply|compile|execute|score|use)\b",
+            text,
+        )
+    )
+
+
+def _planning_window_describes_incomplete_edit(text: str) -> bool:
+    words = set(re.findall(r"[a-z_]+", text))
+    has_incomplete_signal = bool(
+        words
+        & {
+            "duplicate",
+            "incomplete",
+            "invalid",
+            "malformed",
+            "missing",
+            "partial",
+            "stale",
+            "undefined",
+            "undeclared",
+        }
+    )
+    return has_incomplete_signal and bool(words & PLANNING_CODE_ARTIFACT_TERMS)
+
+
+def _planning_window_predicts_compile_failure(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:will|would|likely)\b.{0,80}\b"
+            r"(?:(?:compile|compilation|nvcc)\s+(?:fail|failure|error)|"
+            r"(?:fail|break)\s+(?:compile|compilation))\b",
+            text,
+        )
+    )
+
+
+def _planning_window_predicts_correctness_failure(text: str) -> bool:
+    return bool(
+        re.search(
+            r"\b(?:will|would|likely)\b.{0,80}\b"
+            r"(?:break correctness|fail correctness|wrong|incorrect|segfault)\b",
+            text,
+        )
+    )
 
 
 def _validate_candidate_patch_preflight(candidate_patch: str) -> None:
@@ -1259,6 +1353,21 @@ def _candidate_patch_uses_unsupported_wmma_fragment_shape(added_text: str) -> bo
     return False
 
 
+def _candidate_patch_uses_unresolved_wmma_fragment_shape(added_text: str) -> bool:
+    compact = re.sub(r"\s+", "", added_text)
+    constants = _integer_constants_from_text(added_text)
+    for args in _wmma_fragment_args(compact):
+        if len(args) < 5:
+            continue
+        use = args[0].removeprefix("nvcuda::")
+        if use not in {"wmma::matrix_a", "wmma::matrix_b", "wmma::accumulator"}:
+            continue
+        dims = tuple(_resolve_wmma_dim(arg, constants) for arg in args[1:4])
+        if any(dim is None for dim in dims):
+            return True
+    return False
+
+
 def _integer_constants_from_text(text: str) -> dict[str, int]:
     constants: dict[str, int] = {}
     for match in re.finditer(
@@ -1346,6 +1455,28 @@ def _candidate_patch_has_inconsistent_mma_sequence_cap(candidate_patch: str) -> 
         ):
             return True
     return False
+
+
+def _candidate_patch_changes_mma_shape_contract_in_one_layer(
+    inspection: CandidatePatchInspection,
+) -> bool:
+    if not ({MMA_KERNEL_SOURCE, MMA_SEED} & inspection.changed_paths):
+        return False
+    changes_kernel_contract = bool(
+        inspection.changed_paths & {MMA_KERNEL_SOURCE}
+    ) and bool(
+        re.search(
+            r"(?m)^[+-]\s*constexpr\s+int\s+(?:kMaxSeqLen|kHeadDim)\s*=",
+            inspection.patch_text,
+        )
+    )
+    changes_wrapper_contract = bool(inspection.changed_paths & {MMA_SEED}) and bool(
+        re.search(
+            r"(?m)^[+-]\s*(?:SMOKE_SEQUENCES|SMOKE_HEAD_DIM)\s*=",
+            inspection.patch_text,
+        )
+    )
+    return changes_kernel_contract != changes_wrapper_contract
 
 
 def _python_int_set_from_patch_line(
@@ -1511,6 +1642,25 @@ def _candidate_patch_inserts_async_helper_inside_mma_signature(added_text: str) 
     )
 
 
+def _candidate_patch_has_obvious_cuda_delimiter_mismatch(
+    inspection: CandidatePatchInspection,
+) -> bool:
+    if not inspection.edits_cuda_source:
+        return False
+    text = _cuda_text_without_comments_or_strings(inspection.added_text)
+    return any(
+        text.count(opening) != text.count(closing)
+        for opening, closing in (("(", ")"), ("[", "]"))
+    )
+
+
+def _cuda_text_without_comments_or_strings(text: str) -> str:
+    text = re.sub(r"/\*.*?\*/", "", text, flags=re.DOTALL)
+    text = re.sub(r"//.*", "", text)
+    text = re.sub(r'"(?:\\.|[^"\\])*"', '""', text)
+    return re.sub(r"'(?:\\.|[^'\\])*'", "''", text)
+
+
 CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
     CandidatePatchPreflightTrack(
         name="no_effect_pragma_only",
@@ -1583,6 +1733,15 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
             inspection.added_text
         )
         or _candidate_patch_uses_missing_wmma_matrix_element_type(inspection.added_text),
+    ),
+    CandidatePatchPreflightTrack(
+        name="shape_contract_batch",
+        failure_class="incomplete_or_malformed_edit",
+        message=(
+            "MMA shape-contract edits must update wrapper and kernel contract layers "
+            "together before compile or score"
+        ),
+        detector=_candidate_patch_changes_mma_shape_contract_in_one_layer,
     ),
     CandidatePatchPreflightTrack(
         name="symbol_lifecycle",
@@ -1687,7 +1846,39 @@ CUDA_PROMOTED_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, .
             inspection.added_text
         ),
     ),
+    CandidatePatchPreflightTrack(
+        name="promoted_cuda_delimiter_balance",
+        failure_class="cuda_syntax_error",
+        message=(
+            "after repeated CUDA syntax failures, added CUDA snippets must be "
+            "delimiter-complete before compile"
+        ),
+        detector=_candidate_patch_has_obvious_cuda_delimiter_mismatch,
+    ),
+    CandidatePatchPreflightTrack(
+        name="promoted_wmma_explicit_shape_contract",
+        failure_class="unsupported_wmma_shape",
+        message=(
+            "after repeated WMMA shape failures, newly added fragments must use literal "
+            "or same-edit constexpr 16x16x16 contracts"
+        ),
+        detector=lambda inspection: _candidate_patch_uses_unresolved_wmma_fragment_shape(
+            inspection.added_text
+        ),
+    ),
 )
+
+
+def promoted_preflight_track_names_for_classes(
+    failure_classes: frozenset[str],
+) -> tuple[str, ...]:
+    return tuple(
+        sorted(
+            track.name
+            for track in CUDA_PROMOTED_STRUCTURAL_PREFLIGHT_TRACKS
+            if track.failure_class in failure_classes
+        )
+    )
 
 
 def _validation_excerpt(value: str, *, max_length: int = 160) -> str:

@@ -1158,3 +1158,14 @@ source files.
   and reloads those classes before materialized CUDA transform/patch preflight.
   This moves recurring CUDA mistakes toward hard structural tracks without
   adding another exact historical phrase ban.
+- The next reliability pass made the hard-preflight mechanism more structural
+  and less prompt-specific. The planner context now treats small seed caps as
+  safety fences rather than optimization targets, and retry feedback no longer
+  injects exact historical "do not repeat this phrase" wording for recorded
+  failures. Promoted state now records the concrete checks activated by each
+  recurring class; recurring CUDA syntax failures enable delimiter-completeness
+  preflight, recurring WMMA shape failures enable explicit fragment-shape
+  contract preflight, and recurring symbol-lifecycle failures enable removed
+  and duplicate declaration checks. MMA shape-contract changes also have an
+  always-on wrapper/kernel batch preflight so wrapper-only or kernel-only
+  graduation attempts fail before compile.

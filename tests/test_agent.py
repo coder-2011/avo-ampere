@@ -815,7 +815,7 @@ def test_parse_variation_decision_rejects_wrapper_only_mma_shape_graduation() ->
         "--seq-lens 32 --total-tokens 32 --num-heads 1 --head-dim 256"
     )
 
-    with pytest.raises(ValueError, match="updates both the wrapper cap and kernel"):
+    with pytest.raises(ValueError, match="shape_contract_batch"):
         parse_decision_text(json.dumps(payload))
 
 
@@ -1418,6 +1418,68 @@ def test_promoted_preflight_rejects_removed_declaration_still_used() -> None:
             patch,
             allow_cuda_source_edits=True,
             promoted_preflight_classes=frozenset({"stale_or_undefined_symbol"}),
+        )
+
+
+def test_structural_preflight_rejects_single_layer_mma_shape_contract() -> None:
+    patch = (
+        "diff --git a/candidates/cuda_mma_attention_seed.py "
+        "b/candidates/cuda_mma_attention_seed.py\n"
+        "--- a/candidates/cuda_mma_attention_seed.py\n"
+        "+++ b/candidates/cuda_mma_attention_seed.py\n"
+        "@@ -1 +1 @@\n"
+        "-SMOKE_HEAD_DIM = 128\n"
+        "+SMOKE_HEAD_DIM = 256\n"
+    )
+
+    with pytest.raises(ValueError, match="shape_contract_batch"):
+        validate_candidate_patch_structural_preflight(
+            patch,
+            allow_cuda_source_edits=False,
+        )
+
+
+def test_promoted_preflight_rejects_delimiter_incomplete_cuda_snippet() -> None:
+    patch = (
+        "diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n"
+        "--- a/candidates/kernel.cu\n"
+        "+++ b/candidates/kernel.cu\n"
+        "@@ -1 +1,2 @@\n"
+        "-old\n"
+        "+float score = max(row_max, tile_max;\n"
+    )
+
+    validate_candidate_patch_structural_preflight(
+        patch,
+        allow_cuda_source_edits=True,
+    )
+    with pytest.raises(ValueError, match="promoted_cuda_delimiter_balance"):
+        validate_candidate_patch_structural_preflight(
+            patch,
+            allow_cuda_source_edits=True,
+            promoted_preflight_classes=frozenset({"cuda_syntax_error"}),
+        )
+
+
+def test_promoted_preflight_requires_explicit_wmma_shape_contract() -> None:
+    patch = (
+        "diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n"
+        "--- a/candidates/kernel.cu\n"
+        "+++ b/candidates/kernel.cu\n"
+        "@@ -1 +1,2 @@\n"
+        "-old\n"
+        "+wmma::fragment<wmma::accumulator, kTile, kTile, 16, float> score_frag;\n"
+    )
+
+    validate_candidate_patch_structural_preflight(
+        patch,
+        allow_cuda_source_edits=True,
+    )
+    with pytest.raises(ValueError, match="promoted_wmma_explicit_shape_contract"):
+        validate_candidate_patch_structural_preflight(
+            patch,
+            allow_cuda_source_edits=True,
+            promoted_preflight_classes=frozenset({"unsupported_wmma_shape"}),
         )
 
 
@@ -2365,22 +2427,20 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "candidates/cuda_mma_attention/attention_kernel.cu" in context
     assert "candidates/cuda_identity/identity_kernel.cu" in context
     assert "Target workload is realistic long-sequence BF16 attention" in context
-    assert "Unpatched seed score caps are smoke-only safety fences" in context
-    assert "total_tokens <= 1024" in context
-    assert "cuda_tiled_attention_seed.py is only validated at seq_lens 16" in context
+    assert "Unpatched seed caps are safety fences, not search targets" in context
+    assert "real optimization steps should move toward the target workload" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
-    assert "WMMA matrix fragments in generic PyTorch kernels" in context
     assert "No-patch compiles of existing CUDA candidates" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu" in context
     assert "Preferred edit channel: candidate_transform" in context
     assert "Legacy candidate_patch raw diffs are allowed only for non-CUDA" in context
     assert ".cu/.cuh kernel edits must use candidate_transform" in context
-    assert "Structural CUDA preflight tracks are hard safety checks" in context
-    assert "WMMA fragment shape and element type" in context
-    assert "Async copy must move aligned 16-byte groups" in context
-    assert "shared-memory loads should use tile-local offsets" in context
-    assert "Shape graduation beyond the current smoke caps should update the wrapper" in context
+    assert "Structural CUDA preflight tracks are class-oriented hard checks" in context
+    assert "wrapper/kernel shape-contract consistency" in context
+    assert "tensor-core fragment declarations must match" in context
+    assert "staged shared-memory addresses must stay tile-local" in context
+    assert "After a shape-support compile succeeds" in context
     assert "--candidate candidates/cuda_mma_attention_seed.py" in context
     assert "--seq-lens 4096,8192,16384,32768" in context
     assert "candidate_transform" in context
@@ -2580,7 +2640,7 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
 
     content = updated["messages"][0]["content"]
     assert "valid Ampere async-copy transform" in content
-    assert "16-byte groups in real kernel dataflow" in content
+    assert "async-copy structural contract" in content
     assert "small candidate_transform" in content
     assert "different transform family" in content
 
@@ -2597,10 +2657,10 @@ def test_decision_feedback_explains_self_invalid_patch_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "Do not retry an edit whose own hypothesis" in content
-    assert "planning-risk class" in content
+    assert "classified its own edit as invalid" in content
+    assert "different transform family" in content
     assert "structured candidate_transform" in content
-    assert "switch to No edit; mode" in content
+    assert "known compile, correctness, skeleton, or incomplete-edit failure" in content
 
 
 def test_decision_feedback_explains_must_not_be_scored_error() -> None:
@@ -2616,9 +2676,9 @@ def test_decision_feedback_explains_must_not_be_scored_error() -> None:
 
     content = updated["messages"][0]["content"]
     assert "must not be scored" in content
-    assert "do not retry another compile-only skeleton" in content
-    assert "complete enough to score after a successful compile" in content
-    assert "No edit; mode" in content
+    assert "classified its own edit as invalid" in content
+    assert "executable edit" in content
+    assert "known compile, correctness, skeleton, or incomplete-edit failure" in content
 
 
 def test_decision_feedback_explains_compile_out_dir_error() -> None:
@@ -2681,9 +2741,9 @@ def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "Do not retry a no-edit score of cuda_mma_attention_seed.py" in content
-    assert "candidate_transform, preferably a small batch" in content
-    assert "structurally change candidates/cuda_mma_attention/attention_kernel.cu" in content
+    assert "Do not retry a no-edit score that is already in lineage" in content
+    assert "candidate_transform, preferably a small wrapper/kernel batch" in content
+    assert "make a real kernel-structure change" in content
     assert "raw candidate_patch cannot edit CUDA kernel sources" in content
 
 
@@ -2732,9 +2792,8 @@ def test_decision_feedback_explains_unpatched_warp_row_score_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "Do not retry a no-edit score of cuda_warp_rows_attention_seed.py" in content
-    assert "seq256/head_dim128" in content
-    assert "candidate_transform or a legacy candidate_patch" in content
+    assert "Do not retry a no-edit score of a smoke-only seed workload" in content
+    assert "candidate_transform or a legacy non-CUDA candidate_patch" in content
 
 
 def test_decision_feedback_explains_structural_preflight_error() -> None:

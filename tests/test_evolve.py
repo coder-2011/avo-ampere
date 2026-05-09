@@ -1248,7 +1248,7 @@ def test_summarize_attempt_history_promotes_recurring_failure_class(tmp_path: Pa
     summary = summarize_attempt_history(attempts, limit=5)
 
     assert "share failure class 'stale_or_undefined_symbol'" in summary
-    assert "Promote this class to a hard preflight track" in summary
+    assert "eligible for hard preflight promotion" in summary
 
 
 def test_update_promoted_preflight_tracks_persists_recurring_class(tmp_path: Path) -> None:
@@ -1274,9 +1274,14 @@ def test_update_promoted_preflight_tracks_persists_recurring_class(tmp_path: Pat
     summary = summarize_attempt_history(attempts, limit=5)
 
     assert "stale_or_undefined_symbol" in state["tracks"]
+    assert state["tracks"]["stale_or_undefined_symbol"]["track_names"] == [
+        "promoted_symbol_lifecycle_duplicate_declaration",
+        "promoted_symbol_lifecycle_removed_declaration",
+    ]
     assert load_promoted_preflight_classes(attempts) == frozenset({"stale_or_undefined_symbol"})
     assert "Active hard preflight tracks:" in summary
     assert "track=symbol_lifecycle" in summary
+    assert "checks=promoted_symbol_lifecycle_duplicate_declaration" in summary
 
 
 def test_summarize_attempt_history_counts_mixed_recurring_failure_classes(
@@ -1347,6 +1352,9 @@ def test_update_promoted_preflight_tracks_persists_mixed_recurring_classes(
     state = update_promoted_preflight_tracks(attempts)
 
     assert state["tracks"]["cuda_syntax_error"]["recent_count"] == 3
+    assert state["tracks"]["cuda_syntax_error"]["track_names"] == [
+        "promoted_cuda_delimiter_balance"
+    ]
     assert state["tracks"]["stale_or_undefined_symbol"]["recent_count"] == 3
     assert load_promoted_preflight_classes(attempts) == frozenset(
         {"cuda_syntax_error", "stale_or_undefined_symbol"}
