@@ -1472,3 +1472,18 @@ source files.
   A repeats-3/warmup-2 confirmation score on the accepted syncwarp candidate
   passed all 8 target cases and measured `9.576586797806204` geomean TFLOPS,
   further supporting the accepted synchronization refinement.
+- A classifier-guided follow-up loop after the transform-family priority fix
+  showed both progress and a remaining acceptance-noise issue. It correctly
+  classified another single-stage K shared-memory staging transform as
+  `shared_memory_staging`; that candidate compiled, passed correctness, and
+  regressed to `3.594328062594656` geomean TFLOPS versus best
+  `9.507832270603132`, reinforcing that isolated synchronous K staging is
+  exhausted for this seed. The same loop later accepted a one-line removal of
+  the explicit `__syncwarp()` after `wmma::store_matrix_sync(scores, ...)`,
+  scoring `9.53940653329568` in the one-shot gate. Confirmation did not support
+  keeping it: the removed-syncwarp candidate scored `9.537755900752106`
+  geomean TFLOPS with repeats 3/warmup 2, while the restored syncwarp state
+  scored `9.544394274937641` under the same settings and had previously
+  confirmed at `9.576586797806204`. Preserve the syncwarp-present kernel. Treat
+  near-tie synchronization edits as requiring confirmation or a margin above
+  measurement noise before committing.

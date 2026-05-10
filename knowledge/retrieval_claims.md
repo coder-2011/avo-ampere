@@ -377,3 +377,16 @@ reject a bad transform family, or explain a score/gate result.
 - Why useful: discourages more local unroll-only edits and points the search
   back toward dataflow, layout, tiling, and staging changes.
 - Retrieval query: `WMMA chunk unroll by 2 rejected geomean 7.758592599549404`.
+
+- Claim: removing the explicit `__syncwarp()` after
+  `wmma::store_matrix_sync(scores, ...)` was a noisy one-shot acceptance, not a
+  confirmed improvement.
+- Evidence source: loop
+  `loop_after_family_classifier_fix_20260510T1118Z.json` plus direct A/B
+  confirmation on 2026-05-10.
+- Why useful: near-tie synchronization edits should require confirmation or a
+  margin above timing noise. The removed-syncwarp variant passed correctness and
+  scored `9.537755900752106` geomean TFLOPS with repeats 3/warmup 2, while the
+  restored syncwarp state scored `9.544394274937641` under the same settings
+  and had previously confirmed at `9.576586797806204`.
+- Retrieval query: `remove __syncwarp after wmma store noisy acceptance confirmed slower geomean 9.537755900752106 restored 9.544394274937641`.
