@@ -914,11 +914,22 @@ def _validation_feedback_hint(error: ValueError) -> str:
         )
     if "recorded unpatched MMA seed score" in message:
         return (
-            "Do not retry a no-edit score that is already in lineage. To score the MMA "
-            "candidate again, use candidate_transform, preferably a scoped wrapper/kernel "
-            "batch, to make a real kernel-structure change; raw candidate_patch cannot "
-            "edit CUDA kernel sources. Otherwise choose a diagnostic that provides new "
-            "information for a different transform family. "
+            "Do not retry a no-edit score that is already in lineage. Do not return "
+            "candidate_edit starting with 'No edit;' for this correction. To score the "
+            "MMA candidate again, set edit_mode='transform', set candidate_patch to '', "
+            "and provide candidate_transform as one exact operation or a scoped "
+            "wrapper/kernel batch that makes a real kernel-structure change. Raw "
+            "candidate_patch cannot edit CUDA kernel sources. Otherwise choose a "
+            "diagnostic that provides new information for a different transform family. "
+        )
+    if "candidate_transform batch steps must contain 1 to" in message:
+        return (
+            "Return a bounded candidate_transform batch with 1 to "
+            f"{MAX_TRANSFORM_BATCH_STEPS} primitive operations, or use a single "
+            "non-batch candidate_transform operation. Empty batches are not edits; "
+            "oversized batches must be split into the smallest coherent semantic move "
+            "that preserves invariants and can be compiled or scored. Keep "
+            "candidate_patch exactly ''. "
         )
     if "below the current accepted seq" in message and "validation lane" in message:
         return (

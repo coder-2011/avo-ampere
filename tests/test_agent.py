@@ -3480,9 +3480,29 @@ def test_decision_feedback_explains_unpatched_mma_score_error() -> None:
 
     content = updated["messages"][0]["content"]
     assert "Do not retry a no-edit score that is already in lineage" in content
-    assert "candidate_transform, preferably a scoped wrapper/kernel batch" in content
-    assert "make a real kernel-structure change" in content
-    assert "raw candidate_patch cannot edit CUDA kernel sources" in content
+    assert "Do not return candidate_edit starting with 'No edit;'" in content
+    assert "edit_mode='transform'" in content
+    assert "candidate_patch to ''" in content
+    assert "candidate_transform as one exact operation" in content
+    assert "makes a real kernel-structure change" in content
+    assert "Raw candidate_patch cannot edit CUDA kernel sources" in content
+
+
+def test_decision_feedback_explains_transform_batch_size_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("candidate_transform batch steps must contain 1 to 8 operations"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "bounded candidate_transform batch" in content
+    assert "1 to 8 primitive operations" in content
+    assert "single non-batch candidate_transform operation" in content
+    assert "Empty batches are not edits" in content
+    assert "oversized batches must be split" in content
+    assert "candidate_patch exactly ''" in content
 
 
 def test_decision_feedback_explains_wrapper_only_mma_shape_error() -> None:
