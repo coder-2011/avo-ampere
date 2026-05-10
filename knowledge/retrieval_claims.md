@@ -526,8 +526,17 @@ reject a bad transform family, or explain a score/gate result.
   evidence but should still be able to reach compile/repair when it is part of
   coherent dataflow. Runtime compile failures that mention async-copy APIs are
   classified as `async_copy_compile_error`, which is repair feedback rather than
-  an eligible hard-preflight promotion class.
+  an eligible hard-preflight promotion class. The compile-repair prompt includes
+  repair-guidance for async-copy API/include/stage/dataflow issues and warns not
+  to treat copy granularity alone as a hard rejection.
 - Retrieval query: `NVIDIA cuda::memcpy_async Ampere cp.async 4 byte alignment 16 byte vector groups pipeline producer commit consumer wait`.
+
+- Claim: self-repair prompts should encode concrete execution feedback into a
+  directed next edit rather than only recording a failure label.
+- Evidence source: Exa result, RepairAgent; Exa result, ARCS.
+- Why useful: supports adding narrow repair guidance for known classes such as
+  `async_copy_compile_error` while keeping the loop bounded and replayable.
+- Retrieval query: `compiler error feedback repair loop coding agent self repair structured edits invalid patch retry`.
 
 - Claim: repair-specific validation failures are fed back once inside the same
   repair episode before the loop finalizes a planning failure.

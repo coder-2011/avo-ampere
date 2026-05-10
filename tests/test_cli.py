@@ -739,6 +739,122 @@ def test_evolve_once_repairs_candidate_compile_failure_before_finishing(
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
+def test_compile_repair_prompt_gives_async_copy_guidance(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    failed_decision = VariationDecision(
+        hypothesis="introduce async copy compile failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="add async copy dataflow with a bad primitive call",
+        expected_effect="exercise async copy compile repair",
+        risk="mock compile failure",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = bad
+            """
+        ),
+    )
+    failed_patch_result = apply_candidate_patch(failed_decision.candidate_patch, cwd=tmp_path)
+    failed_attempt = VariationAttempt(
+        decision=failed_decision,
+        command_result=CommandResult(
+            command=["python", "-m", "avo", "compile"],
+            returncode=1,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail=(
+                "attention_kernel.cu(4): error: identifier "
+                "__pipeline_memcpy_async is undefined"
+            ),
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=failed_patch_result,
+    )
+    repair_decision = VariationDecision(
+        hypothesis="repair async copy compile failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="replace failed edit with a compileable source change",
+        expected_effect="build should pass",
+        risk="mock repaired compile",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = 2
+            """
+        ),
+    )
+    seen_attempt_histories: list[str] = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return repair_decision
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "compile"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:02+00:00",
+            completed_at="2026-05-08T00:00:03+00:00",
+            patch_result=PatchResult(
+                ok=True,
+                patch_paths=["candidates/seed.py"],
+                returncode=0,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    result = _run_compile_repair_loop(
+        SimpleNamespace(
+            cwd=tmp_path,
+            timeout_s=10,
+            attempts_dir=None,
+            compile_repair_attempts=1,
+            model="claude",
+        ),
+        initial_attempt=failed_attempt,
+        lineage_summary="{}",
+        attempt_history="",
+        repo_context="",
+        knowledge="Ampere only.",
+    )
+
+    assert not isinstance(result, EvolutionStep)
+    assert "failure_class=async_copy_compile_error" in seen_attempt_histories[0]
+    assert "repair the async-copy API/include/stage/dataflow issue" in (
+        seen_attempt_histories[0]
+    )
+    assert "do not treat copy granularity alone as a hard rejection" in (
+        seen_attempt_histories[0]
+    )
+
+
 def test_evolve_once_rejects_repair_that_repeats_earlier_failed_payload(
     tmp_path: Path,
     monkeypatch,

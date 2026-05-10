@@ -1109,10 +1109,13 @@ def _edit_repair_attempt_history(
     if cleanup_result is not None:
         cleanup_status = "ok" if cleanup_result.ok else "failed"
     if repair_kind == "compile":
+        failure_class = compile_failure_class_for_attempt(failed_attempt)
+        repair_guidance = _compile_repair_guidance(failure_class)
         request = (
             "Immediate compile-repair request:\n"
             f"- repair_attempt={repair_index}\n"
-            f"- failure_class={compile_failure_class_for_attempt(failed_attempt)}\n"
+            f"- failure_class={failure_class}\n"
+            f"{repair_guidance}"
             f"- failed_command={failed_attempt.decision.next_command}\n"
             f"- worktree_cleanup_before_repair={cleanup_status}\n"
             "- The previous candidate edit was applied and the CUDA build failed. "
@@ -1195,6 +1198,16 @@ def _edit_repair_attempt_history(
         request,
     ]
     return "\n\n".join(section for section in sections if section)
+
+
+def _compile_repair_guidance(failure_class: str) -> str:
+    if failure_class != "async_copy_compile_error":
+        return ""
+    return (
+        "- repair_guidance=repair the async-copy API/include/stage/dataflow issue; "
+        "do not treat copy granularity alone as a hard rejection or return a "
+        "revert-only edit.\n"
+    )
 
 
 def _validate_edit_repair_decision(

@@ -62,7 +62,11 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
         ),
         (
             "async-copy compile error repair feedback not hard preflight promotion",
-            ("async_copy_compile_error", "repair-feedback", "not promoted"),
+            ("async_copy_compile_error", "repair-guidance", "not treat copy granularity"),
+        ),
+        (
+            "self-repair prompt concrete execution feedback directed edit",
+            ("self-repair prompts", "execution feedback", "directed next edit"),
         ),
         (
             "compile score torch extension CUDA_NO_BFLOAT16_CONVERSIONS __nv_bfloat16 constructor",
