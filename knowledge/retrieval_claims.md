@@ -411,3 +411,12 @@ reject a bad transform family, or explain a score/gate result.
   noisy acceptances such as the removed-syncwarp `9.53940653329568` score when
   the corrected lineage best is the syncwarp-present `9.507832270603132` score.
 - Retrieval query: `stale accepted attempt history lineage current best noisy reverted acceptance planner context`.
+
+- Claim: V-fragment pipelining inside the PV output-chunk loop is correct but
+  slower for the current MMA seed.
+- Evidence source:
+  `attempts/evolve_once_score_pending_v_pipeline_20260510T1227Z.json`.
+- Why useful: discourages retrying the same hoist/prefetch transform; it passed
+  all 8 target BF16 cases but regressed to `9.304493152841513` geomean TFLOPS
+  versus the current `9.507832270603132` best.
+- Retrieval query: `V fragment pipeline hoist next load output chunk loop regression geomean 9.304493152841513`.

@@ -1515,3 +1515,11 @@ source files.
   `class=stale_accepted` and explicitly tell the planner to treat them as
   reverted or noisy historical acceptances, not the current best. This is a
   state-consistency fix, not a CUDA preflight ban.
+- A follow-up planner-only check after the stale-history fix described the
+  current seed as `9.51` TFLOPS instead of the stale `9.54` score and correctly
+  chose the pending V-pipeline transform for scoring. That transform hoisted the
+  first V WMMA fragment load before the output-chunk loop and loaded the next V
+  fragment at the end of each chunk. It passed all 8 full-target BF16 cases but
+  regressed to `9.304493152841513` geomean TFLOPS versus the current
+  `9.507832270603132` best. Do not preserve this V-fragment pipelining move;
+  the extra live fragment lifetime does not help the current MMA seed.
