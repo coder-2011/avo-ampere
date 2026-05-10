@@ -34,10 +34,12 @@ def decision_payload() -> dict[str, object]:
 
 def test_parse_variation_decision() -> None:
     payload = decision_payload()
+    payload["candidate_transform"] = None
     decision = parse_decision_text(json.dumps(payload))
     assert isinstance(decision, VariationDecision)
     assert decision.files_to_inspect == ["kernel.cu"]
     assert decision.candidate_patch == ""
+    assert decision.candidate_transform is None
 
 
 def test_parse_variation_decision_defaults_missing_candidate_patch() -> None:
@@ -3021,6 +3023,7 @@ def test_decision_tool_uses_strict_schema() -> None:
     assert tool["input_schema"]["additionalProperties"] is False
     assert "candidate_patch" in tool["input_schema"]["required"]
     assert "edit_mode" in tool["input_schema"]["required"]
+    assert "candidate_transform" in tool["input_schema"]["required"]
     assert tool["input_schema"]["properties"]["edit_mode"]["enum"] == [
         "legacy_patch",
         "no_edit",
@@ -3033,6 +3036,10 @@ def test_decision_tool_uses_strict_schema() -> None:
         "description"
     ]
     assert "candidate_transform" in tool["input_schema"]["properties"]
+    assert "null" in tool["input_schema"]["properties"]["candidate_transform"]["type"]
+    assert "set this field to null" in tool["input_schema"]["properties"][
+        "candidate_transform"
+    ]["description"]
     assert "add_include" in tool["input_schema"]["properties"]["candidate_transform"][
         "properties"
     ]["op"]["enum"]

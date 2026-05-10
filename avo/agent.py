@@ -339,10 +339,12 @@ DECISION_SCHEMA: dict[str, Any] = {
         },
         "candidate_transform": {
             **TRANSFORM_SCHEMA,
+            "type": ["object", "null"],
             "description": (
-                "Preferred edit channel for CUDA/kernel evolution. Use one coherent "
-                "semantic transform or a scoped semantic batch of primitive materialization "
-                "steps, or omit this field for no-edit/legacy patch mode."
+                "Required field. For edit_mode=transform, provide one coherent semantic "
+                "transform or a scoped semantic batch of primitive materialization steps. "
+                "For edit_mode=no_edit or edit_mode=legacy_patch, set this field to null "
+                "instead of omitting it."
             ),
         },
         "expected_effect": {
@@ -369,6 +371,7 @@ DECISION_SCHEMA: dict[str, Any] = {
         "candidate_edit",
         "candidate_patch",
         "edit_mode",
+        "candidate_transform",
         "expected_effect",
         "risk",
         "next_command",
@@ -403,7 +406,7 @@ class VariationDecision:
 
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> VariationDecision:
-        normalized_payload = {"candidate_patch": "", **payload}
+        normalized_payload = {"candidate_patch": "", "candidate_transform": None, **payload}
         edit_mode_explicit = "edit_mode" in normalized_payload
         missing = [key for key in DECISION_SCHEMA["required"] if key not in normalized_payload]
         missing_without_edit_mode = [key for key in missing if key != "edit_mode"]
@@ -638,6 +641,7 @@ def build_variation_prompt(
         "contains that change.\n"
         "Return exactly one decision. The next_command must be a single bounded command that "
         "starts with 'avo' and uses only one of: env, compile, profile, score. "
+        "Always include the candidate_transform field; use null outside transform mode. "
         "Use valid CLI flags: "
         "compile requires --source SOURCE.cu and --out-dir DIR; candidate score requires "
         "--backend candidate and --candidate; candidate profile uses the same score-shape "
