@@ -823,6 +823,121 @@ def test_evolve_once_repairs_transform_materialization_failure_before_finishing(
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\nANCHOR\nVALUE = 2\nANCHOR\n"
 
 
+def test_evolve_once_repairs_candidate_correctness_failure_before_finishing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    first_decision = VariationDecision(
+        hypothesis="introduce correctness failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value in a way that scores incorrectly",
+        expected_effect="exercise correctness repair",
+        risk="mock correctness failure",
+        next_command="avo score --backend candidate",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = bad
+            """
+        ),
+    )
+    repair_decision = VariationDecision(
+        hypothesis="repair correctness failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value in a way that scores correctly",
+        expected_effect="score should pass",
+        risk="mock repaired score",
+        next_command="avo score --backend candidate",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = 2
+            """
+        ),
+    )
+    decisions = [first_decision, repair_decision]
+    seen_attempt_histories: list[str] = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        patch_result = apply_candidate_patch(decision.candidate_patch, cwd=cwd)
+        ok = decision.hypothesis == "repair correctness failure"
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="{}",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:00+00:00",
+            completed_at="2026-05-08T00:00:01+00:00",
+            score_payload={
+                "backend": "mock",
+                "all_correct": ok,
+                "geomean_tflops": 3.0 if ok else 0.0,
+                "cases": [
+                    {}
+                    if ok
+                    else {
+                        "correct": False,
+                        "error": "max_abs_error exceeded tolerance",
+                    }
+                ],
+            },
+            patch_result=patch_result,
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    exit_code = _evolve_once(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            step_json=None,
+            env_file=None,
+            model="claude",
+            attempts_dir=None,
+            attempt_limit=5,
+            compile_repair_attempts=1,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["attempt"]["decision"]["hypothesis"] == "repair correctness failure"
+    assert payload["gate_decision"]["accepted"] is True
+    assert len(payload["repair_attempts"]) == 1
+    assert payload["repair_cleanup_results"][0]["ok"] is True
+    assert payload["patch_cleanup_result"] is None
+    assert "Immediate correctness-repair request" in seen_attempt_histories[1]
+    assert "all_correct=false" in seen_attempt_histories[1]
+    assert "max_abs_error exceeded tolerance" in seen_attempt_histories[1]
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
 def test_pending_transform_payload_normalizer_attaches_transform_to_score(
     tmp_path: Path,
 ) -> None:

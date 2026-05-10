@@ -469,8 +469,36 @@ def attempt_has_repairable_transform_materialization_failure(attempt: VariationA
     return _is_repairable_transform_materialization_error(detail)
 
 
+def attempt_has_repairable_correctness_failure(attempt: VariationAttempt) -> bool:
+    if attempt.patch_result is None or not attempt.patch_result.ok:
+        return False
+    if attempt.command_result.timed_out or not attempt.command_result.ok:
+        return False
+    if not isinstance(attempt.score_payload, dict):
+        return False
+    if attempt.score_payload.get("all_correct") is not False:
+        return False
+    has_edit_payload = (
+        attempt.decision.candidate_transform is not None
+        or bool((attempt.materialized_patch or attempt.decision.candidate_patch).strip())
+    )
+    return has_edit_payload
+
+
 def compile_failure_class_for_attempt(attempt: VariationAttempt) -> str:
     return _classify_compile_failure(_command_result_text(attempt.command_result).lower())
+
+
+def correctness_failure_class_for_attempt(attempt: VariationAttempt) -> str:
+    if not isinstance(attempt.score_payload, dict):
+        return "correctness_failed"
+    return _classify_score_failure(attempt.score_payload)
+
+
+def correctness_failure_summary_for_attempt(attempt: VariationAttempt) -> str:
+    if not isinstance(attempt.score_payload, dict):
+        return ""
+    return _tail(_score_payload_error_text(attempt.score_payload))
 
 
 def finalize_attempt(

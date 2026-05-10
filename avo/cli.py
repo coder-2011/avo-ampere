@@ -35,9 +35,12 @@ from .evolve import (
     VariationAttempt,
     apply_candidate_patch,
     attempt_has_repairable_compile_failure,
+    attempt_has_repairable_correctness_failure,
     attempt_has_repairable_transform_materialization_failure,
     cleanup_rejected_candidate_patch,
     compile_failure_class_for_attempt,
+    correctness_failure_class_for_attempt,
+    correctness_failure_summary_for_attempt,
     finalize_attempt,
     load_promoted_preflight_classes,
     pending_compile_only_transform,
@@ -922,6 +925,8 @@ def _repair_kind_for_attempt(attempt: VariationAttempt) -> str | None:
         return "compile"
     if attempt_has_repairable_transform_materialization_failure(attempt):
         return "structured-transform-materialization"
+    if attempt_has_repairable_correctness_failure(attempt):
+        return "correctness"
     return None
 
 
@@ -952,6 +957,25 @@ def _edit_repair_attempt_history(
             f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
             f"- compiler_stderr_tail:\n{failed_attempt.command_result.stderr_tail or '<empty>'}\n"
             f"- compiler_stdout_tail:\n{failed_attempt.command_result.stdout_tail or '<empty>'}"
+        )
+    elif repair_kind == "correctness":
+        score_error_summary = correctness_failure_summary_for_attempt(failed_attempt)
+        request = (
+            "Immediate correctness-repair request:\n"
+            f"- repair_attempt={repair_index}\n"
+            f"- failure_class={correctness_failure_class_for_attempt(failed_attempt)}\n"
+            f"- failed_command={failed_attempt.decision.next_command}\n"
+            f"- worktree_cleanup_before_repair={cleanup_status}\n"
+            "- The previous candidate edit compiled and ran, but score reported "
+            "`all_correct=false`. The failed edit has been reverted before this "
+            "repair request. Return a revised executable edit against the current "
+            "source, not a no-edit retry. Use candidate_transform when repairing "
+            "CUDA sources, keep candidate_patch empty in transform mode, and make "
+            "the smallest coherent semantic repair that addresses the violated "
+            "correctness invariant, such as initialized dataflow, alignment, bounds, "
+            "masking, synchronization, or accumulation semantics.\n"
+            f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
+            f"- score_error_summary:\n{score_error_summary or '<empty>'}"
         )
     else:
         patch_result = failed_attempt.patch_result
