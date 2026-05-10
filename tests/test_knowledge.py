@@ -100,6 +100,11 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("repair", "failed edit payload", "execution"),
         ),
         (
+            "stagnation supervisor strategy reset candidates Ampere work "
+            "decomposition memory layout register softmax diagnostic",
+            ("strategy-reset", "work decomposition", "source-verifiable transform"),
+        ),
+        (
             "score_time_compile_failure torch extension build repair candidate_source_files",
             ("score_time_compile_failure", "compile-style repair", "candidate_source_files"),
         ),

@@ -1048,10 +1048,14 @@ source files.
   transforms get the same structural scrutiny that raw diffs used to receive.
   The evolve loop now persists recurring promotable failure classes in
   `attempts/preflight_tracks.json` and feeds active hard tracks back into
-  attempt history and command execution. Prompt context also distinguishes
-  smoke-only seed caps from the actual target: long-sequence BF16 attention
-  around seq 4096/8192/16384/32768, total_tokens 32768, num_heads 16, head_dim
-  128, and both causal modes.
+  attempt history and command execution. Stagnation summaries now add
+  strategy-reset candidates from broad Ampere search families, such as work
+  decomposition, memory-layout/vectorized K/V pipelines, register/online-softmax
+  scheduling, or bottleneck-directed diagnostics, while still requiring a
+  scoped source-verifiable transform or no-edit diagnostic. Prompt context also
+  distinguishes smoke-only seed caps from the actual target: long-sequence BF16
+  attention around seq 4096/8192/16384/32768, total_tokens 32768, num_heads 16,
+  head_dim 128, and both causal modes.
   Live-loop validation then showed the planner could describe an integer
   constant transform in prose while omitting the `candidate_transform` object.
   The parser now recovers explicit tiny constant transforms of the form

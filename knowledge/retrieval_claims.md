@@ -274,6 +274,14 @@ reject a bad transform family, or explain a score/gate result.
 - Why useful: keeps reliability work general and search-loop oriented.
 - Retrieval query: `recurring failure class promote hard preflight structural track`.
 
+- Claim: stagnation supervisor summaries should add broad Ampere strategy-reset
+  candidates instead of only saying "try something different".
+- Evidence source: runtime attempt-history supervisor signal implementation.
+- Why useful: gives the planner forward-looking reset options while preserving
+  AVO's rule that the next action must be a scoped source-verifiable transform
+  or a diagnostic tied to a concrete bottleneck.
+- Retrieval query: `stagnation supervisor strategy reset candidates Ampere work decomposition memory layout register softmax diagnostic`.
+
 - Claim: a structurally rejected `candidate_transform` invalidates any older
   compile-only "score this transform" follow-up for the same transform identity.
 - Evidence source: loop after the shared-staging-buffer preflight and runtime

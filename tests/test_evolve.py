@@ -3183,6 +3183,9 @@ def test_summarize_attempt_history_flags_recurring_transform_family(
     assert "Semantic-family signal" in summary
     assert "shared_memory_staging(count=3)" in summary
     assert "Choose a materially different optimization family" in summary
+    assert "Strategy reset candidates" in summary
+    assert "work decomposition/query-tile ownership" in summary
+    assert "Recent families to avoid repeating unchanged: shared_memory_staging" in summary
 
 
 def test_summarize_attempt_history_flags_thread_count_family(
@@ -3551,6 +3554,8 @@ def test_summarize_attempt_history_flags_unaccepted_exhaustion(tmp_path: Path) -
     assert "Supervisor signal" in summary
     assert "last 5 attempts produced no accepted candidate" in summary
     assert "reset strategy" in summary
+    assert "Strategy reset candidates" in summary
+    assert "no-edit diagnostic tied to a specific bottleneck" in summary
 
 
 def write_seed_candidate(root: Path) -> Path:

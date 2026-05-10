@@ -66,6 +66,44 @@ PROMOTABLE_FAILURE_CLASS_TRACKS = {
     "correctness_failed": "correctness_preflight",
     "correctness_nonfinite_output": "correctness_preflight",
 }
+DEFAULT_STRATEGY_RESET_DIRECTIONS = (
+    "work decomposition/query-tile ownership",
+    "memory layout plus vectorized K/V pipeline",
+    "register/online-softmax scheduling",
+    "measurement diagnostic tied to a bottleneck",
+)
+FAMILY_STRATEGY_RESET_DIRECTIONS = {
+    "async_copy_pipeline": (
+        "work decomposition/query-tile ownership",
+        "register/online-softmax scheduling",
+        "measurement diagnostic for memory-vs-barrier cost",
+    ),
+    "shared_memory_staging": (
+        "work decomposition/query-tile ownership",
+        "register/online-softmax scheduling",
+        "memory layout plus vectorized K/V pipeline",
+    ),
+    "thread_count_or_warp_mapping": (
+        "memory layout plus vectorized K/V pipeline",
+        "register/online-softmax scheduling",
+        "source-verifiable work decomposition",
+    ),
+    "query_tile_work_mapping": (
+        "memory layout plus vectorized K/V pipeline",
+        "register/online-softmax scheduling",
+        "measurement diagnostic for K/V reuse benefit",
+    ),
+    "synchronization_or_barrier": (
+        "measurement diagnostic tied to a bottleneck",
+        "memory layout plus vectorized K/V pipeline",
+        "register/online-softmax scheduling",
+    ),
+    "wmma_contract_or_tile_shape": (
+        "supported WMMA contract repair",
+        "register/online-softmax scheduling",
+        "source-verifiable work decomposition",
+    ),
+}
 REJECTED_PATCH_MARKERS = frozenset(
     {
         "Binary files ",
@@ -660,6 +698,13 @@ def summarize_attempt_history(
     family_signal = _summarize_transform_family_signal(payloads)
     if family_signal:
         summary = f"{summary}\n{family_signal}"
+    strategy_signal = _summarize_strategy_reset_signal(
+        payloads,
+        supervisor_signal=supervisor_signal,
+        family_signal=family_signal,
+    )
+    if strategy_signal:
+        summary = f"{summary}\n{strategy_signal}"
     followup_signal = _summarize_followup_signal(payloads)
     if followup_signal:
         summary = f"{summary}\n{followup_signal}"
@@ -1031,6 +1076,53 @@ def _summarize_transform_family_signal(payloads: list[dict[str, Any]]) -> str:
         "optimization family unless the next transform changes the dataflow, "
         "pipeline overlap, or validation contract in a way the prior family did not."
     )
+
+
+def _summarize_strategy_reset_signal(
+    payloads: list[dict[str, Any]],
+    *,
+    supervisor_signal: str,
+    family_signal: str,
+) -> str:
+    if not supervisor_signal and not family_signal:
+        return ""
+    families = _recent_unaccepted_transform_families(payloads)
+    directions = _strategy_reset_directions_for_families(families)
+    direction_text = "; ".join(directions)
+    avoid_text = ""
+    if families:
+        avoid_text = " Recent families to avoid repeating unchanged: " + ", ".join(
+            sorted(families)
+        )
+        avoid_text += "."
+    return (
+        "Strategy reset candidates: "
+        f"{direction_text}. Choose one only if it can be expressed as a scoped, "
+        "source-verifiable candidate_transform or as a no-edit diagnostic tied to a "
+        f"specific bottleneck.{avoid_text}"
+    )
+
+
+def _recent_unaccepted_transform_families(payloads: list[dict[str, Any]]) -> frozenset[str]:
+    families: set[str] = set()
+    for payload in _unaccepted_tail(payloads):
+        families.update(_payload_transform_families(payload))
+    return frozenset(family for family in families if family not in IGNORED_TRANSFORM_FAMILIES)
+
+
+def _strategy_reset_directions_for_families(families: frozenset[str]) -> tuple[str, ...]:
+    directions: list[str] = []
+    for family in sorted(families):
+        directions.extend(FAMILY_STRATEGY_RESET_DIRECTIONS.get(family, ()))
+    if not directions:
+        directions.extend(DEFAULT_STRATEGY_RESET_DIRECTIONS)
+    deduped = list(dict.fromkeys(directions))
+    for fallback in DEFAULT_STRATEGY_RESET_DIRECTIONS:
+        if len(deduped) >= 3:
+            break
+        if fallback not in deduped:
+            deduped.append(fallback)
+    return tuple(deduped[:3])
 
 
 def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
