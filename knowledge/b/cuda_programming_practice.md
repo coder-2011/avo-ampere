@@ -121,6 +121,10 @@ Use it to form better hypotheses before proposing a kernel transform.
 - Async-copy transforms must handle alignment, access size, tail predicates, and
   zero-fill or guarded shared state. The pipeline is only useful if consumers
   never read uninitialized or stale stage data.
+- Prefer vectorized async-copy groups for throughput, but do not turn copy
+  granularity alone into a hard rejection. Let coherent async-copy dataflow
+  changes reach compile/repair unless they violate a structural invariant such
+  as stage lifecycle, address ownership, or initialized-data guarantees.
 - Tiling can increase arithmetic intensity, but it also spends shared memory,
   registers, instructions, and barriers. Measure the tradeoff.
 

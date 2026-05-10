@@ -162,8 +162,11 @@ history.
   global-to-shared copies. CCCL documents 4-byte alignment as the minimum
   Ampere+ lowering condition, while NVIDIA Ampere material calls out 16-byte
   size/alignment as the better async-copy path. For AVO BF16 throughput patches,
-  keep treating 16-byte groups as the target and reject scalar 2-byte async-copy
-  noise; 4-byte copies are only useful for API smokes or carefully justified tails.
+  keep treating 16-byte groups as the preferred target, while allowing narrower
+  async-copy hypotheses to reach compile/repair when they are part of a coherent
+  dataflow change. Treat scalar 2-byte async copies as weak evidence, not as a
+  hard preflight failure by themselves; 4-byte copies are useful only for API
+  smokes or carefully justified tails.
   Do not use a templated public spelling for `__pipeline_wait_prior`.
   That tiny compile smoke has now succeeded on the warp-row source for sm86: adding the header plus
   unused wrappers around `__pipeline_memcpy_async`, `__pipeline_commit`, and
@@ -193,10 +196,11 @@ history.
   `__pipeline_wait_prior<1>()`, while the local public CUDA primitive is the
   non-template `__pipeline_wait_prior(prior)` wrapper. It also issued scalar
   BF16 `__pipeline_memcpy_async(..., sizeof(__nv_bfloat16))` copies instead of
-  16-byte aligned groups and accidentally removed the opening
+  vector-group copies and accidentally removed the opening
   `wmma::fragment<wmma::matrix_a, ...>` declaration line, leaving stray template
   arguments and an undefined `q_frag`. The planner now rejects patches that add
-  templated `__pipeline_wait_prior<...>` or scalar BF16 async copies.
+  templated `__pipeline_wait_prior<...>`; scalar BF16 async-copy granularity is
+  guidance for compile/repair, not a standalone hard preflight.
   A later warp-row async-copy API proof patch added only wrappers plus an empty
   `async_copy_tile_kv` stub that was not called. It still failed compile after
   introducing a `scalar_t` helper outside the templated kernel context and
@@ -748,8 +752,9 @@ history.
   requires a structural `candidate_patch` before scoring that source again.
   A later loop after Q-staging rejection again failed planning validation on scalar BF16
   `__pipeline_memcpy_async` after three attempts. The base repo context now treats cp.async as a
-  cooled-down direction unless the diff is a complete 16-byte-group dataflow change with exact
-  current context and no scalar async calls.
+  direction that needs a coherent dataflow hypothesis and exact current context; vector-group
+  copies remain preferred, but scalar async-copy granularity alone should be validated through
+  compile/repair rather than blocked before compile.
   A later non-async MMA register-row-state patch applied and scored, but failed correctness for both
   causal modes with non-finite outputs. It moved `row_max`, `row_sum`, and `old_scale` into
   per-thread arrays, then used `row / blockDim.x` in output-scaling/final-store loops where threads

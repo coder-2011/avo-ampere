@@ -708,17 +708,17 @@ def build_repo_context(root: Path) -> str:
         "toward the target workload or explain a targeted compile diagnostic.",
         "Structural CUDA preflight tracks are class-oriented hard checks: edit-channel "
         "integrity, transform path/materialization, wrapper/kernel shape-contract "
-        "consistency, WMMA contract validity, async-copy contract validity, async pipeline "
-        "stage lifecycle, shared-tile scope, symbol lifecycle, and disconnected "
+        "consistency, WMMA contract validity, async pipeline stage lifecycle, "
+        "shared-tile scope, symbol lifecycle, and disconnected "
         "skeleton/dataflow. Failed attempt classes can be promoted by the evolve loop "
         "into active hard tracks.",
         "CUDA transforms should preserve executable contracts, not just compile text: "
         "tensor-core fragment declarations must match Ampere-supported contracts, async "
-        "copies must be aligned and consumed by real dataflow, pipeline waits must match "
-        "the number of committed stages, double-buffer stage indices must advance after "
-        "consumption, staged shared-memory addresses must stay tile-local, declarations "
-        "must have clear lifetimes, and shape graduation must update wrapper and kernel "
-        "contracts together.",
+        "copy changes should prefer aligned vector groups and real consumed dataflow, "
+        "pipeline waits must match the number of committed stages, double-buffer stage "
+        "indices must advance after consumption, staged shared-memory addresses must stay "
+        "tile-local, declarations must have clear lifetimes, and shape graduation must "
+        "update wrapper and kernel contracts together.",
         "After a shape-support compile succeeds, score the realistic target lane instead "
         "of spending additional no-edit steps on smoke-only shapes.",
     ]
@@ -970,9 +970,9 @@ def _validation_feedback_hint(error: ValueError) -> str:
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
-            "Avoid clearly scalar BF16 async-copy calls. Broader async-copy hypotheses "
-            "should still be expressed as scoped candidate_transform batches and validated "
-            "by compile/score, with compile repair handling concrete CUDA errors. "
+            "Prefer vector-group async-copy dataflow over scalar BF16 async-copy calls, "
+            "but keep broader async-copy hypotheses in scoped candidate_transform batches "
+            "so compile/score and compile repair can validate concrete CUDA errors. "
         )
     return ""
 
@@ -2129,16 +2129,6 @@ def _candidate_patch_inserts_async_helper_inside_mma_signature(added_text: str) 
     )
 
 
-def _candidate_patch_uses_scalar_bf16_async_copy(inspection: CandidatePatchInspection) -> bool:
-    compact_added_text = re.sub(r"\s+", "", inspection.added_text)
-    return bool(
-        re.search(
-            r"__pipeline_memcpy_async\([^;]*,(?:sizeof\(__nv_bfloat16\)|2)\);",
-            compact_added_text,
-        )
-    )
-
-
 def _candidate_patch_has_invalid_async_pipeline_stage_lifecycle(
     inspection: CandidatePatchInspection,
 ) -> bool:
@@ -2243,15 +2233,6 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
             "__pipeline_wait_prior<N> call"
         ),
         detector=lambda inspection: "__pipeline_wait_prior<" in inspection.added_text,
-    ),
-    CandidatePatchPreflightTrack(
-        name="async_copy_granularity",
-        failure_class="cuda_syntax_error",
-        message=(
-            "clearly scalar BF16 async-copy calls should use regular loads/stores or "
-            "be widened into 16-byte aligned group copies"
-        ),
-        detector=_candidate_patch_uses_scalar_bf16_async_copy,
     ),
     CandidatePatchPreflightTrack(
         name="async_pipeline_stage_lifecycle",

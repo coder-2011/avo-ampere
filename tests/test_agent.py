@@ -2528,10 +2528,8 @@ def test_parse_variation_decision_rejects_templated_pipeline_wait_patch() -> Non
         parse_decision_text(json.dumps(payload))
 
 
-def test_parse_variation_decision_rejects_scalar_bf16_async_copy_patch() -> None:
-    payload = decision_payload()
-    payload["candidate_edit"] = "Patch MMA async copy staging and compile it."
-    payload["candidate_patch"] = (
+def test_structural_preflight_allows_scalar_bf16_async_copy_for_repair() -> None:
+    patch = (
         "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
         "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
         "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
@@ -2540,13 +2538,8 @@ def test_parse_variation_decision_rejects_scalar_bf16_async_copy_patch() -> None
         "-old\n"
         "+__pipeline_memcpy_async(dst, src, sizeof(__nv_bfloat16));\n"
     )
-    payload["next_command"] = (
-        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
-        "--out-dir build/mma"
-    )
 
-    with pytest.raises(ValueError, match="16-byte aligned"):
-        parse_decision_text(json.dumps(payload))
+    validate_candidate_patch_structural_preflight(patch, allow_cuda_source_edits=True)
 
 
 def test_structural_preflight_allows_non_scalar_async_copy_size_expression() -> None:
@@ -3318,8 +3311,8 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "Avoid clearly scalar BF16 async-copy calls" in content
-    assert "compile repair handling concrete CUDA errors" in content
+    assert "Prefer vector-group async-copy dataflow" in content
+    assert "compile repair can validate concrete CUDA errors" in content
     assert "scoped candidate_transform" in content
 
 
