@@ -724,24 +724,21 @@ def validate_decision_against_attempt_history(
     pending_transform = _pending_compile_only_transform(payloads)
     if pending_transform is None:
         return
+    subcommand = _decision_subcommand(decision)
     if (
-        _decision_subcommand(decision) == "score"
-        and decision.candidate_transform is None
+        subcommand == "score"
+        and decision.candidate_transform == pending_transform
         and not decision.candidate_patch.strip()
     ):
+        return
+    if subcommand == "score" and decision.candidate_transform is None:
         raise ValueError(
             "next_command scores without the pending compile-only candidate_transform; "
-            "include the exact candidate_transform JSON from the follow-up signal or choose "
-            "a materially different transform family"
+            "include the exact candidate_transform JSON from the follow-up signal"
         )
-    if decision.candidate_transform != pending_transform:
-        return
-    if _decision_subcommand(decision) != "compile":
-        return
     raise ValueError(
-        "next_command repeats a successful compile-only candidate_transform; score the "
-        "same structured transform on a validation workload or choose a materially "
-        "different transform family"
+        "pending compile-only candidate_transform must be scored before compiling or "
+        "scoring a different transform"
     )
 
 

@@ -1523,3 +1523,17 @@ source files.
   regressed to `9.304493152841513` geomean TFLOPS versus the current
   `9.507832270603132` best. Do not preserve this V-fragment pipelining move;
   the extra live fragment lifetime does not help the current MMA seed.
+- A 16-step loop after stale-history correction found no new winner and exposed
+  a remaining orchestration issue. All scored candidates were correct but
+  slower: removed score-store `__syncwarp()` scored `9.409806486510405` and
+  later `9.360119168246715`, `kThreads=128` scored `9.06660586019657`,
+  cooperative Q-fragment/register changes scored `8.046233836802045`, and
+  `kThreads=80` scored `9.079055906599761`. The loop also accumulated seven
+  successful compile-only transforms before scoring anything related, including
+  K shared staging, multi-query-tile work mapping, repaired Q async double
+  buffering, K double buffering, and K-register pipelining. Runtime
+  normalization/validation now treats a successful semantic compile as a
+  pending score obligation: any following compile is rewritten to score the
+  pending transform when the seed is known, and validation rejects moving to
+  another transform or command until that exact `candidate_transform` is scored.
+  This is an orchestration invariant, not a CUDA family ban.

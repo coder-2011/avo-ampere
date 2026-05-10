@@ -1949,6 +1949,110 @@ def test_attempt_history_rejects_repeated_compile_only_transform(tmp_path: Path)
     )
 
 
+def test_attempt_history_rejects_new_compile_while_transform_score_pending(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    pending_transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 512,
+    }
+    next_transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kThreads",
+        "value": 80,
+    }
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=pending_transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    with pytest.raises(ValueError, match="must be scored before compiling"):
+        validate_decision_against_attempt_history(
+            decision(
+                "avo compile --source candidates/kernel.cu --out-dir build/kernel2",
+                candidate_transform=next_transform,
+            ),
+            attempts,
+        )
+
+
+def test_attempt_history_rejects_different_score_while_transform_score_pending(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    pending_transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 512,
+    }
+    other_transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kThreads",
+        "value": 80,
+    }
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=pending_transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    with pytest.raises(ValueError, match="must be scored before compiling or scoring"):
+        validate_decision_against_attempt_history(
+            decision(
+                "avo score --backend candidate --candidate candidates/seed.py --seq-lens 512",
+                candidate_transform=other_transform,
+            ),
+            attempts,
+        )
+
+
 def test_attempt_history_rejects_score_without_pending_transform(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     transform = {

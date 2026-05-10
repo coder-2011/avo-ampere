@@ -420,3 +420,14 @@ reject a bad transform family, or explain a score/gate result.
   all 8 target BF16 cases but regressed to `9.304493152841513` geomean TFLOPS
   versus the current `9.507832270603132` best.
 - Retrieval query: `V fragment pipeline hoist next load output chunk loop regression geomean 9.304493152841513`.
+
+- Claim: successful compile-only semantic transforms must be scored before the
+  planner can move to another transform.
+- Evidence source:
+  `attempts/loop_after_stale_history_fix_20260510T1232Z.json` plus the forced
+  pending-score normalizer/validator fix.
+- Why useful: prevents unresolved compile-only transforms from accumulating.
+  The loop produced seven successful compile-only candidates interleaved with
+  unrelated scores/planning failures; none were accepted, and the useful fix was
+  orchestration, not another CUDA ban.
+- Retrieval query: `AVO compile-only transform pending score obligation planner normalization`.
