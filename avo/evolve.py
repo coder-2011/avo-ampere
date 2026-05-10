@@ -1243,6 +1243,19 @@ def _step_transform_family(payload: dict[str, Any]) -> str:
     if not has_edit_payload:
         return "diagnostic_or_planning"
     text = _payload_transform_family_text(payload)
+    if (
+        "kquerytilesperblock" in text
+        or "query tiles per block" in text
+        or "multi-query" in text
+        or "multi query" in text
+    ):
+        return "query_tile_work_mapping"
+    if _payload_transform_sets_constexpr(payload, {"kThreads", "kWarps"}) or re.search(
+        r"\b(?:thread\s+count|threads?\s+per\s+block|warp\s+only|warp-only|"
+        r"warp\s+mapping|blockdim\.x|kthreads)\b",
+        text,
+    ):
+        return "thread_count_or_warp_mapping"
     if any(marker in text for marker in ("cp.async", "__pipeline", "async copy", "async-copy")):
         return "async_copy_pipeline"
     if "shared" in text and any(
@@ -1258,6 +1271,19 @@ def _step_transform_family(payload: dict[str, Any]) -> str:
     if "unroll" in text or "#pragma" in text:
         return "scheduler_or_unroll"
     return "unknown_transform"
+
+
+def _payload_transform_sets_constexpr(payload: dict[str, Any], names: set[str]) -> bool:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    transform = decision.get("candidate_transform")
+    if not isinstance(transform, dict):
+        return False
+    return any(
+        str(step.get("op") or "") == "set_constexpr_int" and str(step.get("name") or "") in names
+        for step in _candidate_transform_steps(transform)
+        if isinstance(step, dict)
+    )
 
 
 def _payload_transform_family_text(payload: dict[str, Any]) -> str:

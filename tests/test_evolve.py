@@ -2288,6 +2288,139 @@ def test_summarize_attempt_history_flags_recurring_transform_family(
     assert "Choose a materially different optimization family" in summary
 
 
+def test_summarize_attempt_history_flags_thread_count_family(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    for index, value in enumerate((32, 128, 256)):
+        transform = {
+            "op": "set_constexpr_int",
+            "path": "candidates/kernel.cu",
+            "name": "kThreads",
+            "value": value,
+        }
+        attempt = VariationAttempt(
+            decision=VariationDecision(
+                hypothesis="retune block thread count",
+                files_to_inspect=["candidates/kernel.cu"],
+                candidate_edit=f"Set kThreads to {value} and score the retune.",
+                expected_effect="may improve occupancy",
+                risk="may reduce useful parallelism",
+                next_command="avo score --backend candidate --candidate candidates/seed.py",
+                edit_mode="transform",
+                candidate_transform=transform,
+            ),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+            score_payload={"all_correct": True, "geomean_tflops": 1.0, "cases": []},
+            patch_result=PatchResult(
+                ok=True,
+                patch_paths=["candidates/kernel.cu"],
+                returncode=0,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+            started_at=f"2026-05-08T00:00:{index:02d}+00:00",
+            completed_at=f"2026-05-08T00:00:{index + 1:02d}+00:00",
+        )
+        write_step_record(
+            attempts,
+            EvolutionStep(
+                attempt=attempt,
+                gate_decision=GateDecision(
+                    accepted=False,
+                    reason="candidate regressed geomean throughput",
+                    candidate_geomean=1.0,
+                    best_geomean=2.0,
+                ),
+            ),
+        )
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "family=thread_count_or_warp_mapping" in summary
+    assert "thread_count_or_warp_mapping(count=3)" in summary
+    assert "Choose a materially different optimization family" in summary
+
+
+def test_summarize_attempt_history_flags_query_tile_work_mapping_family(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    for index, value in enumerate((2, 3, 4)):
+        transform = {
+            "op": "batch",
+            "steps": [
+                {
+                    "op": "insert_after_once",
+                    "path": "candidates/kernel.cu",
+                    "anchor": "constexpr int kTile = 16;",
+                    "text": f"constexpr int kQueryTilesPerBlock = {value};",
+                },
+                {
+                    "op": "replace_once",
+                    "path": "candidates/kernel.cu",
+                    "find": "one query tile per block",
+                    "replace": "query tiles per block loop",
+                },
+            ],
+        }
+        attempt = VariationAttempt(
+            decision=VariationDecision(
+                hypothesis="process multiple query tiles per block",
+                files_to_inspect=["candidates/kernel.cu"],
+                candidate_edit=(
+                    f"Set kQueryTilesPerBlock={value} and wrap query tiles per block."
+                ),
+                expected_effect="may amortize K/V work",
+                risk="may serialize useful parallelism",
+                next_command="avo score --backend candidate --candidate candidates/seed.py",
+                edit_mode="transform",
+                candidate_transform=transform,
+            ),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+            score_payload={"all_correct": True, "geomean_tflops": 1.0, "cases": []},
+            patch_result=PatchResult(
+                ok=True,
+                patch_paths=["candidates/kernel.cu"],
+                returncode=0,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+            started_at=f"2026-05-08T00:00:{index:02d}+00:00",
+            completed_at=f"2026-05-08T00:00:{index + 1:02d}+00:00",
+        )
+        write_step_record(
+            attempts,
+            EvolutionStep(
+                attempt=attempt,
+                gate_decision=GateDecision(
+                    accepted=False,
+                    reason="candidate regressed geomean throughput",
+                    candidate_geomean=1.0,
+                    best_geomean=2.0,
+                ),
+            ),
+        )
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "family=query_tile_work_mapping" in summary
+    assert "query_tile_work_mapping(count=3)" in summary
+    assert "Choose a materially different optimization family" in summary
+
+
 def test_update_promoted_preflight_tracks_persists_mixed_recurring_classes(
     tmp_path: Path,
 ) -> None:
