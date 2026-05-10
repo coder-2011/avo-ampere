@@ -91,6 +91,11 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("ambiguous", "matching start line", "unique anchor"),
         ),
         (
+            "candidate_transform replace_block_once coherent loop body helper replacement "
+            "semantic transform raw diff",
+            ("replace_block_once", "coherent loop/body/helper", "raw CUDA diffs"),
+        ),
+        (
             "compile repair episode failed edit payload replay rejected",
             ("repair", "failed edit payload", "execution"),
         ),

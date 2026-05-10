@@ -282,6 +282,14 @@ reject a bad transform family, or explain a score/gate result.
   to raw CUDA diffs.
 - Retrieval query: `candidate_transform ambiguous anchor matching start lines larger unique anchor`.
 
+- Claim: use `replace_block_once` for coherent loop/body/helper replacement,
+  while keeping `replace_once` for single-line or small expression swaps.
+- Evidence source: runtime candidate-transform schema, materializer, prompt
+  context, and transform-interface tests.
+- Why useful: steers the planner toward small semantic moves instead of tiny
+  text edits or raw CUDA diffs.
+- Retrieval query: `candidate_transform replace_block_once coherent loop body helper replacement semantic transform raw diff`.
+
 - Claim: immediate compile, transform-materialization, and correctness repair
   requests include earlier failed edit payloads from the same repair episode,
   and unchanged replays of any failed episode payload are rejected before
