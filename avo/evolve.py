@@ -619,6 +619,7 @@ def summarize_attempt_history(
     directory: Path | None,
     *,
     limit: int = DEFAULT_ATTEMPT_HISTORY_LIMIT,
+    current_best_geomean: float | None = None,
 ) -> str:
     if directory is None or limit <= 0 or not directory.exists():
         return ""
@@ -627,7 +628,13 @@ def summarize_attempt_history(
     payloads = []
     for path, payload in paths[-limit:]:
         payloads.append(payload)
-        records.append(_summarize_step_payload(path.name, payload))
+        records.append(
+            _summarize_step_payload(
+                path.name,
+                payload,
+                current_best_geomean=current_best_geomean,
+            )
+        )
     if not records:
         return _summarize_promoted_preflight_tracks(directory)
     summary = "Recent attempts, oldest to newest:\n" + "\n".join(
@@ -642,6 +649,12 @@ def summarize_attempt_history(
     followup_signal = _summarize_followup_signal(payloads)
     if followup_signal:
         summary = f"{summary}\n{followup_signal}"
+    stale_signal = _summarize_stale_accepted_signal(
+        payloads,
+        current_best_geomean=current_best_geomean,
+    )
+    if stale_signal:
+        summary = f"{summary}\n{stale_signal}"
     promoted_summary = _summarize_promoted_preflight_tracks(directory)
     if promoted_summary:
         summary = f"{summary}\n{promoted_summary}"
@@ -981,6 +994,31 @@ def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
         f"Materialization error: {_shorten(rejected_reason, 500)}. "
         "Rejected candidate_transform JSON to repair, not reuse unchanged: "
         f"{transform_json}"
+    )
+
+
+def _summarize_stale_accepted_signal(
+    payloads: list[dict[str, Any]],
+    *,
+    current_best_geomean: float | None,
+) -> str:
+    if current_best_geomean is None or current_best_geomean <= 0.0:
+        return ""
+    stale_count = sum(
+        1
+        for payload in payloads
+        if _is_stale_accepted_payload(
+            payload,
+            current_best_geomean=current_best_geomean,
+        )
+    )
+    if stale_count == 0:
+        return ""
+    return (
+        "Lineage correction: recent attempt history contains "
+        f"{stale_count} accepted score(s) above the current lineage best "
+        f"{current_best_geomean:.12g}. Treat entries marked class=stale_accepted as "
+        "reverted or noisy historical acceptances, not as current best state."
     )
 
 
@@ -2015,7 +2053,12 @@ def _filename_safe_timestamp(value: str) -> str:
     return cleaned.strip("-") or _utc_now().replace(":", "-")
 
 
-def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
+def _summarize_step_payload(
+    name: str,
+    payload: dict[str, Any],
+    *,
+    current_best_geomean: float | None = None,
+) -> str:
     attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
     decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
     command_result = (
@@ -2039,15 +2082,58 @@ def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
     cleanup = _patch_cleanup_status(patch_cleanup_result)
     gate = _gate_status(gate_decision)
     score = _score_status(score_payload)
-    failure_class = _step_failure_class(payload)
+    stale_accepted = _is_stale_accepted_payload(
+        payload,
+        current_best_geomean=current_best_geomean,
+    )
+    failure_class = "stale_accepted" if stale_accepted else _step_failure_class(payload)
     transform_family = _step_transform_family(payload)
     repair_details = _repair_attempts_status(repair_attempts)
     command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
     hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
+    lineage_note = _stale_accepted_status(
+        payload,
+        current_best_geomean=current_best_geomean,
+    )
     return (
         f"{name}: class={failure_class}; family={transform_family}; {status}; {patch}; {cleanup}; "
-        f"repairs={repair_count}{repair_details}; {gate}; {score}; "
+        f"repairs={repair_count}{repair_details}; {gate}{lineage_note}; {score}; "
         f"command={command}; hypothesis={hypothesis}"
+    )
+
+
+def _is_stale_accepted_payload(
+    payload: dict[str, Any],
+    *,
+    current_best_geomean: float | None,
+) -> bool:
+    if current_best_geomean is None or current_best_geomean <= 0.0:
+        return False
+    if not _step_payload_accepted(payload):
+        return False
+    score_payload = _step_score_payload(payload)
+    if not isinstance(score_payload, dict):
+        return False
+    try:
+        candidate_geomean = float(score_payload.get("geomean_tflops") or 0.0)
+    except (TypeError, ValueError):
+        return False
+    return candidate_geomean > current_best_geomean + 1e-9
+
+
+def _stale_accepted_status(
+    payload: dict[str, Any],
+    *,
+    current_best_geomean: float | None,
+) -> str:
+    if not _is_stale_accepted_payload(
+        payload,
+        current_best_geomean=current_best_geomean,
+    ):
+        return ""
+    return (
+        f"; lineage status=stale accepted above current best {current_best_geomean:.12g}; "
+        "treat as reverted/noisy, not current best"
     )
 
 

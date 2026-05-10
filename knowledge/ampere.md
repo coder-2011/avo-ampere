@@ -1501,3 +1501,17 @@ source files.
   a known seed family, the payload normalizer rewrites it into the corresponding
   target `avo score` command; when CUPTI/Nsight is unavailable, the variation
   prompt no longer lists `profile` as an allowed command.
+- A 12-step validation loop after the one-shot gate found no new accepted
+  candidate, but it confirmed that compile self-repair and pending-transform
+  score recovery are useful. Repaired vectorized K staging compiled and scored
+  correct but slow at `3.626402277701616` geomean TFLOPS; cooperative K staging
+  similarly regressed to `3.614179233547189`. Other correct regressions included
+  barrier removal at `9.449127781532056`, `kThreads=64` at
+  `9.100221174050498`, V-loop unroll at `9.419139786612444`, and
+  `kThreads=80` at `9.002945885589778`. The same loop exposed a planner-state
+  bug: raw attempt history still contained a reverted noisy
+  `gate accepted=true` syncwarp-removal record above the current lineage best.
+  Attempt summaries now mark accepted scores above the current lineage best as
+  `class=stale_accepted` and explicitly tell the planner to treat them as
+  reverted or noisy historical acceptances, not the current best. This is a
+  state-consistency fix, not a CUDA preflight ban.

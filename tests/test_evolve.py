@@ -999,6 +999,37 @@ def test_summarize_attempt_history_reports_recent_steps(tmp_path: Path) -> None:
     assert "bad.json" not in summary
 
 
+def test_summarize_attempt_history_marks_reverted_acceptance_stale(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    accepted_score = {
+        "backend": "mock",
+        "all_correct": True,
+        "geomean_tflops": 9.54,
+        "cases": [{}],
+    }
+    accepted_attempt = VariationAttempt(
+        decision=decision("avo score --backend candidate"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        score_payload=accepted_score,
+    )
+    write_step_record(attempts, finalize_attempt(tmp_path / "lineage", accepted_attempt))
+
+    summary = summarize_attempt_history(attempts, limit=5, current_best_geomean=9.50)
+
+    assert "class=stale_accepted" in summary
+    assert "lineage status=stale accepted above current best 9.5" in summary
+    assert "Lineage correction" in summary
+    assert "reverted or noisy historical acceptances" in summary
+
+
 def test_summarize_attempt_history_ignores_loop_and_score_json(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     attempt = VariationAttempt(

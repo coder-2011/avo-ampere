@@ -400,3 +400,14 @@ reject a bad transform family, or explain a score/gate result.
   candidate while preserving the ability to test small semantic moves with
   `repeats>=3`/`warmup>=2` confirmation.
 - Retrieval query: `one-shot timing noise gate repeats 1 warmup 1 require 0.5 percent improvement confirmation repeats 3 warmup 2`.
+
+- Claim: accepted attempt-history records can be stale after lineage correction;
+  an old `gate accepted=true` JSON entry should not be treated as current best
+  when its score is above the actual lineage best.
+- Evidence source: validation loop
+  `loop_after_one_shot_gate_20260510T1142Z.json` plus the stale-history
+  summarizer fix.
+- Why useful: prevents the planner from continuing to optimize around reverted
+  noisy acceptances such as the removed-syncwarp `9.53940653329568` score when
+  the corrected lineage best is the syncwarp-present `9.507832270603132` score.
+- Retrieval query: `stale accepted attempt history lineage current best noisy reverted acceptance planner context`.

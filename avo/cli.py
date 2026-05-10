@@ -55,7 +55,13 @@ from .evolve import (
 )
 from .isolation import RESULT_PREFIX, module_worker_args, print_result, run_json_worker
 from .knowledge import build_knowledge_context
-from .lineage import commit_score, init_lineage_repo, lineage_score_summary, seed_baseline
+from .lineage import (
+    best_geomean,
+    commit_score,
+    init_lineage_repo,
+    lineage_score_summary,
+    seed_baseline,
+)
 
 GENERAL_CUDA_PRACTICE_QUERY = (
     "CUDA Kernel Design Practice Basic Mental Model Decomposing Work Indexing "
@@ -1197,7 +1203,12 @@ def _payload_subcommand(payload: dict[str, Any]) -> str:
 
 def _planning_context(args: argparse.Namespace) -> tuple[str, str, str, str]:
     lineage_summary = _lineage_summary(args.lineage)
-    attempt_history = summarize_attempt_history(args.attempts_dir, limit=args.attempt_limit)
+    current_best = best_geomean(args.lineage)
+    attempt_history = summarize_attempt_history(
+        args.attempts_dir,
+        limit=args.attempt_limit,
+        current_best_geomean=current_best if current_best > 0.0 else None,
+    )
     repo_context = build_repo_context(args.cwd)
     knowledge_query = _knowledge_query(
         lineage_summary=lineage_summary,
