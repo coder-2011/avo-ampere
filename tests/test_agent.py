@@ -3061,6 +3061,8 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "real optimization steps should move toward the target workload" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
+    assert "Use avo score only for correctness validation, timing samples, and TFLOPS" in context
+    assert "It does not report profiler metrics" in context
     assert "No-patch compiles of existing CUDA candidates" in context
     assert "candidates/cuda_mma_attention/attention_kernel.cu" in context
     assert "Preferred edit channel: candidate_transform" in context

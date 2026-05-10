@@ -691,6 +691,9 @@ def build_repo_context(root: Path) -> str:
         "build/environment failure gives a concrete reason.",
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
         "candidate_transform/candidate_patch, not source-file inspection.",
+        "Use avo score only for correctness validation, timing samples, and TFLOPS. "
+        "It does not report profiler metrics such as bandwidth, occupancy, scheduler "
+        "stalls, instruction mix, or tensor-core utilization.",
         profile_usage_context,
         "Target workload is realistic long-sequence BF16 attention on sm_86: seq_lens "
         "4096/8192/16384/32768, total_tokens around 32768, num_heads around 16, "
