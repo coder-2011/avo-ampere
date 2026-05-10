@@ -139,10 +139,16 @@ def score_backend(
                         *candidate_source_files,
                         *extension_sources.source_files(),
                         *_candidate_runtime_imported_source_files(candidate),
+                        *_candidate_companion_source_files(candidate),
                     )
                 )
         except Exception as exc:
-            candidate_source_files = extension_sources.source_files()
+            candidate_source_files = _dedupe_source_files(
+                (
+                    *extension_sources.source_files(),
+                    *_candidate_companion_source_files(candidate),
+                )
+            )
             scores = [
                 _failed_candidate_score(case, f"{type(exc).__name__}: {exc}") for case in cases
             ]
@@ -528,6 +534,40 @@ def _candidate_runtime_imported_source_files(candidate_path: Path) -> tuple[str,
     return _dedupe_source_files(paths)
 
 
+def _candidate_companion_source_files(candidate_path: Path) -> tuple[str, ...]:
+    source_root = _candidate_source_root(candidate_path)
+    if source_root is None:
+        return ()
+    candidate_relative = _candidate_runtime_source_path(source_root, candidate_path)
+    if candidate_relative is None:
+        return ()
+    paths: list[str] = []
+    for directory in _candidate_companion_source_directories(
+        PurePosixPath(candidate_relative)
+    ):
+        root = source_root / directory
+        if not root.is_dir() or _has_candidate_symlink_component(source_root, root):
+            continue
+        for file_path in sorted(root.rglob("*")):
+            if not file_path.is_file():
+                continue
+            normalized = _candidate_runtime_source_path(source_root, file_path)
+            if normalized is not None:
+                paths.append(normalized)
+    return _dedupe_source_files(paths)
+
+
+def _candidate_companion_source_directories(
+    candidate_path: PurePosixPath,
+) -> tuple[PurePosixPath, ...]:
+    if candidate_path.suffix != ".py":
+        return ()
+    stems = [candidate_path.stem]
+    if candidate_path.stem.endswith("_seed"):
+        stems.insert(0, candidate_path.stem.removesuffix("_seed"))
+    return tuple(candidate_path.parent / stem for stem in dict.fromkeys(stems))
+
+
 def _candidate_source_root(candidate_path: Path) -> Path | None:
     resolved = candidate_path.resolve()
     for parent in (resolved.parent, *resolved.parents):
@@ -547,6 +587,19 @@ def _candidate_runtime_source_path(source_root: Path, raw_path: Path) -> str | N
     ):
         return None
     return PurePosixPath("candidates", *relative.parts).as_posix()
+
+
+def _has_candidate_symlink_component(source_root: Path, path: Path) -> bool:
+    try:
+        relative = path.relative_to(source_root)
+    except ValueError:
+        return True
+    current = source_root
+    for part in relative.parts:
+        current = current / part
+        if current.is_symlink():
+            return True
+    return False
 
 
 def _dedupe_source_files(paths: Iterable[str]) -> tuple[str, ...]:

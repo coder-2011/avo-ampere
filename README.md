@@ -334,15 +334,18 @@ edit but the step is not accepted by the score gate, it checks and applies the
 reverse patch so rejected edits do not pollute the next attempt. When a
 candidate step is accepted, the lineage commit records `sources/latest/...`
 snapshots for the scored candidate module and companion source directory
-alongside `scores/latest.json`; direct local Python imports under `candidates/`
-and Python modules dynamically imported from the same `candidates/` tree, plus
-statically declared or runtime-observed
+alongside `scores/latest.json`. Candidate score payloads also report source
+files from scoped companion directories such as `candidates/foo/` for
+`candidates/foo_seed.py`, so repair prompts can see generated CUDA helpers even
+when they are not imported or passed to extension loading. Direct local Python
+imports under `candidates/` and Python modules dynamically imported from the
+same `candidates/` tree, plus statically declared or runtime-observed
 `torch.utils.cpp_extension.load(sources=[...])` files are included in that
 snapshot. Candidate modules can also expose
 `AVO_SOURCE_FILES` or `__avo_source_files__` as a path or iterable of paths for
-runtime-discovered CUDA/source files, such as dynamically assembled extension
-sources. `sources/latest/manifest.json` records path, size, and hash metadata
-for audit. Accepted edited steps also record
+runtime-discovered CUDA/source files outside those scoped companion directories,
+such as dynamically assembled extension sources. `sources/latest/manifest.json`
+records path, size, and hash metadata for audit. Accepted edited steps also record
 `patches/latest.patch`.
 
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the suite-aware lineage gate. Candidates compare against the best prior score with the same benchmark case signature; a new signature can establish its own lane when correctness passes and source artifacts are captured.
@@ -377,7 +380,7 @@ When an applied edit fails compile, transform materialization, or correctness, t
 - Optimizing the accepted seq32768 WMMA QK/PV seed beyond shape coverage toward FA2-competitive throughput.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
 - Longer-running autonomous supervision beyond the capped `evolve-loop`, including richer active intervention beyond the current attempt-memory signals, promoted checks, and provider-outage stop policy.
-- Automatic capture of generated source files that are never imported, passed through `torch.utils.cpp_extension.load`, or reported through the explicit source-file manifest hook.
+- Automatic capture of generated source files outside the candidate module, scoped companion directories, observed `torch.utils.cpp_extension.load` calls, imports, or explicit source-file manifest hook.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.
 

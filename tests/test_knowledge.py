@@ -130,13 +130,14 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("baseline_comparisons", "candidate-vs-baseline", "gap"),
         ),
         (
-            "candidate runtime torch cpp_extension load sources dynamic import "
-            "AVO_SOURCE_FILES __avo_source_files__ lineage snapshot",
+            "candidate companion source directory generated CUDA helper runtime "
+            "torch cpp_extension load AVO_SOURCE_FILES lineage snapshot",
             (
-                "runtime-loaded python modules",
+                "companion source directories",
+                "generated companion-directory helpers",
+                "python modules dynamically",
                 "torch.utils.cpp_extension.load",
                 "AVO_SOURCE_FILES",
-                "__avo_source_files__",
                 "lineage snapshots",
             ),
         ),

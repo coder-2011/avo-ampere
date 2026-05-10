@@ -118,6 +118,28 @@ def test_candidate_backend_reports_runtime_torch_extension_sources(
     ]
 
 
+def test_candidate_backend_reports_candidate_companion_sources(tmp_path: Path) -> None:
+    candidate_dir = tmp_path / "candidates"
+    companion_dir = candidate_dir / "cuda_demo"
+    companion_dir.mkdir(parents=True)
+    candidate = candidate_dir / "cuda_demo_seed.py"
+    candidate.write_text(
+        "def attention(q, k, v, causal):\n"
+        "    return q\n",
+        encoding="utf-8",
+    )
+    (companion_dir / "attention.cpp").write_text("// cpp binding\n", encoding="utf-8")
+    (companion_dir / "attention_kernel.cu").write_text("// cuda kernel\n", encoding="utf-8")
+    (companion_dir / "compiled.so").write_bytes(b"not source")
+
+    summary = score_backend("candidate", [], warmup=0, repeats=0, candidate=candidate)
+
+    assert summary["candidate_source_files"] == [
+        "candidates/cuda_demo/attention.cpp",
+        "candidates/cuda_demo/attention_kernel.cu",
+    ]
+
+
 def test_candidate_backend_keeps_runtime_torch_extension_sources_on_load_failure(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
