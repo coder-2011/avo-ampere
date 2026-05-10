@@ -296,12 +296,17 @@ reject a bad transform family, or explain a score/gate result.
 
 ## Search Evidence
 
-- Claim: the current best accepted local candidate is the MMA seed with
-  `kThreads=128`, full-target correctness, and geomean `7.777584666360881`
-  TFLOPS.
-- Evidence source: accepted lineage and experiment log.
-- Why useful: anchors the gate and makes later regressions interpretable.
-- Retrieval query: `best accepted kThreads 128 geomean 7.777584666360881 full target`.
+- Claim: the current best accepted local candidate preserves Q-fragment register
+  reuse and additionally hoists the PV-side `probability_frag` load out of the
+  output-chunk loop. It passed all 8 full-target BF16 cases with gate geomean
+  `9.157629176515384` TFLOPS; a repeats-3 confirmation scored
+  `9.237725222665237` geomean TFLOPS.
+- Evidence source: accepted lineage, loop
+  `loop_after_semantic_family_async_softening_20260510T0540Z.json`, and
+  confirmation score.
+- Why useful: anchors the gate and distinguishes the real accepted move
+  (probability-fragment reuse) from the planner's overstated V-reuse rationale.
+- Retrieval query: `accepted probability_frag reuse geomean 9.157629176515384 repeat confirmation 9.237725222665237`.
 
 - Claim: `kThreads=64` is correct but slower, scoring geomean
   `7.587127963961811` TFLOPS versus best `7.777584666360881`.

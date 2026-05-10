@@ -133,14 +133,16 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
     __syncthreads();
 
     if (threadIdx.x < warpSize) {
+      wmma::fragment<wmma::matrix_a,
+                     kTile,
+                     16,
+                     kTile,
+                     __nv_bfloat16,
+                     wmma::row_major>
+          probability_frag;
+      wmma::load_matrix_sync(probability_frag, probabilities, kTile);
+
       for (int chunk = 0; chunk < 8; ++chunk) {
-        wmma::fragment<wmma::matrix_a,
-                       kTile,
-                       16,
-                       kTile,
-                       __nv_bfloat16,
-                       wmma::row_major>
-            probability_frag;
         wmma::fragment<wmma::matrix_b,
                        kTile,
                        16,
@@ -152,7 +154,6 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
 
         const int chunk_offset = chunk * 16;
         wmma::load_matrix_sync(output_frag, &output_acc[chunk_offset], kHeadDim, wmma::mem_row_major);
-        wmma::load_matrix_sync(probability_frag, probabilities, kTile);
         wmma::load_matrix_sync(v_frag, v + base + key_start * kHeadDim + chunk_offset, kHeadDim);
         wmma::mma_sync(output_frag, probability_frag, v_frag, output_frag);
         wmma::store_matrix_sync(&output_acc[chunk_offset], output_frag, kHeadDim, wmma::mem_row_major);

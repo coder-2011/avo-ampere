@@ -1393,3 +1393,26 @@ source files.
   tolerance failures. Treat standalone K shared staging as exhausted negative
   evidence for this seed unless it is part of a broader FA2-like pipeline with
   correct staged layout, overlap, and PV/softmax scheduling changes.
+- After adding semantic-family attempt memory and relaxing async-copy
+  granularity guidance, a longer loop produced one new accepted MMA transform.
+  The first step still failed planning validation by trying to repeat an
+  unpatched MMA seed score. The next transform changed `kThreads` from 128 to
+  256; it compiled with 64 registers, 1 barrier, 9920 bytes shared memory, and
+  no spills, but full-target BF16 scoring regressed to `5.788182135598767`
+  geomean TFLOPS versus best `8.960753680686471`. A later `kTile=32` proposal
+  was rejected before compile by the shape-contract preflight because it did not
+  implement the required second 16-row sub-tile dataflow. The accepted transform
+  then hoisted the PV-side `probability_frag` declaration and
+  `wmma::load_matrix_sync(probability_frag, probabilities, kTile)` out of the
+  eight-output-chunk loop, so the probability WMMA A fragment is loaded once per
+  key tile instead of once per output chunk. The agent's decision text
+  overstated this as V-tile reuse, but the materialized patch is probability
+  fragment reuse; V still loads once per output chunk. The loop gate accepted
+  the patch at `9.157629176515384` geomean TFLOPS, with all 8 full-target BF16
+  cases correct. A follow-up score with repeats 3 and warmup 2 confirmed
+  `9.237725222665237` geomean TFLOPS. Standalone compile on sm86 used 64
+  registers, 1 barrier, 9920 bytes shared memory, and no spills. Preserve both
+  accepted reuse moves now: `q_frags[8]` across K tiles and `probability_frag`
+  across PV output chunks. Future PV/V work should not undo this hoist; if it
+  claims V reuse, the materialized patch must actually reduce V loads or change
+  V staging rather than only rewording the probability-fragment hoist.
