@@ -31,7 +31,9 @@ SKIPPED_SOURCE_PARTS = frozenset({"__pycache__"})
 SUPERVISOR_REPEAT_THRESHOLD = 3
 SUPERVISOR_EXHAUSTION_THRESHOLD = 5
 PROMOTED_PREFLIGHT_TRACKS_FILENAME = "preflight_tracks.json"
-IGNORED_FAILURE_CLASSES = frozenset({"accepted", "unknown", "command_failed"})
+IGNORED_FAILURE_CLASSES = frozenset(
+    {"accepted", "unknown", "command_failed", "planner_provider_error"}
+)
 COMPILE_FAILURE_DETAIL_MARKERS = (
     "nvcc",
     "ptxas",
@@ -1472,6 +1474,8 @@ def _repeated_unaccepted_fingerprint(
     window = payloads[-threshold:]
     if any(_step_payload_accepted(payload) for payload in window):
         return None
+    if all(_step_failure_class(payload) == "planner_provider_error" for payload in window):
+        return None
     fingerprints = {_step_payload_fingerprint(payload) for payload in window}
     if len(fingerprints) == 1:
         return next(iter(fingerprints))
@@ -2392,6 +2396,8 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
 
 
 def _classify_planning_failure(detail: str) -> str:
+    if _is_planner_provider_error(detail):
+        return "planner_provider_error"
     if "candidate_patch and candidate_transform are mutually exclusive" in detail:
         return "planning_edit_channel"
     if "pending compile-only candidate_transform" in detail:
@@ -2409,6 +2415,23 @@ def _classify_planning_failure(detail: str) -> str:
     if "candidate_transform" in detail:
         return "planning_transform_preflight"
     return "planning_validation"
+
+
+def _is_planner_provider_error(detail: str) -> bool:
+    provider_markers = (
+        "badrequesterror",
+        "apierror",
+        "apiconnectionerror",
+        "apistatuserror",
+        "apitimeouterror",
+        "ratelimiterror",
+        "overloadederror",
+        "provider unavailable",
+        "credit balance",
+        "plans & billing",
+        "anthropic",
+    )
+    return any(marker in detail for marker in provider_markers)
 
 
 def _classify_patch_failure(patch_result: dict[str, Any]) -> str:

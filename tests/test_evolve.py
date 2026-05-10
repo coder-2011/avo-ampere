@@ -1531,6 +1531,24 @@ def test_summarize_attempt_history_classifies_predicted_correctness_planning_fai
     assert "planning_feedback=ValueError: candidate_patch is described as known invalid" in summary
 
 
+def test_summarize_attempt_history_classifies_provider_failure_without_supervisor_signal(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    for _ in range(3):
+        step = planning_failure_step(
+            RuntimeError("provider unavailable: Anthropic BadRequestError credit balance")
+        )
+        write_step_record(attempts, step)
+
+    state = update_promoted_preflight_tracks(attempts)
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=planner_provider_error" in summary
+    assert "Supervisor signal:" not in summary
+    assert "planner_provider_error" not in state["tracks"]
+
+
 def test_planning_feedback_class_is_not_promoted_without_concrete_preflight(
     tmp_path: Path,
 ) -> None:
