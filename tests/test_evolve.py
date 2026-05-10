@@ -2109,6 +2109,100 @@ def test_attempt_history_rejects_repeated_compile_only_transform(tmp_path: Path)
     )
 
 
+def test_attempt_history_rejects_repeated_scored_unaccepted_transform(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "replace_once",
+        "path": "candidates/kernel.cu",
+        "find": "constexpr int kThreads = 96;",
+        "replace": "constexpr int kThreads = 80;",
+    }
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 4096",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={
+            "all_correct": True,
+            "geomean_tflops": 9.10,
+            "cases": [],
+        },
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(
+        attempts,
+        EvolutionStep(
+            attempt=attempt,
+            gate_decision=GateDecision(
+                accepted=False,
+                reason="candidate regressed geomean throughput",
+                candidate_geomean=9.10,
+                best_geomean=9.50,
+            ),
+        ),
+    )
+
+    with pytest.raises(ValueError, match="previously scored unaccepted transform"):
+        validate_decision_against_attempt_history(
+            decision(
+                "avo score --backend candidate --candidate candidates/seed.py --seq-lens 4096",
+                candidate_transform=transform,
+            ),
+            attempts,
+        )
+
+
+def test_attempt_history_allows_repeated_transform_after_score_environment_error(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "replace_once",
+        "path": "candidates/kernel.cu",
+        "find": "constexpr int kThreads = 96;",
+        "replace": "constexpr int kThreads = 80;",
+    }
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 4096",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={
+            "all_correct": False,
+            "geomean_tflops": 0.0,
+            "cases": [{"error": "RuntimeError: CUDA is not available"}],
+        },
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    validate_decision_against_attempt_history(
+        decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 4096",
+            candidate_transform=transform,
+        ),
+        attempts,
+    )
+
+
 def test_attempt_history_rejects_new_compile_while_transform_score_pending(
     tmp_path: Path,
 ) -> None:

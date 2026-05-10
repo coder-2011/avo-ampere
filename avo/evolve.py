@@ -731,6 +731,15 @@ def validate_decision_against_attempt_history(
             "same structured transform on a validation workload or choose a materially "
             "different transform family"
         )
+    if (
+        decision.candidate_transform is not None
+        and _has_scored_unaccepted_transform(payloads, decision.candidate_transform)
+    ):
+        raise ValueError(
+            "candidate_transform repeats a previously scored unaccepted transform; choose a "
+            "materially different structured transform or run a diagnostic that changes the "
+            "next search direction"
+        )
     pending_transform = _pending_compile_only_transform(payloads)
     if pending_transform is None:
         return
@@ -1123,6 +1132,29 @@ def _has_successful_compile_only_transform(
         )
         if previous is not None
     )
+
+
+def _has_scored_unaccepted_transform(
+    payloads: list[dict[str, Any]],
+    transform: dict[str, Any],
+) -> bool:
+    transform_identity = _transform_identity(transform)
+    for payload in reversed(payloads):
+        attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+        decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+        previous_transform = decision.get("candidate_transform")
+        if not isinstance(previous_transform, dict):
+            continue
+        if _transform_identity(previous_transform) != transform_identity:
+            continue
+        if _step_payload_accepted(payload):
+            return False
+        if not _payload_has_score_payload(payload):
+            continue
+        if _step_failure_class(payload) == "score_environment_error":
+            continue
+        return True
+    return False
 
 
 def _pending_compile_only_transform(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
