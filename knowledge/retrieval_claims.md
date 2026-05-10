@@ -265,14 +265,15 @@ reject a bad transform family, or explain a score/gate result.
 
 ## CUDA Structural Constraints
 
-- Claim: future `cp.async` attempts must use aligned 16-byte groups, treat 16
-  bytes as 8 BF16 elements, keep scalar tails disjoint, preserve zero-fill or
-  guarded shared state for partial tiles, and add real overlap rather than an
-  immediate copy/commit/wait sequence.
+- Claim: future `cp.async` attempts should prefer aligned 16-byte groups and
+  treat 16 bytes as 8 BF16 elements, but copy granularity alone should not be a
+  hard rejection. Hard structural requirements are disjoint scalar tails or
+  narrower API probes, preserved zero-fill or guarded shared state for partial
+  tiles, and real overlap rather than an immediate copy/commit/wait sequence.
 - Evidence source: NVIDIA CUDA/CUTLASS references plus failed local async-copy
   attempts.
-- Why useful: turns several recurring malformed async-copy attempts into a
-  constructive structural contract.
+- Why useful: separates performance guidance from hard structural invariants so
+  coherent async-copy dataflow can reach compile/repair.
 - Retrieval query: `Ampere cp.async 16-byte aligned groups scalar BF16 async copy real dataflow`.
 
 - Claim: Ampere BF16 WMMA fragment edits should keep the supported 16x16x16

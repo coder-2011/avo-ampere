@@ -129,25 +129,26 @@ history.
   compile because the raw diff had trailing whitespace and corrupt hunk structure. Its proposed
   structure was also invalid for future attempts: it issued 16-byte async copies at scalar element
   positions, dropped zero-fill for out-of-tile lanes, and waited immediately with no double-buffered
-  overlap. Any new cp.async patch must use vector-aligned 16-byte groups, preserve zero-fill or
-  guarded shared-memory state for partial tiles, and introduce a real overlapped pipeline rather
+  overlap. Future cp.async patches should prefer vector-aligned 16-byte groups for throughput, but
+  copy granularity alone is not a hard rejection. Hard invariants are initialized or zero-filled
+  shared state for partial tiles, clear address ownership, and a real overlapped pipeline rather
   than a single-stage copy/wait replacement.
 - A later MMA single-stage cp.async patch was also rejected before compile with
   `error: corrupt patch at line 53`. It proposed scalar BF16 element
   `__pipeline_memcpy_async` calls into a 16x16 K tile and an immediate
   commit/wait before `wmma::load_matrix_sync`, so even a syntactically valid
-  version would not be a useful Ampere pipeline. For MMA cp.async attempts, use
-  aligned 16-byte groups (8 BF16 elements), keep scalar tails disjoint, and
-  compile-check a clean diff before attempting any score.
+  version would not be a useful Ampere pipeline. For MMA cp.async attempts, prefer
+  aligned 16-byte groups (8 BF16 elements), keep scalar tails or narrower API probes justified and
+  disjoint, and compile-check a clean transform before attempting any score.
 - A later double-buffered cp.async warp-row patch applied but failed compile on this NVCC/header
   path because `__pipeline_commit` and `__pipeline_wait_prior` were undefined. Do not use those
   intrinsics here unless the necessary CUDA pipeline API/include contract is first proven by a tiny
   compile smoke. Prefer a known-good inline PTX `cp.async` helper or the standard CUDA pipeline API
   with the exact required includes. That patch also treated a BF16 16-byte copy as if it covered
   16 elements; 16 bytes is 8 BF16 elements, so vector groups should be aligned on 8-element
-  boundaries. Do not mix scalar fallback stores into the same shared-memory range while an async
-  vector copy to that range is pending; handle full 16-byte groups and scalar tails as disjoint
-  regions after the wait/commit protocol is correct.
+  boundaries when the hypothesis is throughput-oriented. Do not mix scalar fallback stores into
+  the same shared-memory range while an async vector copy to that range is pending; handle vector
+  groups and scalar tails as disjoint regions after the wait/commit protocol is correct.
 - Local CUDA 13 headers expose the failed `__pipeline_memcpy_async`, `__pipeline_commit`, and
   `__pipeline_wait_prior` names through `cuda_pipeline_primitives.h`, not through the default
   candidate includes. That header routes 16-byte copies to `cp.async.cg.shared.global`, supports a
@@ -171,9 +172,9 @@ history.
   That tiny compile smoke has now succeeded on the warp-row source for sm86: adding the header plus
   unused wrappers around `__pipeline_memcpy_async`, `__pipeline_commit`, and
   `__pipeline_wait_prior` compiled with no spills. NVCC warned only that the commit/wait wrappers
-  were unused. This proves header/API availability, not performance. The next cp.async attempt must
-  still add a real double-buffered overlap and must keep 16-byte groups aligned and disjoint from
-  scalar tail writes.
+  were unused. This proves header/API availability, not performance. The next cp.async attempt
+  still needs real double-buffered overlap; 16-byte groups are preferred for throughput, while
+  narrower copies are acceptable only as coherent API probes or disjoint tail handling.
   A fresh primary-source pass over NVIDIA CUTLASS's Ampere FlashAttention v2 example and
   FlashAttention-2 SM80 traits reinforced the same target shape: Q/K/V global-to-shared copies use
   128-bit copy atoms, BF16 head-dim128 maps to 8 BF16 values per global-copy vector, shared layouts
