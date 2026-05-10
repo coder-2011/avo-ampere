@@ -14,6 +14,8 @@ DECISION_TOOL_NAME = "record_variation_decision"
 DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250929"
 DEFAULT_AGENT_REQUEST_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_DELAY_S = 1.0
+DEFAULT_AGENT_REQUEST_TIMEOUT_S = 180.0
+AGENT_REQUEST_TIMEOUT_ENV = "AVO_AGENT_REQUEST_TIMEOUT_S"
 ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "profile", "score"})
 EDIT_MODES = frozenset({"legacy_patch", "no_edit", "transform"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
@@ -580,8 +582,22 @@ def request_variation_decision(
         "model": model,
         "max_tokens": 4000,
         "messages": [{"role": "user", "content": prompt}],
+        "timeout": _agent_request_timeout_s(),
     }
     return _request_valid_decision(client, kwargs, normalize_payload=normalize_payload)
+
+
+def _agent_request_timeout_s() -> float:
+    raw = os.environ.get(AGENT_REQUEST_TIMEOUT_ENV)
+    if not raw:
+        return DEFAULT_AGENT_REQUEST_TIMEOUT_S
+    try:
+        timeout = float(raw)
+    except ValueError:
+        return DEFAULT_AGENT_REQUEST_TIMEOUT_S
+    if timeout <= 0.0:
+        return DEFAULT_AGENT_REQUEST_TIMEOUT_S
+    return timeout
 
 
 def build_variation_prompt(

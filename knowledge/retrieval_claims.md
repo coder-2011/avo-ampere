@@ -431,3 +431,13 @@ reject a bad transform family, or explain a score/gate result.
   unrelated scores/planning failures; none were accepted, and the useful fix was
   orchestration, not another CUDA ban.
 - Retrieval query: `AVO compile-only transform pending score obligation planner normalization`.
+
+- Claim: planner model requests need their own timeout, separate from CUDA
+  compile/score subprocess timeouts.
+- Evidence source: interrupted validation attempt
+  `loop_after_forced_pending_score_20260510T1319Z` plus the Anthropic request
+  timeout implementation.
+- Why useful: prevents a slow Anthropic planner call from holding the whole
+  evolve loop indefinitely. Runtime now defaults to a 180-second planner request
+  timeout and allows `AVO_AGENT_REQUEST_TIMEOUT_S` override.
+- Retrieval query: `Anthropic SDK messages create timeout agent planner request latency`.

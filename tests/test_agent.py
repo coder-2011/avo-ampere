@@ -7,7 +7,9 @@ import pytest
 from avo.agent import (
     DECISION_TOOL_NAME,
     DEFAULT_AGENT_MODEL,
+    DEFAULT_AGENT_REQUEST_TIMEOUT_S,
     VariationDecision,
+    _agent_request_timeout_s,
     _decision_kwargs_with_feedback,
     _request_decision_response,
     _request_valid_decision,
@@ -3286,6 +3288,20 @@ def test_decision_tool_uses_strict_schema() -> None:
 
 def test_default_agent_model_supports_structured_outputs_family() -> None:
     assert DEFAULT_AGENT_MODEL == "claude-sonnet-4-5-20250929"
+
+
+def test_agent_request_timeout_has_env_override(monkeypatch) -> None:
+    monkeypatch.delenv("AVO_AGENT_REQUEST_TIMEOUT_S", raising=False)
+    assert _agent_request_timeout_s() == DEFAULT_AGENT_REQUEST_TIMEOUT_S
+
+    monkeypatch.setenv("AVO_AGENT_REQUEST_TIMEOUT_S", "42.5")
+    assert _agent_request_timeout_s() == 42.5
+
+    monkeypatch.setenv("AVO_AGENT_REQUEST_TIMEOUT_S", "0")
+    assert _agent_request_timeout_s() == DEFAULT_AGENT_REQUEST_TIMEOUT_S
+
+    monkeypatch.setenv("AVO_AGENT_REQUEST_TIMEOUT_S", "not-a-number")
+    assert _agent_request_timeout_s() == DEFAULT_AGENT_REQUEST_TIMEOUT_S
 
 
 def test_build_repo_context_lists_local_candidates() -> None:

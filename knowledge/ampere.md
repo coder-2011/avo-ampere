@@ -1537,3 +1537,10 @@ source files.
   pending transform when the seed is known, and validation rejects moving to
   another transform or command until that exact `candidate_transform` is scored.
   This is an orchestration invariant, not a CUDA family ban.
+- A short validation loop for the forced pending-score invariant stalled before
+  emitting a step record because the planner request stayed in flight too long.
+  Runtime planner requests now pass an explicit Anthropic request timeout
+  (`180` seconds by default, override with `AVO_AGENT_REQUEST_TIMEOUT_S`). A
+  planner-only smoke with `AVO_AGENT_REQUEST_TIMEOUT_S=45` returned a structured
+  transform without dirtying the tree. This bounds model-call latency separately
+  from CUDA compile/score subprocess timeouts.
