@@ -87,6 +87,7 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
 
       wmma::store_matrix_sync(scores, score_frag, kTile, wmma::mem_row_major);
     }
+    __syncwarp();
     __syncthreads();
 
     for (int row = threadIdx.x; row < kTile; row += blockDim.x) {

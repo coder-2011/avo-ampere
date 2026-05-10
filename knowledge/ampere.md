@@ -1453,3 +1453,19 @@ source files.
   multiple query tiles inside one block does not create useful K/V reuse or
   amortization; future multi-query-tile work needs a real shared K/V schedule or
   cooperative split, not just a per-block loop around the existing computation.
+- The next family-guided loop accepted two small but real runtime moves and
+  added more negative evidence for standalone staging. A `kThreads=96` retune
+  passed all 8 full-target BF16 cases and improved gate geomean from
+  `9.168741394385114` to `9.451443582484515`; a later `kThreads=128` retune
+  passed correctness but regressed to `9.16374468686178`, so `96` is the current
+  local thread-count sweet spot. Cooperative K/V shared staging with padding
+  passed correctness but regressed to `3.640496322360991`, and K-only shared
+  staging regressed to `3.6932886091263213`. A single-stage K async-copy
+  transform compiled, but target scoring failed correctness/runtime isolation
+  with CUDA launch/unknown errors and geomean `0.0`. The accepted follow-up
+  added `__syncwarp()` before the existing block-wide `__syncthreads()` after
+  `wmma::store_matrix_sync(scores, ...)`; all 8 target cases passed and gate
+  geomean improved from `9.451443582484515` to `9.507832270603132`. Preserve
+  `kThreads=96` and the score-store `__syncwarp()` refinement. Continue to avoid
+  plain synchronous K/KV shared staging; async K staging needs a correct stage
+  lifecycle and initialized-data contract before it is worth scoring again.
