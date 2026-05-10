@@ -966,7 +966,7 @@ def _latest_transform_materialization_failure(
     payloads: list[dict[str, Any]],
 ) -> tuple[str, dict[str, Any]] | None:
     for payload in reversed(payloads):
-        if _step_payload_accepted(payload) or isinstance(_step_score_payload(payload), dict):
+        if _step_payload_accepted(payload) or _payload_has_score_payload(payload):
             return None
         if _successful_compile_only_transform(payload) is not None:
             return None
@@ -1046,7 +1046,7 @@ def _has_successful_compile_only_transform(
 def _pending_compile_only_transform(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
     invalidated_identities: set[str] = set()
     for payload in reversed(payloads):
-        if isinstance(_step_score_payload(payload), dict):
+        if _payload_has_score_payload(payload):
             return None
         rejected_identity = _preflight_rejected_transform_identity(payload)
         if rejected_identity is not None:
@@ -1105,6 +1105,18 @@ def _step_score_payload(payload: dict[str, Any]) -> dict[str, Any] | None:
     attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
     score_payload = attempt.get("score_payload")
     return score_payload if isinstance(score_payload, dict) else None
+
+
+def _payload_has_score_payload(payload: dict[str, Any]) -> bool:
+    if isinstance(_step_score_payload(payload), dict):
+        return True
+    repair_attempts = payload.get("repair_attempts")
+    if not isinstance(repair_attempts, list):
+        return False
+    return any(
+        isinstance(attempt, dict) and isinstance(attempt.get("score_payload"), dict)
+        for attempt in repair_attempts
+    )
 
 
 def _transform_identity(transform: dict[str, Any]) -> str:
