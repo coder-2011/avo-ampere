@@ -1904,6 +1904,51 @@ def test_evolve_loop_records_planning_validation_failure(
     assert len(list((tmp_path / "attempts").glob("*.json"))) == 1
 
 
+def test_evolve_loop_stops_after_planner_provider_error(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    calls = 0
+
+    def fake_request_variation_decision(**kwargs):
+        nonlocal calls
+        calls += 1
+        raise RuntimeError("Anthropic BadRequestError credit balance too low")
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+
+    exit_code = _evolve_loop(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            env_file=None,
+            model="claude",
+            max_steps=5,
+            loop_json=tmp_path / "loop.json",
+            attempts_dir=tmp_path / "attempts",
+            attempt_limit=5,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    saved_payload = json.loads((tmp_path / "loop.json").read_text(encoding="utf-8"))
+
+    assert exit_code == 2
+    assert calls == 1
+    assert payload["accepted"] is False
+    assert payload["completed_steps"] == 1
+    assert payload["max_steps"] == 5
+    assert payload["stopped_reason"] == "planner_provider_error"
+    assert "BadRequestError" in payload["steps"][0]["attempt"]["command_result"]["stderr_tail"]
+    assert saved_payload == payload
+    assert len(list((tmp_path / "attempts").glob("*.json"))) == 1
+
+
 def test_evolve_loop_requires_attempts_dir(tmp_path: Path) -> None:
     knowledge = tmp_path / "knowledge.md"
     knowledge.write_text("Ampere only.", encoding="utf-8")

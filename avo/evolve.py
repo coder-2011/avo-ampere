@@ -510,6 +510,10 @@ def correctness_failure_summary_for_attempt(attempt: VariationAttempt) -> str:
     return _tail(_score_payload_error_text(attempt.score_payload))
 
 
+def failure_class_for_step(step: EvolutionStep) -> str:
+    return _step_failure_class(step.as_dict())
+
+
 def finalize_attempt(
     lineage: Path,
     attempt: VariationAttempt,

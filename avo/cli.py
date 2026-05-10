@@ -41,6 +41,7 @@ from .evolve import (
     compile_failure_class_for_attempt,
     correctness_failure_class_for_attempt,
     correctness_failure_summary_for_attempt,
+    failure_class_for_step,
     finalize_attempt,
     load_promoted_preflight_classes,
     pending_compile_only_transform,
@@ -789,6 +790,9 @@ def _evolve_loop(args: argparse.Namespace) -> int:
         _record_loop_step(args, steps, step)
         if step.accepted:
             stopped_reason = "accepted"
+            break
+        if failure_class_for_step(step) == "planner_provider_error":
+            stopped_reason = "planner_provider_error"
             break
         if step.patch_cleanup_result is not None and not step.patch_cleanup_result.ok:
             stopped_reason = "cleanup_failed"

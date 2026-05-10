@@ -347,13 +347,13 @@ uv run python -m avo evolve-loop \
   --loop-json attempts/latest-loop.json
 ```
 
-`evolve-loop` requires `--attempts-dir` so cross-step memory is always available. It stops when a step is accepted, when rejected-patch cleanup fails, or when `--max-steps` is exhausted. Command failures and gate rejections are recorded, summarized into the next prompt, and allowed to continue until one of those stop conditions is reached. Attempt summaries also append a supervisor signal when the recent history shows repeated unaccepted command/edit fingerprints, recurring failure classes in the unaccepted tail, or five unaccepted attempts in a row; recurring promotable classes are written to `preflight_tracks.json` and loaded before materialized transform/patch preflight.
+`evolve-loop` requires `--attempts-dir` so cross-step memory is always available. It stops when a step is accepted, when rejected-patch cleanup fails, when a planner provider/API outage is recorded, or when `--max-steps` is exhausted. Command failures and gate rejections are recorded, summarized into the next prompt, and allowed to continue until one of those stop conditions is reached. Provider outages stop the loop after the recorded step because repeating them cannot improve CUDA search. Attempt summaries also append a supervisor signal when the recent history shows repeated unaccepted command/edit fingerprints, recurring failure classes in the unaccepted tail, or five unaccepted attempts in a row; recurring promotable classes are written to `preflight_tracks.json` and loaded before materialized transform/patch preflight.
 
 ## What is still missing
 
 - Optimizing the accepted seq32768 WMMA QK/PV seed beyond shape coverage toward FA2-competitive throughput.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
-- Longer-running autonomous supervision beyond the minimal capped `evolve-loop`, including active intervention and richer stop policies.
+- Longer-running autonomous supervision beyond the capped `evolve-loop`, including richer active intervention beyond the current attempt-memory signals, promoted checks, and provider-outage stop policy.
 - Deeper dependency capture for dynamic imports or runtime-discovered extension sources outside direct local Python imports.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.
