@@ -10,7 +10,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Target workload: BF16 forward attention with head dimension 128 and sequence lengths 4096, 8192, 16384, and 32768.
 - Baseline: FlashAttention-2. FlashAttention-4 is intentionally excluded because its Blackwell path uses primitives that are not available on Ampere.
 - Candidate support: Python candidate modules plus CUDA-extension attention candidates, including a BF16 WMMA QK/PV seed accepted through the seq32768 lane.
-- Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, a local searchable knowledge-corpus retriever, and a candidate-only patch application substrate.
+- Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, a local searchable knowledge-corpus retriever, structured candidate transforms for CUDA edits, and a candidate-only patch application substrate.
 - Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, and environment metadata in JSON.
 - Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage, classify failure classes, and persist recurring classes as active hard preflight tracks in `preflight_tracks.json`, including the concrete structural checks activated by each promoted class.
 - Research state: the autonomous loop has accepted benchmark lanes across the full target shape set through seq32768. The open result is still optimizing that seed toward beating FlashAttention-2 on the target suite.
@@ -214,6 +214,31 @@ also includes a `benchmark` block with warmup/repeat/trial settings, seed,
 A6000/sm86 target metadata, Python/PyTorch/CUDA versions, and visible GPU
 properties so accepted lineage commits can be audited later.
 
+Run a bounded profiler diagnostic on a candidate when profiler evidence would
+change the next transform choice:
+
+```bash
+uv run --extra cuda python -m avo profile \
+  --backend candidate \
+  --candidate candidates/cuda_mma_attention_seed.py \
+  --seq-lens 4096,8192,16384,32768 \
+  --total-tokens 32768 \
+  --num-heads 16 \
+  --head-dim 128 \
+  --dtype bf16 \
+  --causal both \
+  --launch-count 1 \
+  --timeout-s 300
+```
+
+`avo profile` wraps the same isolated score worker in Nsight Compute. It is a
+diagnostic command, not an acceptance path: it prints structured JSON with
+profiler settings, score payload when available, and a profiler error such as
+`ncu_not_found`, `profiler_permission`, `profiler_unsupported_runtime`, or
+`timeout`. In this Thunder-backed runtime, Nsight/CUPTI profiling is reported as
+unavailable before launch so the evolve loop does not hang on unsupported
+profiling.
+
 Seed a FlashAttention-2 baseline lineage:
 
 ```bash
@@ -277,7 +302,9 @@ uv run python -m avo evolve-once \
   --step-json attempts/latest-step.json
 ```
 
-`run-decision` intentionally accepts only selected `avo env`, `avo compile`, and `avo score` commands. It does not run arbitrary shell, git, file-editing, or destructive commands.
+`run-decision` intentionally accepts only selected `avo env`, `avo compile`,
+`avo profile`, and `avo score` commands. It does not run arbitrary shell, git,
+file-editing, or destructive commands.
 
 Candidate source edits have a separate manual substrate:
 
@@ -288,7 +315,19 @@ uv run python -m avo apply-patch candidate.patch
 
 `apply-patch` reads a raw unified diff, extracts `diff --git` paths, rejects paths outside `candidates/`, rejects path traversal, symlink-mode patches, binary patches, renames, deletes, and mode changes, then runs `git apply --check --whitespace=error` before applying. It does not stage, commit, score, or bypass the lineage gate.
 
-Anthropic decisions now include a required `candidate_patch` string. Empty means no edit. A non-empty raw unified diff is applied through the same validator before `run-decision` or `evolve-once` runs the bounded `next_command`; the command allowlist remains limited to `avo env`, `avo compile`, and `avo score`. When `evolve-once` applies a patch but the step is not accepted by the score gate, it checks and applies the reverse patch so rejected edits do not pollute the next attempt. When a candidate step is accepted, the lineage commit records `sources/latest/...` snapshots for the scored candidate module and companion source directory alongside `scores/latest.json`; patched accepted steps also record `patches/latest.patch`.
+Anthropic decisions now choose one edit mode. `no_edit` runs only bounded
+diagnostics. `transform` carries a structured `candidate_transform` such as
+`replace_once`, `insert_before_once`, `insert_after_once`, `set_constexpr_int`,
+or a coherent `batch`; this is the preferred path for CUDA kernel evolution.
+`legacy_patch` remains available for raw candidate diffs but raw `.cu`/`.cuh`
+kernel edits are rejected there so kernel evolution stays reviewable and
+recoverable through structured semantic moves. When `evolve-once` applies an
+edit but the step is not accepted by the score gate, it checks and applies the
+reverse patch so rejected edits do not pollute the next attempt. When a
+candidate step is accepted, the lineage commit records `sources/latest/...`
+snapshots for the scored candidate module and companion source directory
+alongside `scores/latest.json`; accepted edited steps also record
+`patches/latest.patch`.
 
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the suite-aware lineage gate. Candidates compare against the best prior score with the same benchmark case signature; a new signature can establish its own lane when correctness passes and source artifacts are captured.
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.

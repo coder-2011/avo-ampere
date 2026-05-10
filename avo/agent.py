@@ -14,7 +14,7 @@ DECISION_TOOL_NAME = "record_variation_decision"
 DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250929"
 DEFAULT_AGENT_REQUEST_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_DELAY_S = 1.0
-ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "score"})
+ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "profile", "score"})
 EDIT_MODES = frozenset({"legacy_patch", "no_edit", "transform"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 TOOL_PARAMETER_MARKERS = ("<parameter ", "</parameter>")
@@ -25,6 +25,7 @@ DEFAULT_SCORE_TOTAL_TOKENS = 32768
 MMA_ACCEPTED_VALIDATION_SEQ = 32768
 MAX_REPO_CONTEXT_FILE_CHARS = 12_000
 MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
+PROFILER_UNSUPPORTED_RUNTIME_MARKER = Path("/etc/thunder/libthunder.so")
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
 MMA_SEED = "candidates/cuda_mma_attention_seed.py"
 MMA_KERNEL_SOURCE = "candidates/cuda_mma_attention/attention_kernel.cu"
@@ -356,7 +357,8 @@ DECISION_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": (
                 "One bounded command for the orchestrator. Must start with 'avo' and use only "
-                "one of these subcommands: env, compile, score. Do not include shell pipes, "
+                "one of these subcommands: env, compile, profile, score. Do not include "
+                "shell pipes, "
                 "redirection, command chaining, git, rm, cat, head, or arbitrary shell."
             ),
         },
@@ -629,14 +631,17 @@ def build_variation_prompt(
         ".cu/.cuh kernel sources directly. No-edit mode: set edit_mode=\"no_edit\", "
         "candidate_patch is exactly the empty string \"\", candidate_edit starts with "
         "\"No edit; \", and next_command is only "
-        "a bounded score, compile, or environment diagnostic for existing files. Do not include "
-        "markdown fences or commentary in candidate_patch. Do not describe extending, updating, "
+        "a bounded score, profile, compile, or environment diagnostic for existing files. "
+        "Do not include markdown fences or commentary in candidate_patch. "
+        "Do not describe extending, updating, "
         "modifying, fixing, or implementing code unless candidate_transform or candidate_patch "
         "contains that change.\n"
         "Return exactly one decision. The next_command must be a single bounded command that "
-        "starts with 'avo' and uses only one of: env, compile, score. Use valid CLI flags: "
+        "starts with 'avo' and uses only one of: env, compile, profile, score. "
+        "Use valid CLI flags: "
         "compile requires --source SOURCE.cu and --out-dir DIR; candidate score requires "
-        "--backend candidate and --candidate. Use env only for CUDA/build environment "
+        "--backend candidate and --candidate; candidate profile uses the same score-shape "
+        "flags and wraps the worker in Nsight Compute. Use env only for CUDA/build environment "
         "diagnostics, not for source-file inspection. Use compile only for CUDA build/"
         "compilation diagnostics or to build-check a candidate_transform/candidate_patch, "
         "not for source-file inspection. Do not use shell pipes, redirection, command "
@@ -658,7 +663,8 @@ def build_repo_context(root: Path) -> str:
         "Use only files that exist in this repository.",
         "Do not propose upstream FlashAttention csrc paths unless they are present locally.",
         "Available bounded commands: avo env; avo compile --source SOURCE.cu --out-dir DIR; "
-        "avo score --backend BACKEND ...",
+        "avo score --backend BACKEND ...; "
+        "avo profile --backend candidate --candidate CANDIDATE.py ...",
         "Use avo env only for CUDA/build environment diagnostics, not source-file inspection.",
         "The current CUDA/build environment is already recorded as stable "
         "(torch CUDA 13.0, nvcc CUDA 13.0, RTX A6000 sm_86, Anthropic key present); "
@@ -666,6 +672,10 @@ def build_repo_context(root: Path) -> str:
         "build/environment failure gives a concrete reason.",
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
         "candidate_transform/candidate_patch, not source-file inspection.",
+        "Use avo profile only for bounded Nsight Compute diagnostics on candidate kernels "
+        "when profiler evidence such as occupancy, scheduler behavior, or memory workload "
+        "would change the next transform choice. Profiling may report unavailable if the "
+        "current driver/container blocks CUPTI or performance counters.",
         "Target workload is realistic long-sequence BF16 attention on sm_86: seq_lens "
         "4096/8192/16384/32768, total_tokens around 32768, num_heads around 16, "
         "head_dim 128, and both causal modes. Small candidate shapes are smoke fences, "
@@ -950,16 +960,15 @@ def _validation_feedback_hint(error: ValueError) -> str:
         return (
             "Do not claim that avo score can provide profiler metrics. It reports "
             "correctness, timing, and TFLOPS only. Either use it to validate a concrete "
-            "candidate_transform, or choose a different supported diagnostic; do not ask "
-            "for bandwidth, occupancy, scheduler, instruction-mix, roofline, or tensor-core "
-            "utilization evidence from a score command. "
+            "candidate_transform, or use avo profile for a bounded Nsight Compute diagnostic "
+            "on a candidate kernel. Do not ask score for bandwidth, occupancy, scheduler, "
+            "instruction-mix, roofline, or tensor-core utilization evidence. "
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (
-            "A valid Ampere async-copy transform must satisfy the async-copy structural "
-            "contract: aligned group copies, real producer/consumer dataflow, and scalar "
-            "tails outside the async path. If that cannot be expressed as a scoped "
-            "candidate_transform, choose a different transform family. "
+            "Avoid clearly scalar BF16 async-copy calls. Broader async-copy hypotheses "
+            "should still be expressed as scoped candidate_transform batches and validated "
+            "by compile/score, with compile repair handling concrete CUDA errors. "
         )
     return ""
 
@@ -2116,6 +2125,16 @@ def _candidate_patch_inserts_async_helper_inside_mma_signature(added_text: str) 
     )
 
 
+def _candidate_patch_uses_scalar_bf16_async_copy(inspection: CandidatePatchInspection) -> bool:
+    compact_added_text = re.sub(r"\s+", "", inspection.added_text)
+    return bool(
+        re.search(
+            r"__pipeline_memcpy_async\([^;]*,(?:sizeof\(__nv_bfloat16\)|2)\);",
+            compact_added_text,
+        )
+    )
+
+
 def _candidate_patch_has_invalid_async_pipeline_stage_lifecycle(
     inspection: CandidatePatchInspection,
 ) -> bool:
@@ -2225,11 +2244,10 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
         name="async_copy_granularity",
         failure_class="cuda_syntax_error",
         message=(
-            "Ampere async-copy transforms must move 16-byte aligned groups in real "
-            "dataflow, not scalar BF16 elements"
+            "clearly scalar BF16 async-copy calls should use regular loads/stores or "
+            "be widened into 16-byte aligned group copies"
         ),
-        detector=lambda inspection: "__pipeline_memcpy_async" in inspection.added_text
-        and "sizeof(__nv_bfloat16)" in inspection.added_text,
+        detector=_candidate_patch_uses_scalar_bf16_async_copy,
     ),
     CandidatePatchPreflightTrack(
         name="async_pipeline_stage_lifecycle",
@@ -2547,6 +2565,35 @@ def _validate_subcommand_arguments(
                 candidate_patch=candidate_patch,
                 candidate_transform=candidate_transform,
             )
+    elif subcommand == "profile":
+        backend = _single_option_value(parts, "--backend")
+        if backend is None:
+            raise ValueError("next_command profile requires --backend")
+        if backend != "candidate":
+            raise ValueError("next_command profile currently supports --backend candidate only")
+        candidate = _single_option_value(parts, "--candidate")
+        if candidate is None:
+            raise ValueError("next_command profile requires --candidate")
+        _validate_command_path(
+            candidate,
+            "--candidate",
+            allowed_roots=("candidates/",),
+            suffixes=(".py",),
+        )
+        _validate_patched_mma_score_shape_extension(
+            parts,
+            candidate=candidate,
+            candidate_patch=candidate_patch,
+            candidate_transform=candidate_transform,
+        )
+        _validate_profile_runtime_available()
+        _validate_profile_command_context(planning_text)
+        _validate_profile_candidate_shape(
+            parts,
+            candidate=candidate,
+            candidate_patch=candidate_patch,
+            candidate_transform=candidate_transform,
+        )
 
 
 def _has_option(parts: list[str], option: str) -> bool:
@@ -2660,6 +2707,102 @@ def _validate_score_command_context(planning_text: str) -> None:
             "correctness, timing, and TFLOPS only. Use score for candidate validation, "
             "or add an actual supported profiler diagnostic before requesting bandwidth, "
             "occupancy, scheduler, instruction-mix, or tensor-core-utilization evidence"
+        )
+
+
+def _validate_profile_command_context(planning_text: str) -> None:
+    text = " ".join(planning_text.lower().replace("-", " ").split())
+    if not text:
+        return
+    if any(
+        cue in text
+        for cue in (
+            "profile",
+            "profiling",
+            "nsight",
+            "ncu",
+            "bottleneck",
+            "occupancy",
+            "scheduler",
+            "stall",
+            "memory workload",
+            "bandwidth",
+            "roofline",
+            "tensor core utilization",
+            "instruction mix",
+        )
+    ):
+        return
+    raise ValueError(
+        "next_command profile is only for profiler diagnostics; use score for correctness, "
+        "timing, and TFLOPS validation"
+        )
+
+
+def _validate_profile_runtime_available() -> None:
+    if PROFILER_UNSUPPORTED_RUNTIME_MARKER.exists():
+        raise ValueError(
+            "next_command profile is unavailable in this runtime because Nsight/CUPTI "
+            "profiling is not supported; use score for timing/correctness or propose a "
+            "candidate_transform with a compile/score validation"
+        )
+
+
+def _validate_profile_candidate_shape(
+    parts: list[str],
+    *,
+    candidate: str,
+    candidate_patch: str,
+    candidate_transform: dict[str, Any] | None = None,
+) -> None:
+    seq_lens = _score_seq_lens(parts)
+    head_dim = _score_head_dim(parts)
+    total_tokens = _score_positive_int_option(
+        parts,
+        "--total-tokens",
+        default=DEFAULT_SCORE_TOTAL_TOKENS,
+    )
+    num_heads = _score_positive_int_option(
+        parts,
+        "--num-heads",
+        default=DEFAULT_SCORE_NUM_HEADS,
+    )
+    if _candidate_edit_present(candidate_patch, candidate_transform):
+        return
+    if candidate == WARP_ROWS_SEED and (
+        any(seq_len > 256 for seq_len in seq_lens)
+        or head_dim > 128
+        or total_tokens > 1024
+        or num_heads > 4
+    ):
+        raise ValueError(
+            "next_command profiles cuda_warp_rows_attention_seed.py outside its "
+            "unpatched seq_len<=256/head_dim<=128/total_tokens<=1024/num_heads<=4 "
+            "cap; include candidate_transform/candidate_patch to update the "
+            "wrapper/kernel first"
+        )
+    if candidate == MMA_SEED and _is_outside_mma_validated_cap(
+        seq_lens=seq_lens,
+        head_dim=head_dim,
+        total_tokens=total_tokens,
+        num_heads=num_heads,
+    ):
+        raise ValueError(
+            "next_command profiles cuda_mma_attention_seed.py outside its unpatched "
+            "seq_len 16/32/64/128/256/1024/2048/4096/8192/16384/32768, "
+            "head_dim 128, total_tokens<=32768, and num_heads<=16 cap; include "
+            "candidate_transform/candidate_patch to update the wrapper/kernel first"
+        )
+    if candidate == TILED_SEED and _is_outside_tiled_validated_cap(
+        seq_lens=seq_lens,
+        head_dim=head_dim,
+        total_tokens=total_tokens,
+        num_heads=num_heads,
+    ):
+        raise ValueError(
+            "next_command profiles cuda_tiled_attention_seed.py outside its validated "
+            "shape cap; include candidate_transform/candidate_patch to update the "
+            "wrapper/kernel first"
         )
 
 

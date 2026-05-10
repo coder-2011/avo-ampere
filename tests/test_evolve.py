@@ -60,6 +60,18 @@ def test_command_from_decision_rewrites_avo_to_module() -> None:
     assert command[3:] == ["score", "--backend", "torch-sdpa"]
 
 
+def test_command_from_decision_allows_profile() -> None:
+    command = command_from_decision(
+        decision(
+            "avo profile --backend candidate --candidate candidates/cuda_mma_attention_seed.py "
+            "--seq-lens 4096"
+        )
+    )
+
+    assert command[:3] == [sys.executable, "-m", "avo"]
+    assert command[3] == "profile"
+
+
 def test_command_from_decision_rejects_shell() -> None:
     with pytest.raises(ValueError, match="must start with 'avo'"):
         command_from_decision(decision("rm -rf /"))
@@ -1143,6 +1155,40 @@ def test_summarize_attempt_history_classifies_score_environment_error(
 
     assert "class=score_environment_error" in summary
     assert "Ninja is required" in summary
+
+
+def test_summarize_attempt_history_classifies_profile_unavailable(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo profile --backend candidate --candidate candidates/cuda_mma_attention_seed.py"
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "profile"],
+            returncode=2,
+            timed_out=False,
+            stdout_tail=json.dumps(
+                {
+                    "ok": False,
+                    "profiler": {
+                        "profiled": False,
+                        "error": "profiler_unsupported_runtime",
+                    },
+                }
+            ),
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=profiler_unsupported_runtime" in summary
+    assert "avo profile" in summary
 
 
 def test_score_time_nvcc_failure_is_compile_repairable(tmp_path: Path) -> None:

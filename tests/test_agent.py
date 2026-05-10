@@ -1313,6 +1313,80 @@ def test_parse_variation_decision_rejects_score_claiming_profiler_metrics() -> N
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_allows_profile_diagnostic(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        "avo.agent.PROFILER_UNSUPPORTED_RUNTIME_MARKER",
+        tmp_path / "missing-libthunder.so",
+    )
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = (
+        "No edit; profile the accepted MMA seed at the target workload to measure "
+        "occupancy and scheduler behavior."
+    )
+    payload["expected_effect"] = "Nsight Compute data will classify the bottleneck."
+    payload["risk"] = "Profiler may be unavailable in this container."
+    payload["next_command"] = (
+        "avo profile --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 4096,8192,16384,32768 "
+        "--total-tokens 32768 --num-heads 16 --head-dim 128 "
+        "--kernel-name regex:.*mma_attention_kernel.*"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command.startswith("avo profile ")
+
+
+def test_parse_variation_decision_rejects_profile_without_profiler_intent(
+    monkeypatch, tmp_path
+) -> None:
+    monkeypatch.setattr(
+        "avo.agent.PROFILER_UNSUPPORTED_RUNTIME_MARKER",
+        tmp_path / "missing-libthunder.so",
+    )
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = "No edit; validate correctness and TFLOPS."
+    payload["next_command"] = (
+        "avo profile --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 4096 --total-tokens 32768 --num-heads 16 --head-dim 128"
+    )
+
+    with pytest.raises(ValueError, match="profile is only for profiler diagnostics"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_profile_when_runtime_unavailable(
+    monkeypatch, tmp_path
+) -> None:
+    marker = tmp_path / "libthunder.so"
+    marker.write_text("", encoding="utf-8")
+    monkeypatch.setattr("avo.agent.PROFILER_UNSUPPORTED_RUNTIME_MARKER", marker)
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = (
+        "No edit; profile the accepted MMA seed at the target workload to measure "
+        "occupancy and scheduler behavior."
+    )
+    payload["expected_effect"] = "Nsight Compute data will classify the bottleneck."
+    payload["risk"] = "Profiler may be unavailable in this container."
+    payload["next_command"] = (
+        "avo profile --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 4096,8192,16384,32768 "
+        "--total-tokens 32768 --num-heads 16 --head-dim 128 "
+        "--kernel-name regex:.*mma_attention_kernel.*"
+    )
+
+    with pytest.raises(ValueError, match="profile is unavailable"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_recorded_unpatched_mma_target_suite_score() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "No edit; score the accepted MMA seed target suite again."
@@ -2473,6 +2547,23 @@ def test_parse_variation_decision_rejects_scalar_bf16_async_copy_patch() -> None
         parse_decision_text(json.dumps(payload))
 
 
+def test_structural_preflight_allows_non_scalar_async_copy_size_expression() -> None:
+    patch = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1,5 @@\n"
+        "-old\n"
+        "+__pipeline_memcpy_async(&k_shared[0],\n"
+        "+                        k + base + key_start * kHeadDim,\n"
+        "+                        sizeof(__nv_bfloat16) * kTile * kHeadDim);\n"
+        "+__pipeline_commit();\n"
+    )
+
+    validate_candidate_patch_structural_preflight(patch, allow_cuda_source_edits=True)
+
+
 def test_parse_variation_decision_rejects_invalid_async_pipeline_lifecycle() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA async copy staging lifecycle and compile it."
@@ -3220,10 +3311,9 @@ def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     )
 
     content = updated["messages"][0]["content"]
-    assert "valid Ampere async-copy transform" in content
-    assert "async-copy structural contract" in content
+    assert "Avoid clearly scalar BF16 async-copy calls" in content
+    assert "compile repair handling concrete CUDA errors" in content
     assert "scoped candidate_transform" in content
-    assert "different transform family" in content
 
 
 def test_decision_feedback_explains_self_invalid_patch_error() -> None:
@@ -3359,6 +3449,7 @@ def test_decision_feedback_explains_score_profiler_metric_error() -> None:
     assert "Do not claim that avo score can provide profiler metrics" in content
     assert "correctness, timing, and TFLOPS only" in content
     assert "candidate_transform" in content
+    assert "avo profile" in content
     assert "tensor-core utilization" in content
 
 

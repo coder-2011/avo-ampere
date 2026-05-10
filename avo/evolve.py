@@ -21,7 +21,7 @@ from .agent import (
 from .isolation import RESULT_PREFIX
 from .lineage import GateDecision, commit_score
 
-DEFAULT_ALLOWED_SUBCOMMANDS = frozenset({"env", "compile", "score"})
+DEFAULT_ALLOWED_SUBCOMMANDS = frozenset({"env", "compile", "profile", "score"})
 SHELL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
 DEFAULT_ATTEMPT_HISTORY_LIMIT = 5
 DEFAULT_PATCH_ROOTS = ("candidates/",)
@@ -1896,8 +1896,17 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
     returncode = command_result.get("returncode")
     next_command = str(decision.get("next_command") or "")
     command_text = " ".join(str(item) for item in command_result.get("command") or [])
+    detail = _result_detail(command_result).lower()
+    if next_command.startswith("avo profile "):
+        if "profiler_unsupported_runtime" in detail:
+            return "profiler_unsupported_runtime"
+        if "no_kernels_profiled" in detail or "no kernels were profiled" in detail:
+            return "profiler_no_kernels"
+        if '"error": "timeout"' in detail:
+            return "profiler_timeout"
+        if '"error": "profiler_permission"' in detail or "err_nvgpuctrperm" in detail:
+            return "profiler_permission"
     if returncode not in (0, None):
-        detail = _result_detail(command_result).lower()
         if _command_or_detail_looks_like_compile_failure(next_command, command_text, detail):
             return _classify_compile_failure(detail)
         if "correctness" in detail or "max_abs_error" in detail:

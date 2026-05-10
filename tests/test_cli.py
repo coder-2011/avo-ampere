@@ -16,6 +16,7 @@ from avo.cli import (
     _evolve_once,
     _pending_transform_payload_normalizer,
     _planning_context,
+    _profile,
     _score,
     _seed_baseline,
     _torch_extension_worker_env,
@@ -291,6 +292,114 @@ def test_torch_extension_worker_env_exposes_python_bin_for_ninja(
 
     assert updated["PATH"].split(os.pathsep)[0] == str(python_bin)
     assert updated["MAX_JOBS"] == "1"
+
+
+def profile_args(**overrides):
+    values = {
+        "backend": "candidate",
+        "candidate": Path("candidates/cuda_mma_attention_seed.py"),
+        "seq_lens": "4096",
+        "causal": "false",
+        "head_dim": 128,
+        "num_heads": 16,
+        "total_tokens": 32768,
+        "dtype": "bf16",
+        "warmup": 0,
+        "repeats": 1,
+        "trials": 1,
+        "timeout_s": 10,
+        "ncu_set": "basic",
+        "section": ["Occupancy"],
+        "kernel_name": "regex:.*attention.*",
+        "launch_count": 1,
+        "launch_skip": 0,
+        "page": "raw",
+    }
+    values.update(overrides)
+    return SimpleNamespace(**values)
+
+
+def test_profile_wraps_worker_score_with_ncu(monkeypatch, tmp_path, capsys) -> None:
+    seen: dict[str, object] = {}
+
+    monkeypatch.setattr("avo.cli.THUNDER_CUDA_SHIM", tmp_path / "missing-libthunder.so")
+    monkeypatch.setattr("avo.cli.shutil.which", lambda name, path=None: "/usr/bin/ncu")
+    monkeypatch.setattr("avo.cli._torch_extension_worker_env", lambda env: env)
+
+    def fake_run(command, **kwargs):
+        seen["command"] = command
+        seen["kwargs"] = kwargs
+        stdout = (
+            "==PROF== Profiling \"mma_attention_kernel\"\n"
+            'AVO_RESULT_JSON={"all_correct": true, "geomean_tflops": 7.5}\n'
+        )
+        return SimpleNamespace(returncode=0, stdout=stdout, stderr="")
+
+    monkeypatch.setattr("avo.cli.subprocess.run", fake_run)
+
+    exit_code = _profile(profile_args())
+
+    payload = json.loads(capsys.readouterr().out)
+    command = seen["command"]
+    assert exit_code == 0
+    assert payload["ok"] is True
+    assert payload["profiler"]["profiled"] is True
+    assert payload["profiler"]["timeout_s"] == 10
+    assert payload["score_payload"]["all_correct"] is True
+    assert command[:2] == ["/usr/bin/ncu", "--target-processes"]
+    assert "--section" in command
+    assert command[-2:] == [
+        "--candidate",
+        "candidates/cuda_mma_attention_seed.py",
+    ]
+
+
+def test_profile_reports_no_kernels_profiled(monkeypatch, tmp_path, capsys) -> None:
+    monkeypatch.setattr("avo.cli.THUNDER_CUDA_SHIM", tmp_path / "missing-libthunder.so")
+    monkeypatch.setattr("avo.cli.shutil.which", lambda name, path=None: "/usr/bin/ncu")
+    monkeypatch.setattr("avo.cli._torch_extension_worker_env", lambda env: env)
+    monkeypatch.setattr(
+        "avo.cli.subprocess.run",
+        lambda *args, **kwargs: SimpleNamespace(
+            returncode=0,
+            stdout="==WARNING== No kernels were profiled.\n",
+            stderr="",
+        ),
+    )
+
+    exit_code = _profile(profile_args())
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["ok"] is False
+    assert payload["profiler"]["profiled"] is False
+    assert payload["profiler"]["error"] == "no_kernels_profiled"
+
+
+def test_profile_reports_unsupported_runtime_preflight(
+    monkeypatch, tmp_path, capsys
+) -> None:
+    thunder_shim = tmp_path / "libthunder.so"
+    thunder_shim.write_text("", encoding="utf-8")
+    monkeypatch.setattr("avo.cli.THUNDER_CUDA_SHIM", thunder_shim)
+    monkeypatch.setattr("avo.cli.shutil.which", lambda name, path=None: "/usr/bin/ncu")
+    monkeypatch.setattr("avo.cli._torch_extension_worker_env", lambda env: env)
+
+    def fail_run(*args, **kwargs):
+        raise AssertionError("profile preflight should not launch ncu")
+
+    monkeypatch.setattr("avo.cli.subprocess.run", fail_run)
+
+    exit_code = _profile(profile_args(timeout_s=1800))
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["ok"] is False
+    assert payload["command"] == []
+    assert payload["profiler"]["profiled"] is False
+    assert payload["profiler"]["error"] == "profiler_unsupported_runtime"
+    assert payload["profiler"]["timeout_s"] == 120
+    assert payload["profiler"]["requested_timeout_s"] == 1800
 
 
 def test_baseline_build_status_reports_cuda_mismatch(monkeypatch) -> None:
@@ -817,6 +926,21 @@ def test_pending_transform_payload_normalizer_attaches_transform_to_score(
         }
     )
     assert malformed_payload["candidate_transform"] == transform
+
+    placeholder_patch_payload = normalize(
+        {
+            "hypothesis": "score pending compiled transform",
+            "files_to_inspect": ["candidates/seed.py"],
+            "candidate_edit": "Score the compiled transform that changes VALUE.",
+            "candidate_patch": "reuse the compiled structured transform",
+            "edit_mode": "transform",
+            "expected_effect": "records the score",
+            "risk": "mock score",
+            "next_command": "avo score --backend candidate --candidate candidates/seed.py",
+        }
+    )
+    assert placeholder_patch_payload["candidate_patch"] == ""
+    assert placeholder_patch_payload["candidate_transform"] == transform
 
 
 def test_evolve_once_snapshots_accepted_candidate_patch(

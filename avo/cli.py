@@ -5,6 +5,8 @@ import importlib.util
 import json
 import os
 import shlex
+import shutil
+import subprocess
 import sys
 import sysconfig
 from pathlib import Path
@@ -48,7 +50,7 @@ from .evolve import (
     write_step,
     write_step_record,
 )
-from .isolation import module_worker_args, print_result, run_json_worker
+from .isolation import RESULT_PREFIX, module_worker_args, print_result, run_json_worker
 from .knowledge import build_knowledge_context
 from .lineage import commit_score, init_lineage_repo, lineage_score_summary, seed_baseline
 
@@ -61,6 +63,8 @@ GENERAL_CUDA_PRACTICE_QUERY = (
 GENERAL_CUDA_PRACTICE_MAX_CHARS = 8_000
 GENERAL_CUDA_PRACTICE_MAX_CHUNKS = 4
 DEFAULT_COMPILE_REPAIR_ATTEMPTS = 2
+PROFILE_TIMEOUT_CAP_S = 120
+THUNDER_CUDA_SHIM = Path("/etc/thunder/libthunder.so")
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -87,6 +91,16 @@ def main(argv: list[str] | None = None) -> int:
     score_parser = subparsers.add_parser("score")
     add_score_args(score_parser)
     score_parser.add_argument("--timeout-s", type=int, default=900)
+
+    profile_parser = subparsers.add_parser("profile")
+    add_score_args(profile_parser)
+    profile_parser.add_argument("--timeout-s", type=int, default=900)
+    profile_parser.add_argument("--ncu-set", default="basic")
+    profile_parser.add_argument("--section", action="append", default=[])
+    profile_parser.add_argument("--kernel-name", default="regex:.*attention.*")
+    profile_parser.add_argument("--launch-count", type=int, default=1)
+    profile_parser.add_argument("--launch-skip", type=int, default=0)
+    profile_parser.add_argument("--page", choices=["details", "raw", "source"], default="raw")
 
     worker_parser = subparsers.add_parser("worker-score")
     add_score_args(worker_parser)
@@ -172,6 +186,8 @@ def main(argv: list[str] | None = None) -> int:
         return _compile(args)
     if args.command == "score":
         return _score(args)
+    if args.command == "profile":
+        return _profile(args)
     if args.command == "worker-score":
         return _worker_score(args)
     if args.command == "worker-sleep":
@@ -388,6 +404,227 @@ def _score(args: argparse.Namespace) -> int:
     )
     print(json.dumps(result.as_dict(), indent=2, sort_keys=True))
     return 0 if result.ok else 2
+
+
+def _profile(args: argparse.Namespace) -> int:
+    if args.backend != "candidate":
+        raise ValueError("profile currently supports --backend candidate only")
+    if args.candidate is None:
+        raise ValueError("profile requires --candidate")
+    if args.timeout_s <= 0:
+        raise ValueError("profile requires --timeout-s to be positive")
+    if args.launch_count <= 0:
+        raise ValueError("profile requires --launch-count to be positive")
+    if args.launch_skip < 0:
+        raise ValueError("profile requires --launch-skip to be non-negative")
+
+    env = _torch_extension_worker_env(os.environ.copy())
+    profile_timeout_s = min(args.timeout_s, PROFILE_TIMEOUT_CAP_S)
+    ncu_path = shutil.which("ncu", path=env.get("PATH")) or shutil.which("ncu")
+    if ncu_path is None:
+        payload = _profile_payload(
+            command=[],
+            returncode=None,
+            timed_out=False,
+            stdout="",
+            stderr="",
+            score_payload=None,
+            profiler_error="ncu_not_found",
+            settings=_profile_settings(args, timeout_s=profile_timeout_s),
+        )
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 2
+
+    unavailable_error = _profile_unavailable_error()
+    if unavailable_error is not None:
+        payload = _profile_payload(
+            command=[],
+            returncode=None,
+            timed_out=False,
+            stdout="",
+            stderr=(
+                "Nsight Compute profiling is unavailable in this runtime before launch: "
+                f"{unavailable_error}"
+            ),
+            score_payload=None,
+            profiler_error=unavailable_error,
+            settings=_profile_settings(args, timeout_s=profile_timeout_s),
+        )
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 2
+
+    worker_args = module_worker_args(
+        "worker-score",
+        "--backend",
+        args.backend,
+        "--seq-lens",
+        args.seq_lens,
+        "--causal",
+        args.causal,
+        "--head-dim",
+        str(args.head_dim),
+        "--num-heads",
+        str(args.num_heads),
+        "--total-tokens",
+        str(args.total_tokens),
+        "--dtype",
+        args.dtype,
+        "--warmup",
+        str(args.warmup),
+        "--repeats",
+        str(args.repeats),
+        "--trials",
+        str(args.trials),
+        "--candidate",
+        str(args.candidate),
+    )
+    ncu_args = [
+        ncu_path,
+        "--target-processes",
+        "all",
+        "--set",
+        args.ncu_set,
+        "--kernel-name",
+        args.kernel_name,
+        "--launch-count",
+        str(args.launch_count),
+        "--launch-skip",
+        str(args.launch_skip),
+        "--csv",
+        "--page",
+        args.page,
+    ]
+    for section in args.section:
+        ncu_args.extend(["--section", section])
+    command = [*ncu_args, *worker_args]
+
+    try:
+        completed = subprocess.run(
+            command,
+            cwd=Path.cwd(),
+            env=env,
+            stdin=subprocess.DEVNULL,
+            text=True,
+            capture_output=True,
+            timeout=profile_timeout_s,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as exc:
+        payload = _profile_payload(
+            command=command,
+            returncode=None,
+            timed_out=True,
+            stdout=exc.stdout or "",
+            stderr=exc.stderr or "",
+            score_payload=_extract_worker_payload(exc.stdout or ""),
+            profiler_error="timeout",
+            settings=_profile_settings(args, timeout_s=profile_timeout_s),
+        )
+        print(json.dumps(payload, indent=2, sort_keys=True))
+        return 2
+
+    score_payload = _extract_worker_payload(completed.stdout)
+    profiler_error = _classify_profile_error(
+        completed.stdout,
+        completed.stderr,
+        returncode=completed.returncode,
+    )
+    payload = _profile_payload(
+        command=command,
+        returncode=completed.returncode,
+        timed_out=False,
+        stdout=completed.stdout,
+        stderr=completed.stderr,
+        score_payload=score_payload,
+        profiler_error=profiler_error,
+        settings=_profile_settings(args, timeout_s=profile_timeout_s),
+    )
+    print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0 if payload["ok"] else 2
+
+
+def _profile_unavailable_error() -> str | None:
+    if THUNDER_CUDA_SHIM.exists():
+        return "profiler_unsupported_runtime"
+    return None
+
+
+def _profile_settings(args: argparse.Namespace, *, timeout_s: int) -> dict[str, object]:
+    return {
+        "ncu_set": args.ncu_set,
+        "sections": list(args.section),
+        "kernel_name": args.kernel_name,
+        "launch_count": args.launch_count,
+        "launch_skip": args.launch_skip,
+        "page": args.page,
+        "timeout_s": timeout_s,
+        "requested_timeout_s": args.timeout_s,
+    }
+
+
+def _profile_payload(
+    *,
+    command: list[str],
+    returncode: int | None,
+    timed_out: bool,
+    stdout: str,
+    stderr: str,
+    score_payload: dict[str, Any] | None,
+    profiler_error: str | None,
+    settings: dict[str, object],
+) -> dict[str, object]:
+    profiled = profiler_error is None and "==PROF==" in stdout
+    ok = returncode == 0 and not timed_out and profiled and score_payload is not None
+    return {
+        "ok": ok,
+        "command": command,
+        "returncode": returncode,
+        "timed_out": timed_out,
+        "profiler": {
+            "tool": "ncu",
+            "profiled": profiled,
+            "error": profiler_error,
+            **settings,
+        },
+        "score_payload": score_payload,
+        "stdout_tail": _short_text(stdout, 4000),
+        "stderr_tail": _short_text(stderr, 4000),
+    }
+
+
+def _extract_worker_payload(stdout: str) -> dict[str, Any] | None:
+    for line in reversed(stdout.splitlines()):
+        if not line.startswith(RESULT_PREFIX):
+            continue
+        try:
+            parsed = json.loads(line.removeprefix(RESULT_PREFIX))
+        except json.JSONDecodeError:
+            return None
+        return parsed if isinstance(parsed, dict) else None
+    return None
+
+
+def _classify_profile_error(stdout: str, stderr: str, *, returncode: int | None) -> str | None:
+    text = f"{stdout}\n{stderr}".lower()
+    if "no kernels were profiled" in text:
+        return "no_kernels_profiled"
+    if "err_nvgpuctrperm" in text or (
+        "permission" in text and "performance counter" in text
+    ):
+        return "profiler_permission"
+    if (
+        "unimplemented cuda export table function" in text
+        or "not yet supported on thunder" in text
+        or "thunder_aborted" in text
+    ):
+        return "profiler_unsupported_runtime"
+    if returncode not in {0, None}:
+        return "profiler_failed"
+    if RESULT_PREFIX not in stdout:
+        return "target_payload_missing"
+    if "==prof==" not in text:
+        return "no_profiler_output"
+    return None
 
 
 def _seed_baseline(args: argparse.Namespace) -> int:
@@ -797,7 +1034,8 @@ def _pending_transform_payload_normalizer(attempts_dir: Path | None):
         return None
 
     def normalize(payload: dict[str, Any]) -> dict[str, Any]:
-        if str(payload.get("candidate_patch") or "").strip():
+        candidate_patch = str(payload.get("candidate_patch") or "")
+        if _payload_candidate_patch_has_diff(candidate_patch):
             return payload
         edit_mode = str(payload.get("edit_mode") or "")
         if edit_mode not in {"", "transform", "no_edit"}:
@@ -811,6 +1049,10 @@ def _pending_transform_payload_normalizer(attempts_dir: Path | None):
         return updated
 
     return normalize
+
+
+def _payload_candidate_patch_has_diff(candidate_patch: str) -> bool:
+    return any(line.startswith("diff --git ") for line in candidate_patch.splitlines())
 
 
 def _payload_wants_pending_transform_score(payload: dict[str, Any]) -> bool:
