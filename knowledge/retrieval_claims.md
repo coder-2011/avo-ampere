@@ -525,3 +525,11 @@ reject a bad transform family, or explain a score/gate result.
   evidence but should still be able to reach compile/repair when it is part of
   coherent dataflow.
 - Retrieval query: `NVIDIA cuda::memcpy_async Ampere cp.async 4 byte alignment 16 byte vector groups pipeline producer commit consumer wait`.
+
+- Claim: repair-specific validation failures are fed back once inside the same
+  repair episode before the loop finalizes a planning failure.
+- Evidence source: runtime compile-repair loop validation retry.
+- Why useful: lets the agent correct no-edit repairs or repeated failed payloads
+  without executing invalid repair decisions, while still bounding repair
+  retries.
+- Retrieval query: `repair validation feedback invalid repair decision not executed retry same repair episode`.

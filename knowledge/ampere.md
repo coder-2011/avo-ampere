@@ -1138,6 +1138,14 @@ source files.
   guardrails around probabilistic planner output. Keep future reliability work
   centered on classifier-driven preflights and search-loop routing, not on
   accumulating phrase-specific bans.
+  Repair-specific validation now follows the same feedback-loop principle. If a
+  compile/materialization/correctness repair decision is invalid before
+  execution, for example a no-edit repair for an executable edit failure or a
+  replay of an already failed edit payload, the invalid repair is not executed.
+  The repair prompt is retried once with `Repair validation feedback` describing
+  the validation error, then the step finalizes as a planning failure if the
+  repair is still invalid. This is bounded self-repair for the agent interface,
+  not an unbounded retry loop.
   Follow-up hardening made that promotion path operational instead of advisory.
   Active promoted failure classes are now passed into materialized transform
   preflight. For repeated `stale_or_undefined_symbol` failures, the promoted

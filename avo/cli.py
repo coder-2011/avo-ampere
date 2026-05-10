@@ -73,6 +73,7 @@ GENERAL_CUDA_PRACTICE_QUERY = (
 GENERAL_CUDA_PRACTICE_MAX_CHARS = 8_000
 GENERAL_CUDA_PRACTICE_MAX_CHUNKS = 4
 DEFAULT_COMPILE_REPAIR_ATTEMPTS = 2
+DEFAULT_REPAIR_DECISION_VALIDATION_ATTEMPTS = 2
 PROFILE_TIMEOUT_CAP_S = 120
 THUNDER_CUDA_SHIM = Path("/etc/thunder/libthunder.so")
 
@@ -977,36 +978,17 @@ def _run_compile_repair_loop(
             repair_kind=repair_kind,
         )
         try:
-            repair_decision = request_variation_decision(
+            repair_decision = _request_valid_edit_repair_decision(
+                args,
+                repair_history=repair_history,
+                current_attempt=current_attempt,
+                repair_kind=repair_kind,
+                failed_episode_attempts=failed_episode_attempts,
                 lineage_summary=lineage_summary,
                 knowledge=knowledge,
-                attempt_history=repair_history,
                 repo_context=repo_context,
-                model=args.model,
-                normalize_payload=None,
             )
         except Exception as exc:
-            return planning_failure_step(
-                exc,
-                repair_attempts=tuple(repair_attempts),
-                repair_cleanup_results=tuple(repair_cleanup_results),
-            )
-        try:
-            _validate_edit_repair_decision(
-                repair_decision,
-                current_attempt,
-                repair_kind,
-                failed_episode_attempts=failed_episode_attempts,
-            )
-            validate_decision_against_attempt_history(
-                repair_decision,
-                args.attempts_dir,
-                extra_payloads=tuple(
-                    EvolutionStep(attempt=attempt, gate_decision=None).as_dict()
-                    for attempt in failed_episode_attempts
-                ),
-            )
-        except ValueError as exc:
             return planning_failure_step(
                 exc,
                 repair_attempts=tuple(repair_attempts),
@@ -1021,6 +1003,72 @@ def _run_compile_repair_loop(
         )
 
     return current_attempt, repair_attempts, repair_cleanup_results
+
+
+def _request_valid_edit_repair_decision(
+    args: argparse.Namespace,
+    *,
+    repair_history: str,
+    current_attempt: VariationAttempt,
+    repair_kind: str,
+    failed_episode_attempts: tuple[VariationAttempt, ...],
+    lineage_summary: str,
+    knowledge: str,
+    repo_context: str,
+) -> VariationDecision:
+    extra_payloads = tuple(
+        EvolutionStep(attempt=attempt, gate_decision=None).as_dict()
+        for attempt in failed_episode_attempts
+    )
+    last_error: ValueError | None = None
+    for _ in range(DEFAULT_REPAIR_DECISION_VALIDATION_ATTEMPTS):
+        repair_decision = request_variation_decision(
+            lineage_summary=lineage_summary,
+            knowledge=knowledge,
+            attempt_history=_repair_history_with_validation_feedback(
+                repair_history,
+                last_error,
+            ),
+            repo_context=repo_context,
+            model=args.model,
+            normalize_payload=None,
+        )
+        try:
+            _validate_edit_repair_decision(
+                repair_decision,
+                current_attempt,
+                repair_kind,
+                failed_episode_attempts=failed_episode_attempts,
+            )
+            validate_decision_against_attempt_history(
+                repair_decision,
+                args.attempts_dir,
+                extra_payloads=extra_payloads,
+            )
+        except ValueError as exc:
+            last_error = exc
+            continue
+        return repair_decision
+    if last_error is not None:
+        raise last_error
+    raise AssertionError("unreachable")
+
+
+def _repair_history_with_validation_feedback(
+    repair_history: str,
+    last_error: ValueError | None,
+) -> str:
+    if last_error is None:
+        return repair_history
+    return (
+        f"{repair_history}\n\n"
+        "Repair validation feedback:\n"
+        "- previous_repair_decision_invalid=true\n"
+        f"- validation_error={last_error}\n"
+        "- The invalid repair decision was not executed. Return one corrected "
+        "executable repair payload that changes the source against the current "
+        "clean tree and does not repeat an already failed edit payload."
+    )
 
 
 def _repair_kind_for_attempt(attempt: VariationAttempt) -> str | None:

@@ -796,7 +796,7 @@ def test_evolve_once_rejects_repair_that_repeats_earlier_failed_payload(
         next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
         candidate_patch=first_decision.candidate_patch,
     )
-    decisions = [first_decision, first_repair, repeated_original]
+    decisions = [first_decision, first_repair, repeated_original, repeated_original]
     seen_attempt_histories: list[str] = []
     executed_hypotheses: list[str] = []
 
@@ -849,6 +849,8 @@ def test_evolve_once_rejects_repair_that_repeats_earlier_failed_payload(
     ]
     assert "Earlier failed edit payloads in this repair episode" in seen_attempt_histories[2]
     assert "VALUE = bad" in seen_attempt_histories[2]
+    assert "Repair validation feedback" in seen_attempt_histories[3]
+    assert "was not executed" in seen_attempt_histories[3]
     assert "repeats an earlier failed edit payload" in payload["attempt"][
         "command_result"
     ]["stderr_tail"]
@@ -1319,9 +1321,11 @@ def test_repair_loop_does_not_autofill_pending_transform(
         materialized_patch=failed_patch,
     )
     normalize_payloads = []
+    seen_attempt_histories: list[str] = []
 
     def fake_request_variation_decision(**kwargs):
         normalize_payloads.append(kwargs.get("normalize_payload"))
+        seen_attempt_histories.append(kwargs["attempt_history"])
         return VariationDecision(
             hypothesis="bad correctness repair",
             files_to_inspect=["candidates/seed.py"],
@@ -1350,11 +1354,138 @@ def test_repair_loop_does_not_autofill_pending_transform(
     )
 
     assert isinstance(result, EvolutionStep)
-    assert normalize_payloads == [None]
+    assert normalize_payloads == [None, None]
+    assert "Repair validation feedback" in seen_attempt_histories[1]
+    assert "invalid repair decision was not executed" in seen_attempt_histories[1]
     assert "correctness repair decision must include a revised" in (
         result.attempt.command_result.stderr_tail
     )
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_repair_loop_retries_invalid_repair_decision_before_execution(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    failed_decision = VariationDecision(
+        hypothesis="introduce compile failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value in a way that fails compile",
+        expected_effect="exercise compile repair",
+        risk="mock compile failure",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = bad
+            """
+        ),
+    )
+    failed_patch_result = apply_candidate_patch(failed_decision.candidate_patch, cwd=tmp_path)
+    failed_attempt = VariationAttempt(
+        decision=failed_decision,
+        command_result=CommandResult(
+            command=["python", "-m", "avo", "compile"],
+            returncode=1,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="attention_kernel.cu(4): error: identifier bad is undefined",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=failed_patch_result,
+    )
+    bad_repair = VariationDecision(
+        hypothesis="bad no-edit repair",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="No edit; retry compile.",
+        expected_effect="mock retry",
+        risk="mock retry",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        edit_mode="no_edit",
+    )
+    good_repair = VariationDecision(
+        hypothesis="valid compile repair",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value with valid syntax",
+        expected_effect="build should pass",
+        risk="mock repaired compile",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = 2
+            """
+        ),
+    )
+    decisions = [bad_repair, good_repair]
+    seen_attempt_histories: list[str] = []
+    executed_hypotheses: list[str] = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        executed_hypotheses.append(decision.hypothesis)
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "compile"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:02+00:00",
+            completed_at="2026-05-08T00:00:03+00:00",
+            patch_result=PatchResult(
+                ok=True,
+                patch_paths=["candidates/seed.py"],
+                returncode=0,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    result = _run_compile_repair_loop(
+        SimpleNamespace(
+            cwd=tmp_path,
+            timeout_s=10,
+            attempts_dir=None,
+            compile_repair_attempts=1,
+            model="claude",
+        ),
+        initial_attempt=failed_attempt,
+        lineage_summary="{}",
+        attempt_history="",
+        repo_context="",
+        knowledge="Ampere only.",
+    )
+
+    assert not isinstance(result, EvolutionStep)
+    repaired_attempt, repair_attempts, repair_cleanup_results = result
+    assert repaired_attempt.decision.hypothesis == "valid compile repair"
+    assert repair_attempts == [failed_attempt]
+    assert repair_cleanup_results[0].ok is True
+    assert executed_hypotheses == ["valid compile repair"]
+    assert "Repair validation feedback" in seen_attempt_histories[1]
+    assert "no-edit retries do not repair failed executable edits" in seen_attempt_histories[1]
 
 
 def test_repair_loop_records_planner_provider_exception(

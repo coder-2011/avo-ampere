@@ -100,6 +100,11 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("repair", "failed edit payload", "execution"),
         ),
         (
+            "repair validation feedback invalid repair decision not executed retry "
+            "same repair episode",
+            ("repair validation feedback", "invalid repair decision", "not executed"),
+        ),
+        (
             "stagnation supervisor strategy reset candidates Ampere work "
             "decomposition memory layout register softmax diagnostic",
             ("strategy-reset", "work decomposition", "source-verifiable transform"),
