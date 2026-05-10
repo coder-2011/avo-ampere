@@ -1667,6 +1667,38 @@ def test_parse_variation_decision_rejects_self_rejected_patch() -> None:
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_allows_historical_failure_note() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Retune kThreads from 128 to 64 in the MMA attention kernel and compile it."
+    )
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 64,
+    }
+    payload["edit_mode"] = "transform"
+    payload["candidate_patch"] = ""
+    payload["expected_effect"] = (
+        "Lower block thread count may improve occupancy while preserving the existing "
+        "one-query-tile block contract."
+    )
+    payload["risk"] = (
+        "The previous K tile shared memory staging transform failed with identifier "
+        "key_start is undefined because its cooperative load was inserted before the "
+        "key_start loop. This candidate only retunes the thread-count contract."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_64"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
 def test_parse_variation_decision_rejects_do_not_use_this_diff_warning() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA Q preload and compile it."

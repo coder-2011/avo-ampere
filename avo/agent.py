@@ -1390,6 +1390,8 @@ def _planning_text_dataflow_claim(planning_text: str) -> str | None:
     if not windows:
         windows = [" ".join(normalized_text.split())]
     for window in windows:
+        if _planning_window_is_historical_failure_context(window):
+            continue
         words = set(re.findall(r"[a-z_]+", window))
         if (
             words & PLANNING_DATAFLOW_ACTION_TERMS
@@ -1698,6 +1700,8 @@ def _planning_text_risk(planning_text: str) -> tuple[str, str] | None:
     if not windows:
         windows = [" ".join(normalized_text.split())]
     for window in windows:
+        if _planning_window_is_historical_failure_context(window):
+            continue
         if _planning_window_predicts_compile_failure(window):
             return "predicted_compile_failure", _validation_excerpt(window)
         if _planning_window_predicts_correctness_failure(window):
@@ -1764,6 +1768,20 @@ def _planning_window_self_rejects_edit(text: str) -> bool:
             r"\b(?:diff|edit|patch|transform)\b.{0,80}\b"
             r"(?:do\s+not|don't|must\s+not|should\s+not)\s+"
             r"(?:apply|compile|execute|score|use)\b",
+            text,
+        )
+    )
+
+
+def _planning_window_is_historical_failure_context(text: str) -> bool:
+    return bool(
+        re.match(
+            r"^(?:the\s+)?(?:previous|prior|earlier|last|historical)\b",
+            text,
+        )
+        and re.search(
+            r"\b(?:failed|failure|invalid|malformed|undefined|undeclared|"
+            r"ambiguous|rejected|regressed|regression)\b",
             text,
         )
     )
