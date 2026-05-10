@@ -83,7 +83,7 @@ def geometric_mean(values: Iterable[float]) -> float:
 def score_summary(backend: str, scores: list[CaseScore]) -> dict[str, Any]:
     return {
         "backend": backend,
-        "all_correct": all(score.correct for score in scores),
+        "all_correct": bool(scores) and all(score.correct for score in scores),
         "geomean_tflops": geometric_mean(score.tflops for score in scores if score.correct),
         "cases": [score.as_dict() for score in scores],
     }

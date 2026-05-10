@@ -5,6 +5,7 @@ from avo.benchmark import (
     attention_forward_flops,
     benchmark_metadata,
     geometric_mean,
+    score_summary,
     tflops_from_ms,
     timing_summary,
 )
@@ -26,6 +27,14 @@ def test_tflops_from_ms() -> None:
 def test_geometric_mean_ignores_zero_failed_scores() -> None:
     assert geometric_mean([2.0, 8.0, 0.0]) == 4.0
     assert geometric_mean([0.0]) == 0.0
+
+
+def test_score_summary_treats_empty_case_set_as_not_correct() -> None:
+    summary = score_summary("candidate", [])
+
+    assert summary["all_correct"] is False
+    assert summary["geomean_tflops"] == 0.0
+    assert summary["cases"] == []
 
 
 def test_timing_summary_reports_replicate_statistics() -> None:
