@@ -1359,3 +1359,16 @@ source files.
   repeat single-stage synchronous V staging. One planning step still failed by
   asking `avo score` for profiler-style metrics, so future prompts should keep
   profiler evidence separate from score validation.
+- A follow-up loop scored that pending V double-buffer `cp.async` transform on
+  the full target suite. It failed correctness across the target cases with CUDA
+  unknown errors and geomean `0`, so it is not accepted evidence for the async
+  direction. The same loop compiled and scored another isolated K shared-memory
+  staging transform. That K transform was correct on all 8 full-target BF16
+  cases, but regressed geomean to `4.377717248710737` TFLOPS versus the current
+  best `8.960753680686471`. A vectorized 16-byte K `cp.async` staging repair
+  compiled successfully with 64 registers, 1 barrier, 14016 bytes shared memory,
+  and no spills, but was cleaned up before scoring; a later planning/repair
+  step was rejected because it repeated the failed edit payload unchanged. This
+  reinforces the current search rule: isolated K/V staging is not enough. Useful
+  async work needs correct stage lifetimes, per-tile key offsets, consumed
+  double-buffered dataflow, and overlap with the existing `q_frags[8]` path.
