@@ -51,6 +51,15 @@ reject a bad transform family, or explain a score/gate result.
   extension sources auditable when the runtime can identify them.
 - Retrieval query: `candidate runtime torch cpp_extension load sources dynamic import AVO_SOURCE_FILES __avo_source_files__ lineage snapshot`.
 
+- Claim: score-time Torch extension build failures are classified as
+  `score_time_compile_failure` and routed to compile-style repair with captured
+  `candidate_source_files` when the score payload reports them.
+- Evidence source: runtime score-failure classification and repair-prompt
+  routing.
+- Why useful: lets the agent repair CUDA build failures that appear during
+  scoring instead of misreading them as numerical correctness failures.
+- Retrieval query: `score_time_compile_failure torch extension build repair candidate_source_files`.
+
 ## FA2/CUTLASS Directional Cues
 
 - Claim: CUTLASS's Ampere FlashAttention v2 example uses 128x128 M/N tiles, 128

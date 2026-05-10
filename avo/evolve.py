@@ -39,6 +39,7 @@ COMPILE_FAILURE_DETAIL_MARKERS = (
     "nvcc",
     "ptxas",
     "ninja: build stopped",
+    "error building extension",
     "compilation failed",
     "compileerror",
     ".cu(",
@@ -2738,6 +2739,8 @@ def _classify_score_failure(score_payload: dict[str, Any]) -> str:
     error_text = _score_payload_error_text(score_payload).lower()
     if "ninja is required" in error_text or "cuda is not available" in error_text:
         return "score_environment_error"
+    if _command_or_detail_looks_like_compile_failure("", "", error_text):
+        return "score_time_compile_failure"
     if "non-finite" in error_text:
         return "correctness_nonfinite_output"
     return "correctness_failed"

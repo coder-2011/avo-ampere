@@ -19,6 +19,7 @@ from avo.evolve import (
     attempt_has_repairable_correctness_failure,
     cleanup_rejected_candidate_patch,
     command_from_decision,
+    correctness_failure_class_for_attempt,
     finalize_attempt,
     load_promoted_preflight_classes,
     materialize_candidate_transform,
@@ -1647,6 +1648,67 @@ def test_score_time_nvcc_failure_is_compile_repairable(tmp_path: Path) -> None:
     summary = summarize_attempt_history(attempts, limit=5)
 
     assert "class=compile_failed" in summary
+
+
+def test_score_payload_extension_build_failure_is_compile_class(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/cuda_mma_attention_seed.py",
+            candidate_patch=dedent(
+                """\
+                diff --git a/candidates/seed.py b/candidates/seed.py
+                --- a/candidates/seed.py
+                +++ b/candidates/seed.py
+                @@ -1 +1 @@
+                -VALUE = 1
+                +VALUE = bad
+                """
+            ),
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="{}",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        score_payload={
+            "backend": "candidate",
+            "all_correct": False,
+            "geomean_tflops": 0.0,
+            "candidate_source_files": [
+                "candidates/dynamic_extension/attention.cpp",
+                "candidates/dynamic_extension/attention_kernel.cu",
+            ],
+            "cases": [
+                {
+                    "correct": False,
+                    "error": (
+                        "RuntimeError: Error building extension 'runtime_demo': "
+                        "ninja: build stopped: nvcc failed compiling attention_kernel.cu"
+                    ),
+                }
+            ],
+        },
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/seed.py"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+
+    assert attempt_has_repairable_correctness_failure(attempt)
+    assert correctness_failure_class_for_attempt(attempt) == "score_time_compile_failure"
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=score_time_compile_failure" in summary
 
 
 def test_summarize_attempt_history_classifies_planning_validation_failure(

@@ -1097,6 +1097,136 @@ def test_evolve_once_repairs_candidate_correctness_failure_before_finishing(
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
+def test_evolve_once_repairs_score_time_extension_build_failure_before_finishing(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    first_decision = VariationDecision(
+        hypothesis="introduce extension build failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value in a way that breaks extension build",
+        expected_effect="exercise score-time compile repair",
+        risk="mock extension build failure",
+        next_command="avo score --backend candidate",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = bad
+            """
+        ),
+    )
+    repair_decision = VariationDecision(
+        hypothesis="repair extension build failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value in a way that builds and scores",
+        expected_effect="score should pass",
+        risk="mock repaired extension build",
+        next_command="avo score --backend candidate",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = 2
+            """
+        ),
+    )
+    decisions = [first_decision, repair_decision]
+    seen_attempt_histories: list[str] = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        patch_result = apply_candidate_patch(decision.candidate_patch, cwd=cwd)
+        ok = decision.hypothesis == "repair extension build failure"
+        score_payload = {
+            "backend": "candidate",
+            "all_correct": ok,
+            "geomean_tflops": 3.0 if ok else 0.0,
+            "cases": [{}],
+        }
+        if not ok:
+            score_payload = {
+                "backend": "candidate",
+                "all_correct": False,
+                "geomean_tflops": 0.0,
+                "candidate_source_files": [
+                    "candidates/dynamic_extension/attention.cpp",
+                    "candidates/dynamic_extension/attention_kernel.cu",
+                ],
+                "cases": [
+                    {
+                        "correct": False,
+                        "error": (
+                            "RuntimeError: Error building extension 'runtime_demo': "
+                            "ninja: build stopped: nvcc failed compiling attention_kernel.cu"
+                        ),
+                    }
+                ],
+            }
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="{}",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:00+00:00",
+            completed_at="2026-05-08T00:00:01+00:00",
+            score_payload=score_payload,
+            patch_result=patch_result,
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    exit_code = _evolve_once(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            step_json=None,
+            env_file=None,
+            model="claude",
+            attempts_dir=None,
+            attempt_limit=5,
+            compile_repair_attempts=1,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["attempt"]["decision"]["hypothesis"] == "repair extension build failure"
+    assert payload["gate_decision"]["accepted"] is True
+    assert len(payload["repair_attempts"]) == 1
+    assert payload["repair_cleanup_results"][0]["ok"] is True
+    assert payload["patch_cleanup_result"] is None
+    assert "Immediate score-time compile-repair request" in seen_attempt_histories[1]
+    assert "score_time_compile_failure" in seen_attempt_histories[1]
+    assert "candidates/dynamic_extension/attention_kernel.cu" in seen_attempt_histories[1]
+    assert "Error building extension" in seen_attempt_histories[1]
+    assert "previous candidate edit compiled and ran" not in seen_attempt_histories[1]
+    assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
+
+
 def test_repair_loop_does_not_autofill_pending_transform(
     tmp_path: Path,
     monkeypatch,

@@ -1029,8 +1029,23 @@ def _repair_kind_for_attempt(attempt: VariationAttempt) -> str | None:
     if attempt_has_repairable_transform_materialization_failure(attempt):
         return "structured-transform-materialization"
     if attempt_has_repairable_correctness_failure(attempt):
+        if correctness_failure_class_for_attempt(attempt) == "score_time_compile_failure":
+            return "score-time-compile"
         return "correctness"
     return None
+
+
+def _score_candidate_source_files_summary(attempt: VariationAttempt) -> str:
+    if not isinstance(attempt.score_payload, dict):
+        return ""
+    source_files = attempt.score_payload.get("candidate_source_files")
+    if not isinstance(source_files, list):
+        return ""
+    paths = [str(path) for path in source_files if isinstance(path, str)]
+    lines = [f"  - {path}" for path in paths[:20]]
+    if len(paths) > 20:
+        lines.append(f"  - ... {len(paths) - 20} more")
+    return "\n".join(lines)
 
 
 def _edit_repair_attempt_history(
@@ -1061,6 +1076,27 @@ def _edit_repair_attempt_history(
             f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
             f"- compiler_stderr_tail:\n{failed_attempt.command_result.stderr_tail or '<empty>'}\n"
             f"- compiler_stdout_tail:\n{failed_attempt.command_result.stdout_tail or '<empty>'}"
+        )
+    elif repair_kind == "score-time-compile":
+        score_error_summary = correctness_failure_summary_for_attempt(failed_attempt)
+        candidate_sources = _score_candidate_source_files_summary(failed_attempt)
+        request = (
+            "Immediate score-time compile-repair request:\n"
+            f"- repair_attempt={repair_index}\n"
+            f"- failure_class={correctness_failure_class_for_attempt(failed_attempt)}\n"
+            f"- failed_command={failed_attempt.decision.next_command}\n"
+            f"- worktree_cleanup_before_repair={cleanup_status}\n"
+            "- The previous candidate edit reached score, but the candidate "
+            "extension/build failed before correctness could be measured. The "
+            "failed edit has been reverted before this repair request. Return a "
+            "revised executable edit against the current source, not a no-edit "
+            "retry. Use candidate_transform when repairing CUDA sources, keep "
+            "candidate_patch empty in transform mode, and make the smallest "
+            "coherent semantic repair that addresses the compiler or extension "
+            "build output.\n"
+            f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
+            f"- candidate_source_files:\n{candidate_sources or '<empty>'}\n"
+            f"- score_error_summary:\n{score_error_summary or '<empty>'}"
         )
     elif repair_kind == "correctness":
         score_error_summary = correctness_failure_summary_for_attempt(failed_attempt)

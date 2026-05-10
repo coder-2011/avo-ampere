@@ -100,6 +100,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("repair", "failed edit payload", "execution"),
         ),
         (
+            "score_time_compile_failure torch extension build repair candidate_source_files",
+            ("score_time_compile_failure", "compile-style repair", "candidate_source_files"),
+        ),
+        (
             "candidate_transform batch native steps array steps_json legacy fallback",
             ("native `steps`", "steps_json", "legacy fallback"),
         ),

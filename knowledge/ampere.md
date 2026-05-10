@@ -132,6 +132,10 @@ history.
   extension load calls. Dynamic Python import tracing reads loaded module
   `__file__` paths only, and runtime extension capture records the `sources`
   argument without tracing arbitrary filesystem writes.
+  When scoring reaches a Torch extension build and `nvcc`/Ninja fail before
+  correctness can be measured, the loop classifies that result as
+  `score_time_compile_failure` and sends a compile-style repair request with
+  the captured `candidate_source_files` list when available.
   Patched accepted steps also store the raw patch under `patches/latest.patch`.
 
 ## Search Space
