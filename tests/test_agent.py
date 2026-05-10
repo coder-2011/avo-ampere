@@ -3416,6 +3416,13 @@ def test_decision_tool_uses_strict_schema() -> None:
     assert "replace_once" in tool["input_schema"]["properties"]["candidate_transform"][
         "properties"
     ]["op"]["enum"]
+    transform_properties = tool["input_schema"]["properties"]["candidate_transform"][
+        "properties"
+    ]
+    assert transform_properties["steps"]["type"] == "array"
+    assert transform_properties["steps"]["items"]["additionalProperties"] is False
+    assert "Prefer this native array" in transform_properties["steps"]["description"]
+    assert "Legacy fallback" in transform_properties["steps_json"]["description"]
 
 
 def test_default_agent_model_supports_structured_outputs_family() -> None:
@@ -3459,6 +3466,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Preferred edit channel: candidate_transform" in context
     assert "Legacy candidate_patch raw diffs are allowed only for non-CUDA" in context
     assert ".cu/.cuh kernel edits must use candidate_transform" in context
+    assert "Use op=batch with a native steps array" in context
     assert "smallest coherent transformation" in context
     assert "fewer text edits are not better" in context
     assert "semantic delta must be source-verifiable" in context
@@ -3557,6 +3565,7 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert 'edit_mode="transform"' in prompt
     assert 'edit_mode="no_edit"' in prompt
     assert "Supported ops are add_include" in prompt
+    assert "with steps as a native array" in prompt
     assert "smallest coherent transformation" in prompt
     assert "not the smallest possible textual edit" in prompt
     assert "one-line constant edit as a stand-in" in prompt

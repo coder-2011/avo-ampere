@@ -297,11 +297,19 @@ TRANSFORM_SCHEMA: dict[str, Any] = {
                 "of primitive materialization steps."
             ),
         },
+        "steps": {
+            "type": "array",
+            "items": TRANSFORM_STEP_SCHEMA,
+            "description": (
+                "For op=batch, the ordered primitive materialization steps for one "
+                "coherent semantic move. Prefer this native array over steps_json."
+            ),
+        },
         "steps_json": {
             "type": "string",
             "description": (
-                "For op=batch, a compact JSON array of primitive transform step objects. "
-                "Each step has op, path, and the fields required by that op."
+                "Legacy fallback for op=batch: a compact JSON array of primitive "
+                "transform step objects. Prefer steps when using the tool interface."
             ),
         },
     },
@@ -689,7 +697,7 @@ def _render_variation_prompt_text(
         "candidate_patch to exactly the empty string \"\". "
         "Supported ops are add_include, replace_once, insert_before_once, "
         "insert_after_once, set_constexpr_int, and add_int_to_python_set; use op=batch "
-        "with steps_json containing the materialization steps needed when one coherent "
+        "with steps as a native array of materialization steps when one coherent "
         "candidate needs coordinated wrapper/kernel edits. The orchestrator "
         "materializes and preflights the patch. Make the smallest coherent "
         "transformation that preserves kernel invariants and can be validated against "
@@ -878,7 +886,7 @@ def build_repo_context(root: Path) -> str:
         "Preferred edit channel: candidate_transform, one scoped coherent semantic "
         "transformation or a scoped semantic batch under candidates/. Supported step ops: "
         "add_include, replace_once, insert_before_once, insert_after_once, set_constexpr_int, "
-        "and add_int_to_python_set. Use op=batch with steps_json when wrapper and kernel "
+        "and add_int_to_python_set. Use op=batch with a native steps array when wrapper and kernel "
         "caps must change together. Legacy "
         "candidate_patch raw diffs are allowed only for non-CUDA candidate files; "
         ".cu/.cuh kernel edits must use candidate_transform.",
