@@ -356,6 +356,11 @@ Anthropic request, with attempt history tail-preserved so repair requests and
 pending `candidate_transform` JSON survive long runs. If the planner returns an
 invalid decision, the validation-feedback retry uses the same budget and
 preserves the prompt head, newest context tail, and validation error.
+The standalone transcript compaction helper follows the same boundary for
+multi-turn agent harnesses: it keeps the newest messages verbatim and replaces
+older turns with structured breadcrumbs that record roles, character counts,
+and bounded excerpts, while pointing back to durable files, lineage, attempts,
+scores, and `experiments.md` for exact recovery.
 If a candidate edit fails transform materialization, compile, or score correctness, the evolve step can ask the agent for an immediate revised executable edit after reverting the failed patch.
 Score-time Torch extension build failures are classified as compile/build feedback, and the repair request includes runtime-captured `candidate_source_files` when available.
 When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step JSON for every run, including rejected and failed attempts. Later `agent-plan` or `evolve-once` calls summarize the latest records from that directory so the agent can avoid repeating known dead ends without adding them to committed lineage.

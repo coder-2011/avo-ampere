@@ -1595,6 +1595,13 @@ source files.
   regressed to `9.40853995478011` versus the current `9.507832270603132` best.
   No candidate was accepted. This validates the orchestration invariant without
   adding a CUDA family ban.
+- The standalone transcript compaction helper now mirrors the same long-run
+  context rule used by prompt budgeting: keep recent turns verbatim, replace
+  older turns with structured breadcrumbs containing role, character count, and
+  bounded excerpts, and point the agent back to durable files, git lineage,
+  score JSON, attempts JSON, and `experiments.md` for exact recovery. This is
+  deliberately deterministic and local; it does not pretend to preserve full
+  old tool output inside active model context.
 - Async-copy granularity is now a soft runtime advisory rather than a hard
   structural rejection. Runtime records `async_copy_granularity_preference` in
   `PatchResult.advisories` when a materialized patch uses narrow async-copy
