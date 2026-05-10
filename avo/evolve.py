@@ -482,6 +482,8 @@ def attempt_has_repairable_correctness_failure(attempt: VariationAttempt) -> boo
         return False
     if attempt.score_payload.get("all_correct") is not False:
         return False
+    if _classify_score_failure(attempt.score_payload) == "score_environment_error":
+        return False
     has_edit_payload = (
         attempt.decision.candidate_transform is not None
         or bool((attempt.materialized_patch or attempt.decision.candidate_patch).strip())

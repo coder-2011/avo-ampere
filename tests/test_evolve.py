@@ -16,6 +16,7 @@ from avo.evolve import (
     _extract_score_payload,
     apply_candidate_patch,
     attempt_has_repairable_compile_failure,
+    attempt_has_repairable_correctness_failure,
     cleanup_rejected_candidate_patch,
     command_from_decision,
     finalize_attempt,
@@ -1261,6 +1262,48 @@ def test_summarize_attempt_history_classifies_score_environment_error(
 
     assert "class=score_environment_error" in summary
     assert "Ninja is required" in summary
+
+
+def test_score_environment_error_is_not_repairable_correctness_failure() -> None:
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/cuda_mma_attention_seed.py",
+            candidate_transform={
+                "op": "set_constexpr_int",
+                "path": "candidates/kernel.cu",
+                "name": "kThreads",
+                "value": 64,
+            },
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={
+            "all_correct": False,
+            "geomean_tflops": 0.0,
+            "cases": [
+                {
+                    "correct": False,
+                    "error": "RuntimeError: CUDA is not available",
+                }
+            ],
+        },
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+
+    assert not attempt_has_repairable_correctness_failure(attempt)
 
 
 def test_summarize_attempt_history_classifies_profile_unavailable(
