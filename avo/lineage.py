@@ -10,7 +10,6 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
-ONE_SHOT_MIN_RELATIVE_IMPROVEMENT = 0.005
 CONFIRMATION_REPEATS = 3
 CONFIRMATION_WARMUP = 2
 
@@ -118,15 +117,12 @@ def decide_gate(
         best_payload is not None
         and best_geomean > 0.0
         and _is_one_shot_score(candidate)
-        and candidate_geomean < best_geomean * (1.0 + ONE_SHOT_MIN_RELATIVE_IMPROVEMENT)
     ):
         return GateDecision(
             False,
             (
-                "candidate improvement is within one-shot timing noise; rerun with "
-                f"repeats>={CONFIRMATION_REPEATS}/warmup>={CONFIRMATION_WARMUP} "
-                "or improve geomean by at least "
-                f"{ONE_SHOT_MIN_RELATIVE_IMPROVEMENT:.1%}"
+                "candidate one-shot score must be confirmed before acceptance; rerun "
+                f"with repeats>={CONFIRMATION_REPEATS}/warmup>={CONFIRMATION_WARMUP}"
             ),
             candidate_geomean,
             best_geomean,

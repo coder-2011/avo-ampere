@@ -28,21 +28,21 @@ def test_gate_rejects_regression() -> None:
     assert "regressed" in decision.reason
 
 
-def test_gate_rejects_low_margin_one_shot_score() -> None:
+def test_gate_rejects_one_shot_score_against_existing_best() -> None:
     best = score_payload(seq_len=128, geomean=100.0, repeats=3, warmup=2)
-    candidate = score_payload(seq_len=128, geomean=100.4, repeats=1, warmup=1)
+    candidate = score_payload(seq_len=128, geomean=125.0, repeats=1, warmup=1)
 
     decision = decide_gate(candidate, 100.0, best_payload=best)
 
     assert not decision.accepted
-    assert "one-shot timing noise" in decision.reason
+    assert "one-shot score must be confirmed" in decision.reason
+    assert "repeats>=3/warmup>=2" in decision.reason
 
 
-def test_gate_accepts_large_one_shot_score_improvement() -> None:
-    best = score_payload(seq_len=128, geomean=100.0, repeats=3, warmup=2)
+def test_gate_accepts_initial_one_shot_score_without_existing_best() -> None:
     candidate = score_payload(seq_len=128, geomean=100.6, repeats=1, warmup=1)
 
-    decision = decide_gate(candidate, 100.0, best_payload=best)
+    decision = decide_gate(candidate, 0.0, best_payload=None)
 
     assert decision.accepted
 
