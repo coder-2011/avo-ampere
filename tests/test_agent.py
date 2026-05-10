@@ -1754,6 +1754,68 @@ def test_parse_variation_decision_allows_historical_failure_note() -> None:
     assert decision.candidate_transform == payload["candidate_transform"]
 
 
+def test_parse_variation_decision_allows_framed_historical_failure_note() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Retune kThreads from 64 to 96 in the MMA attention kernel and compile it."
+    )
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 96,
+    }
+    payload["edit_mode"] = "transform"
+    payload["candidate_patch"] = ""
+    payload["expected_effect"] = (
+        "Changing block thread count may improve latency hiding while preserving the "
+        "current WMMA fragment and online-softmax contracts."
+    )
+    payload["risk"] = (
+        "The immediate compile repair request shows that the previous K double-buffer "
+        "async-copy transform failed with identifier '__pipeline_t' is undefined, "
+        "while the current transform only changes the kThreads occupancy contract."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_96"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
+def test_parse_variation_decision_rejects_current_transform_preflight_failure() -> None:
+    payload = decision_payload()
+    payload["candidate_edit"] = (
+        "Retune kThreads from 96 to 128 in the MMA attention kernel and compile it."
+    )
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 128,
+    }
+    payload["edit_mode"] = "transform"
+    payload["candidate_patch"] = ""
+    payload["expected_effect"] = (
+        "Changing block thread count may improve latency hiding while preserving the "
+        "current WMMA fragment and online-softmax contracts."
+    )
+    payload["risk"] = (
+        "The current transform will be rejected by the structural preflight validator "
+        "before compile, so it should not be executed as written."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_128"
+    )
+
+    with pytest.raises(ValueError, match="known invalid"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_do_not_use_this_diff_warning() -> None:
     payload = decision_payload()
     payload["candidate_edit"] = "Patch MMA Q preload and compile it."

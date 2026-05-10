@@ -730,6 +730,8 @@ def build_repo_context(root: Path) -> str:
         "CUDA transforms should preserve executable contracts, not just compile text: "
         "tensor-core fragment declarations must match Ampere-supported contracts, async "
         "copy changes should prefer aligned vector groups and real consumed dataflow, "
+        "but copy-width preference alone is not a hard rejection when the transform is "
+        "otherwise coherent and repairable; "
         "pipeline waits must match the number of committed stages, double-buffer stage "
         "indices must advance after consumption, staged shared-memory addresses must stay "
         "tile-local, declarations must have clear lifetimes, and shape graduation must "
@@ -1708,6 +1710,8 @@ def _planning_text_risk(planning_text: str) -> tuple[str, str] | None:
     for window in windows:
         if _planning_window_is_historical_failure_context(window):
             continue
+        if _planning_window_predicts_preflight_rejection(window):
+            return "predicted_structural_preflight", _validation_excerpt(window)
         if _planning_window_predicts_compile_failure(window):
             return "predicted_compile_failure", _validation_excerpt(window)
         if _planning_window_predicts_correctness_failure(window):
@@ -1780,14 +1784,31 @@ def _planning_window_self_rejects_edit(text: str) -> bool:
 
 
 def _planning_window_is_historical_failure_context(text: str) -> bool:
+    if _planning_window_describes_current_attempt_failure(text):
+        return False
+    has_history_marker = re.search(
+        r"\b(?:previous|prior|earlier|last|historical)\b",
+        text,
+    )
+    has_failure_signal = re.search(
+        r"\b(?:failed|failure|invalid|malformed|undefined|undeclared|"
+        r"ambiguous|rejected|regressed|regression)\b",
+        text,
+    )
+    if not has_history_marker or not has_failure_signal:
+        return False
     return bool(
-        re.match(
-            r"^(?:the\s+)?(?:previous|prior|earlier|last|historical)\b",
+        re.match(r"^(?:the\s+)?(?:previous|prior|earlier|last|historical)\b", text)
+        or re.search(
+            r"\b(?:request|history|attempt|summary|feedback|evidence|record|"
+            r"recorded|reported|shows?|showed|observed)\b.{0,100}\b"
+            r"(?:previous|prior|earlier|last|historical)\b",
             text,
         )
-        and re.search(
-            r"\b(?:failed|failure|invalid|malformed|undefined|undeclared|"
-            r"ambiguous|rejected|regressed|regression)\b",
+        or re.search(
+            r"\b(?:previous|prior|earlier|last|historical)\b.{0,100}\b"
+            r"(?:request|history|attempt|summary|feedback|evidence|record|"
+            r"recorded|reported|shows?|showed|observed)\b",
             text,
         )
     )
@@ -1852,6 +1873,46 @@ def _planning_window_predicts_compile_failure(text: str) -> bool:
             r"(?:fail|break)\s+(?:compile|compilation))\b",
             text,
         )
+    )
+
+
+def _planning_window_predicts_preflight_rejection(text: str) -> bool:
+    if not _planning_window_describes_current_attempt_failure(text):
+        return False
+    return bool(
+        re.search(
+            r"\b(?:will|would|likely)\b.{0,100}\b"
+            r"(?:reject|rejected|fail|failed)\b.{0,100}\b"
+            r"(?:preflight|structural|contract|validator|validation)\b",
+            text,
+        )
+        or re.search(
+            r"\b(?:preflight|structural|contract|validator|validation)\b"
+            r".{0,100}\b(?:will|would|likely)\b.{0,100}\b"
+            r"(?:reject|rejected|fail|failed)\b",
+            text,
+        )
+    )
+
+
+def _planning_window_describes_current_attempt_failure(text: str) -> bool:
+    current_subject = (
+        r"(?:this|current|proposed|candidate)\s+"
+        r"(?:candidate|change|diff|edit|patch|transform)"
+    )
+    edit_as_written = (
+        r"(?:candidate|change|diff|edit|patch|transform)\s+"
+        r"(?:as\s+(?:written|is)|as-is|in\s+this\s+decision)"
+    )
+    failure_signal = (
+        r"(?:will|would|likely|is|are|cannot|can't|can\s+not)\b.{0,100}\b"
+        r"(?:fail|failure|invalid|malformed|undefined|undeclared|ambiguous|"
+        r"rejected|reject|regressed|regression|wrong|incorrect|segfault|"
+        r"break\s+correctness)"
+    )
+    return bool(
+        re.search(rf"\b{current_subject}\b.{{0,120}}\b{failure_signal}\b", text)
+        or re.search(rf"\b{edit_as_written}\b.{{0,120}}\b{failure_signal}\b", text)
     )
 
 
