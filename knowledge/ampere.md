@@ -110,6 +110,10 @@ history.
   runtime rejects unchanged replays of any failed episode payload before
   execution. Repair should therefore make a revised coherent semantic move, not
   cycle among prior failed patches.
+- Compile-style repair prompts include a compact diagnostic summary extracted
+  from the failed build output: likely source locations, referenced symbols, and
+  key compiler lines. Treat that as the repair target. This is execution
+  feedback for the next coherent edit, not a new hard preflight or phrase ban.
 - Candidate source patching now has a bounded manual substrate:
   `avo apply-patch PATCH --dry-run` accepts only ordinary unified diffs under
   `candidates/`, rejects path traversal, symlink-mode patches, binary patches,

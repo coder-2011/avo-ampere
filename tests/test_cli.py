@@ -735,6 +735,9 @@ def test_evolve_once_repairs_candidate_compile_failure_before_finishing(
     assert payload["repair_cleanup_results"][0]["ok"] is True
     assert payload["patch_cleanup_result"]["ok"] is True
     assert "Immediate compile-repair request" in seen_attempt_histories[1]
+    assert "compiler_diagnostic_summary" in seen_attempt_histories[1]
+    assert "locations=attention_kernel.cu:4" in seen_attempt_histories[1]
+    assert "symbols=bad" in seen_attempt_histories[1]
     assert "identifier bad is undefined" in seen_attempt_histories[1]
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
 
@@ -1340,7 +1343,10 @@ def test_evolve_once_repairs_score_time_extension_build_failure_before_finishing
     assert payload["patch_cleanup_result"] is None
     assert "Immediate score-time compile-repair request" in seen_attempt_histories[1]
     assert "score_time_compile_failure" in seen_attempt_histories[1]
+    assert "score_build_diagnostic_summary" in seen_attempt_histories[1]
     assert "candidates/dynamic_extension/attention_kernel.cu" in seen_attempt_histories[1]
+    assert "locations=attention_kernel.cu" in seen_attempt_histories[1]
+    assert "symbols=__pipeline_memcpy_async" in seen_attempt_histories[1]
     assert "Error building extension" in seen_attempt_histories[1]
     assert "repair the async-copy API/include/stage/dataflow issue" in (
         seen_attempt_histories[1]

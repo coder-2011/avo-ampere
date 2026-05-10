@@ -545,6 +545,14 @@ reject a bad transform family, or explain a score/gate result.
   `async_copy_compile_error` while keeping the loop bounded and replayable.
 - Retrieval query: `compiler error feedback repair loop coding agent self repair structured edits invalid patch retry`.
 
+- Claim: compile-style repair prompts carry compact compiler diagnostic
+  summaries with source locations, referenced symbols, and key error lines.
+- Evidence source: runtime compile and score-time compile repair prompt
+  construction.
+- Why useful: lets the agent repair its own compile errors from concrete
+  execution feedback without turning recurring text snippets into hard bans.
+- Retrieval query: `compiler diagnostic summary source locations symbols key error lines self repair prompt`.
+
 - Claim: repair-specific validation failures are fed back once inside the same
   repair episode before the loop finalizes a planning failure.
 - Evidence source: runtime compile-repair loop validation retry.

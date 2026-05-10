@@ -4,6 +4,7 @@ import argparse
 import importlib.util
 import json
 import os
+import re
 import shlex
 import shutil
 import subprocess
@@ -1125,6 +1126,7 @@ def _edit_repair_attempt_history(
     if repair_kind == "compile":
         failure_class = compile_failure_class_for_attempt(failed_attempt)
         repair_guidance = _compile_repair_guidance(failure_class)
+        diagnostic_summary = _compiler_diagnostic_summary_for_attempt(failed_attempt)
         request = (
             "Immediate compile-repair request:\n"
             f"- repair_attempt={repair_index}\n"
@@ -1139,6 +1141,7 @@ def _edit_repair_attempt_history(
             "empty in transform mode, and make the smallest coherent semantic repair "
             "that addresses the compiler output.\n"
             f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
+            f"- compiler_diagnostic_summary:\n{diagnostic_summary}\n"
             f"- compiler_stderr_tail:\n{failed_attempt.command_result.stderr_tail or '<empty>'}\n"
             f"- compiler_stdout_tail:\n{failed_attempt.command_result.stdout_tail or '<empty>'}"
         )
@@ -1146,6 +1149,7 @@ def _edit_repair_attempt_history(
         score_error_summary = correctness_failure_summary_for_attempt(failed_attempt)
         candidate_sources = _score_candidate_source_files_summary(failed_attempt)
         repair_guidance = _score_time_compile_repair_guidance(score_error_summary)
+        diagnostic_summary = _compiler_diagnostic_summary(score_error_summary)
         request = (
             "Immediate score-time compile-repair request:\n"
             f"- repair_attempt={repair_index}\n"
@@ -1162,6 +1166,7 @@ def _edit_repair_attempt_history(
             "coherent semantic repair that addresses the compiler or extension "
             "build output.\n"
             f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
+            f"- score_build_diagnostic_summary:\n{diagnostic_summary}\n"
             f"- candidate_source_files:\n{candidate_sources or '<empty>'}\n"
             f"- score_error_summary:\n{score_error_summary or '<empty>'}"
         )
@@ -1226,6 +1231,121 @@ def _score_time_compile_repair_guidance(score_error_summary: str) -> str:
     if not _mentions_async_copy_api(score_error_summary):
         return ""
     return _async_copy_repair_guidance()
+
+
+def _compiler_diagnostic_summary_for_attempt(attempt: VariationAttempt) -> str:
+    return _compiler_diagnostic_summary(
+        "\n".join(
+            part
+            for part in (
+                attempt.command_result.stderr_tail,
+                attempt.command_result.stdout_tail,
+            )
+            if part
+        )
+    )
+
+
+def _compiler_diagnostic_summary(text: str) -> str:
+    diagnostic_lines = _compiler_diagnostic_lines(text)
+    if not diagnostic_lines:
+        return "<empty>"
+    diagnostic_text = "\n".join(diagnostic_lines)
+    lines: list[str] = []
+    locations = _compiler_diagnostic_locations(diagnostic_text)
+    symbols = _compiler_diagnostic_symbols(diagnostic_text)
+    if locations:
+        lines.append(f"  - locations={', '.join(locations[:8])}")
+    if symbols:
+        lines.append(f"  - symbols={', '.join(symbols[:8])}")
+    lines.append("  - lines:")
+    lines.extend(f"    - {line}" for line in diagnostic_lines[:8])
+    return "\n".join(lines)
+
+
+def _compiler_diagnostic_lines(text: str) -> list[str]:
+    markers = (
+        " error",
+        "error:",
+        "warning",
+        "undefined",
+        "not declared",
+        "no instance",
+        "incomplete type",
+        "invalid",
+        "expected",
+        "ptxas",
+        "nvcc fatal",
+        "ninja: build stopped",
+        "error building extension",
+    )
+    lines: list[str] = []
+    seen: set[str] = set()
+    for raw_line in text.splitlines():
+        line = " ".join(raw_line.strip().split())
+        if not line:
+            continue
+        lowered = line.lower()
+        if not any(marker in lowered for marker in markers):
+            continue
+        shortened = _short_text(line, 260)
+        if shortened in seen:
+            continue
+        seen.add(shortened)
+        lines.append(shortened)
+        if len(lines) >= 12:
+            break
+    return lines
+
+
+def _compiler_diagnostic_locations(text: str) -> list[str]:
+    locations: list[str] = []
+    seen: set[str] = set()
+    location_pattern = re.compile(
+        r"(?P<path>[\w./-]+\.(?:cu|cuh|cpp|cc|cxx|h|hpp|py))"
+        r"(?:(?:\(|:)(?P<line>\d+))?"
+    )
+    for match in location_pattern.finditer(text):
+        location = match.group("path")
+        line = match.group("line")
+        if line:
+            location = f"{location}:{line}"
+        if location in seen:
+            continue
+        seen.add(location)
+        locations.append(location)
+        if len(locations) >= 12:
+            break
+    return locations
+
+
+def _compiler_diagnostic_symbols(text: str) -> list[str]:
+    symbols: list[str] = []
+    seen: set[str] = set()
+    patterns = (
+        re.compile(
+            r"identifier\s+\"?(?P<symbol>[A-Za-z_][A-Za-z0-9_:]*)\"?\s+is undefined",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"(?P<symbol>[A-Za-z_][A-Za-z0-9_:]*)\s+was not declared",
+            re.IGNORECASE,
+        ),
+        re.compile(
+            r"undefined reference to\s+[`'\"]?(?P<symbol>[A-Za-z_][A-Za-z0-9_:~]*)",
+            re.IGNORECASE,
+        ),
+    )
+    for pattern in patterns:
+        for match in pattern.finditer(text):
+            symbol = match.group("symbol")
+            if symbol in seen:
+                continue
+            seen.add(symbol)
+            symbols.append(symbol)
+            if len(symbols) >= 12:
+                return symbols
+    return symbols
 
 
 def _mentions_async_copy_api(text: str) -> bool:

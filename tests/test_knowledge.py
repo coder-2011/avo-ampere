@@ -69,6 +69,11 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("self-repair prompts", "execution feedback", "directed next edit"),
         ),
         (
+            "compiler diagnostic summary source locations symbols key error lines "
+            "self repair prompt",
+            ("diagnostic summary", "source locations", "referenced symbols"),
+        ),
+        (
             "compile score torch extension CUDA_NO_BFLOAT16_CONVERSIONS __nv_bfloat16 constructor",
             ("compile", "__cuda_no_bfloat16_conversions__", "__nv_bfloat16", "torch extension"),
         ),
