@@ -3349,6 +3349,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert ".cu/.cuh kernel edits must use candidate_transform" in context
     assert "smallest coherent transformation" in context
     assert "fewer text edits are not better" in context
+    assert "semantic delta must be source-verifiable" in context
     assert "support-only edits" in context
     assert "do not describe a broad kernel rewrite without candidate_transform" in context
     assert "Structural CUDA preflight tracks are class-oriented hard checks" in context
@@ -3447,6 +3448,7 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "smallest coherent transformation" in prompt
     assert "not the smallest possible textual edit" in prompt
     assert "one-line constant edit as a stand-in" in prompt
+    assert "claimed semantic delta must be source-verifiable" in prompt
     assert "support-only edits" in prompt
     assert "do not describe a broad CUDA rewrite in candidate_edit" in prompt
     assert "Exact pending candidate_transform JSON" in prompt
@@ -3538,6 +3540,7 @@ def test_decision_feedback_explains_transform_semantic_mismatch_error() -> None:
     assert "constant/set transform" in content
     assert "must not be used as a proxy" in content
     assert "coherent candidate_transform batch" in content
+    assert "semantic delta must be source-verifiable" in content
 
 
 def test_decision_feedback_explains_mutually_exclusive_edit_channels() -> None:

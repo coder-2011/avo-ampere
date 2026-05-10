@@ -657,6 +657,10 @@ def build_variation_prompt(
         "the hypothesis. Scoped means reviewable and recoverable, not the smallest "
         "possible textual edit; do not use a one-line constant edit as a stand-in for "
         "a dataflow, tiling, or scheduling change that it does not actually implement. "
+        "The claimed semantic delta must be source-verifiable from the transform: if "
+        "you claim fewer/reused loads, moved staging, different work mapping, or "
+        "pipeline overlap, the steps must remove, replace, or relocate the relevant "
+        "load/store/loop sites in the current source excerpts. "
         "Primitive steps are only the representation; do not submit support-only edits "
         "such as adding a header, unused helper, or unused buffer as a standalone "
         "candidate. If a CUDA idea cannot be "
@@ -752,6 +756,10 @@ def build_repo_context(root: Path) -> str:
         "support-only edits such as adding a header, unused helper, or unused buffer must "
         "be part of a semantic batch that changes executable dataflow or a validation "
         "contract.",
+        "The semantic delta must be source-verifiable: claims about fewer or reused "
+        "loads, staging, work mapping, or pipeline overlap must correspond to exact "
+        "transform steps that remove, replace, or relocate the relevant load/store/loop "
+        "sites in the current source excerpts.",
         "If a CUDA idea is not representable as an exact coherent transform, shrink it to "
         "the smallest coherent transform unit or choose a no-edit diagnostic; do not "
         "describe a broad kernel rewrite without candidate_transform.",
@@ -899,7 +907,10 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "as a proxy for a dataflow, tiling, staging, or scheduling change. Either "
             "narrow the hypothesis to the constant change being made, or provide one "
             "coherent candidate_transform batch that implements the claimed executable "
-            "behavior and preserves its invariants. "
+            "behavior and preserves its invariants. The semantic delta must be "
+            "source-verifiable: if you claim fewer/reused loads, moved staging, "
+            "different work mapping, or overlap, the transform must remove, replace, "
+            "or relocate the relevant current load/store/loop sites. "
         )
     if "candidate_patch and candidate_transform are mutually exclusive" in message:
         return (
