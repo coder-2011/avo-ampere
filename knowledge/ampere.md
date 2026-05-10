@@ -1321,3 +1321,18 @@ source files.
   structure. Future K/V staging should be async/double-buffered and layout-aware,
   or the search should move to a wider FA2-like work decomposition rather than
   another isolated synchronous shared tile.
+- A later correctness-repair-enabled loop found a materially better local MMA
+  direction: Q-fragment register reuse. After one planning-validation failure
+  on unsupported profiling and two compile/materialization repair attempts, the
+  agent compiled a transform that hoists the eight Q WMMA fragment loads out of
+  the `key_start` loop into a `q_frags[8]` array, then reuses those fragments
+  for every K tile. The compile used 64 registers, 1 barrier, and 9920 bytes
+  shared memory with no spills. The follow-up full-target BF16 score passed all
+  8 correctness cases and was accepted into lineage at geomean
+  `8.960753680686471` TFLOPS versus prior best `7.777584666360881`. Per-case
+  TFLOPS were about 12.59/6.36 for seq4096 noncausal/causal, 12.86/6.39 for
+  seq8192, 12.69/6.28 for seq16384, and 12.75/6.22 for seq32768. This confirms
+  that eliminating repeated global Q fragment loads is more productive for the
+  current seed than isolated synchronous Q/K shared-memory staging or local
+  chunk-loop unrolling. Future moves should preserve Q-in-register reuse while
+  attacking K/V traffic, softmax/PV scheduling, or a broader FA2-like pipeline.

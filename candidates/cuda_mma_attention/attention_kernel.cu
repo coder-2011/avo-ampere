@@ -53,19 +53,26 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
   }
   __syncthreads();
 
+  wmma::fragment<wmma::matrix_a,
+                 kTile,
+                 kTile,
+                 16,
+                 __nv_bfloat16,
+                 wmma::row_major>
+      q_frags[8];
+  if (threadIdx.x < warpSize) {
+    for (int chunk = 0; chunk < 8; ++chunk) {
+      const int chunk_offset = chunk * 16;
+      wmma::load_matrix_sync(q_frags[chunk], q + base + query_start * kHeadDim + chunk_offset, kHeadDim);
+    }
+  }
+
   for (int key_start = 0; key_start < seq_len; key_start += kTile) {
     if (threadIdx.x < warpSize) {
       wmma::fragment<wmma::accumulator, kTile, kTile, 16, float> score_frag;
       wmma::fill_fragment(score_frag, 0.0f);
 
       for (int chunk = 0; chunk < 8; ++chunk) {
-        wmma::fragment<wmma::matrix_a,
-                       kTile,
-                       kTile,
-                       16,
-                       __nv_bfloat16,
-                       wmma::row_major>
-            q_frag;
         wmma::fragment<wmma::matrix_b,
                        kTile,
                        kTile,
@@ -74,9 +81,8 @@ __global__ void mma_attention_kernel(const __nv_bfloat16* __restrict__ q,
                        wmma::col_major>
             k_frag;
         const int chunk_offset = chunk * 16;
-        wmma::load_matrix_sync(q_frag, q + base + query_start * kHeadDim + chunk_offset, kHeadDim);
         wmma::load_matrix_sync(k_frag, k + base + key_start * kHeadDim + chunk_offset, kHeadDim);
-        wmma::mma_sync(score_frag, q_frag, k_frag, score_frag);
+        wmma::mma_sync(score_frag, q_frags[chunk], k_frag, score_frag);
       }
 
       wmma::store_matrix_sync(scores, score_frag, kTile, wmma::mem_row_major);
