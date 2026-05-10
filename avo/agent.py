@@ -27,6 +27,7 @@ DEFAULT_SCORE_TOTAL_TOKENS = 32768
 MMA_ACCEPTED_VALIDATION_SEQ = 32768
 MAX_REPO_CONTEXT_FILE_CHARS = 12_000
 MAX_REPO_CONTEXT_SOURCE_CHARS = 45_000
+MAX_VARIATION_PROMPT_CHARS = 120_000
 PROFILER_UNSUPPORTED_RUNTIME_MARKER = Path("/etc/thunder/libthunder.so")
 WARP_ROWS_SEED = "candidates/cuda_warp_rows_attention_seed.py"
 MMA_SEED = "candidates/cuda_mma_attention_seed.py"
@@ -614,6 +615,7 @@ def build_variation_prompt(
     lineage_summary: str,
     attempt_history: str = "",
     repo_context: str = "",
+    max_chars: int | None = MAX_VARIATION_PROMPT_CHARS,
 ) -> str:
     profile_available = not PROFILER_UNSUPPORTED_RUNTIME_MARKER.exists()
     bounded_command_list = (
@@ -631,6 +633,43 @@ def build_variation_prompt(
         else "candidate profile is unavailable in this runtime; use score for "
         "correctness, timing, and TFLOPS. "
     )
+    if max_chars is not None:
+        knowledge, lineage_summary, attempt_history, repo_context = (
+            _fit_variation_prompt_sections(
+                knowledge=knowledge,
+                lineage_summary=lineage_summary,
+                attempt_history=attempt_history,
+                repo_context=repo_context,
+                max_chars=max_chars,
+                profile_available=profile_available,
+                bounded_command_list=bounded_command_list,
+                no_edit_command_text=no_edit_command_text,
+                profile_flag_text=profile_flag_text,
+            )
+        )
+    return _render_variation_prompt_text(
+        knowledge=knowledge,
+        lineage_summary=lineage_summary,
+        attempt_history=attempt_history,
+        repo_context=repo_context,
+        profile_available=profile_available,
+        bounded_command_list=bounded_command_list,
+        no_edit_command_text=no_edit_command_text,
+        profile_flag_text=profile_flag_text,
+    )
+
+
+def _render_variation_prompt_text(
+    *,
+    knowledge: str,
+    lineage_summary: str,
+    attempt_history: str,
+    repo_context: str,
+    profile_available: bool,
+    bounded_command_list: str,
+    no_edit_command_text: str,
+    profile_flag_text: str,
+) -> str:
     context_section = f"\n\nLocal repo context:\n{repo_context}" if repo_context.strip() else ""
     attempt_section = (
         "\n\nRecent attempt history:\n"
@@ -697,6 +736,99 @@ def build_variation_prompt(
         f"Knowledge:\n{knowledge}\n\nLineage:\n{lineage_summary}"
         f"{attempt_section}{context_section}\n"
     )
+
+
+def _fit_variation_prompt_sections(
+    *,
+    knowledge: str,
+    lineage_summary: str,
+    attempt_history: str,
+    repo_context: str,
+    max_chars: int,
+    profile_available: bool,
+    bounded_command_list: str,
+    no_edit_command_text: str,
+    profile_flag_text: str,
+) -> tuple[str, str, str, str]:
+    sections = {
+        "knowledge": knowledge,
+        "lineage": lineage_summary,
+        "attempt_history": attempt_history,
+        "repo_context": repo_context,
+    }
+
+    def render() -> str:
+        return _render_variation_prompt_text(
+            knowledge=sections["knowledge"],
+            lineage_summary=sections["lineage"],
+            attempt_history=sections["attempt_history"],
+            repo_context=sections["repo_context"],
+            profile_available=profile_available,
+            bounded_command_list=bounded_command_list,
+            no_edit_command_text=no_edit_command_text,
+            profile_flag_text=profile_flag_text,
+        )
+
+    if max_chars <= 0 or len(render()) <= max_chars:
+        return knowledge, lineage_summary, attempt_history, repo_context
+
+    # Trim bulky dynamic context first. Attempt history is last and tail-preserved
+    # because follow-up repair signals and pending transform JSON are newest.
+    trim_order = (
+        ("repo_context", "head_tail"),
+        ("knowledge", "head_tail"),
+        ("lineage", "head_tail"),
+        ("attempt_history", "tail"),
+    )
+    for name, preserve in trim_order:
+        if len(render()) <= max_chars:
+            break
+        current = sections[name]
+        if not current.strip():
+            continue
+        overflow = len(render()) - max_chars
+        target = max(0, len(current) - overflow - 512)
+        if target >= len(current):
+            target = max(0, len(current) - 512)
+        sections[name] = _compact_prompt_section(
+            current,
+            max_chars=target,
+            label=name,
+            preserve=preserve,
+        )
+
+    return (
+        sections["knowledge"],
+        sections["lineage"],
+        sections["attempt_history"],
+        sections["repo_context"],
+    )
+
+
+def _compact_prompt_section(
+    text: str,
+    *,
+    max_chars: int,
+    label: str,
+    preserve: str,
+) -> str:
+    stripped = text.strip()
+    if len(stripped) <= max_chars:
+        return stripped
+    marker = (
+        f"\n[... {label} compacted to fit variation prompt budget; "
+        f"original_chars={len(stripped)} ...]\n"
+    )
+    if max_chars <= len(marker) + 32:
+        return marker.strip()[: max(0, max_chars)]
+    payload_chars = max_chars - len(marker)
+    if preserve == "tail":
+        return f"{marker}{stripped[-payload_chars:]}"
+    if preserve == "head":
+        return f"{stripped[:payload_chars]}{marker}"
+    head_chars = payload_chars // 2
+    tail_chars = payload_chars - head_chars
+    return f"{stripped[:head_chars]}{marker}{stripped[-tail_chars:]}"
 
 
 def build_repo_context(root: Path) -> str:

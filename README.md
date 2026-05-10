@@ -334,6 +334,10 @@ size, and hash metadata for audit. Accepted edited steps also record
 
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the suite-aware lineage gate. Candidates compare against the best prior score with the same benchmark case signature; a new signature can establish its own lane when correctness passes and source artifacts are captured.
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
+Planner prompts also have a final character budget over dynamic sections: bulky
+repo context, knowledge, lineage, and attempt history are compacted before the
+Anthropic request, with attempt history tail-preserved so repair requests and
+pending `candidate_transform` JSON survive long runs.
 If a candidate edit fails transform materialization, compile, or score correctness, the evolve step can ask the agent for an immediate revised executable edit after reverting the failed patch.
 When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step JSON for every run, including rejected and failed attempts. Later `agent-plan` or `evolve-once` calls summarize the latest records from that directory so the agent can avoid repeating known dead ends without adding them to committed lineage.
 

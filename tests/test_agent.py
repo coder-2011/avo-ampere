@@ -3601,6 +3601,25 @@ def test_build_variation_prompt_includes_attempt_history() -> None:
     assert "avoid repeating failed or regressed transform families" in prompt
 
 
+def test_build_variation_prompt_compacts_dynamic_sections_with_tail_history() -> None:
+    pending_signal = (
+        'Exact pending candidate_transform JSON: {"op":"replace_once",'
+        '"path":"candidates/kernel.cu","find":"old","replace":"new"}'
+    )
+    prompt = build_variation_prompt(
+        knowledge="knowledge-line\n" + ("K" * 5000),
+        lineage_summary="lineage-line\n" + ("L" * 5000),
+        attempt_history=("old attempt\n" * 500) + pending_signal,
+        repo_context="repo-line\n" + ("R" * 5000),
+        max_chars=18_000,
+    )
+
+    assert len(prompt) <= 18_000
+    assert "You are the AVO variation operator" in prompt
+    assert "compacted to fit variation prompt budget" in prompt
+    assert pending_signal in prompt
+
+
 def test_decision_feedback_explains_empty_patch_validation_error() -> None:
     kwargs = {
         "messages": [
