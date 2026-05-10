@@ -715,10 +715,13 @@ def _concrete_promoted_preflight_track_names(failure_class: str) -> tuple[str, .
 def validate_decision_against_attempt_history(
     decision: VariationDecision,
     directory: Path | None,
+    *,
+    extra_payloads: tuple[dict[str, Any], ...] = (),
 ) -> None:
-    if directory is None or not directory.exists():
-        return
-    payloads = [payload for _, payload in _load_step_payloads(directory)]
+    payloads = []
+    if directory is not None and directory.exists():
+        payloads.extend(payload for _, payload in _load_step_payloads(directory))
+    payloads.extend(extra_payloads)
     if not payloads:
         return
     if (
@@ -780,7 +783,7 @@ def load_promoted_preflight_classes(directory: Path | None) -> frozenset[str]:
 
 def _load_step_payloads(directory: Path) -> list[tuple[Path, dict[str, Any]]]:
     payloads = []
-    for path in sorted(path for path in directory.glob("*.json") if path.is_file()):
+    for path in (path for path in directory.glob("*.json") if path.is_file()):
         if path.name == PROMOTED_PREFLIGHT_TRACKS_FILENAME:
             continue
         try:
@@ -789,7 +792,39 @@ def _load_step_payloads(directory: Path) -> list[tuple[Path, dict[str, Any]]]:
             continue
         if isinstance(payload, dict) and _is_step_payload(payload):
             payloads.append((path, payload))
-    return payloads
+    return sorted(payloads, key=lambda item: _step_payload_order_key(*item))
+
+
+def _step_payload_order_key(path: Path, payload: dict[str, Any]) -> tuple[datetime, str]:
+    timestamp = _step_payload_timestamp(payload)
+    if timestamp is not None:
+        return timestamp, path.name
+    try:
+        fallback = datetime.fromtimestamp(path.stat().st_mtime, tz=UTC)
+    except OSError:
+        fallback = datetime.min.replace(tzinfo=UTC)
+    return fallback, path.name
+
+
+def _step_payload_timestamp(payload: dict[str, Any]) -> datetime | None:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    for key in ("completed_at", "started_at"):
+        parsed = _parse_step_timestamp(str(attempt.get(key) or ""))
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _parse_step_timestamp(raw: str) -> datetime | None:
+    if not raw:
+        return None
+    try:
+        parsed = datetime.fromisoformat(raw.replace("Z", "+00:00"))
+    except ValueError:
+        return None
+    if parsed.tzinfo is None:
+        return parsed.replace(tzinfo=UTC)
+    return parsed.astimezone(UTC)
 
 
 def _promoted_preflight_state_path(directory: Path | None) -> Path | None:

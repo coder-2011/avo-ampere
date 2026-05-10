@@ -1071,6 +1071,152 @@ def test_repair_loop_does_not_autofill_pending_transform(
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
+def test_repair_loop_allows_correctness_repair_after_pending_transform_score(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    attempts = tmp_path / "attempts"
+    pending_transform = {
+        "op": "replace_once",
+        "path": "candidates/seed.py",
+        "find": "VALUE = 1",
+        "replace": "VALUE = bad",
+    }
+    repair_transform = {
+        "op": "replace_once",
+        "path": "candidates/seed.py",
+        "find": "VALUE = 1",
+        "replace": "VALUE = 2",
+    }
+    compile_attempt = VariationAttempt(
+        decision=VariationDecision(
+            hypothesis="compile pending transform",
+            files_to_inspect=["candidates/seed.py"],
+            candidate_edit="compile transform",
+            expected_effect="compile succeeds",
+            risk="mock compile",
+            next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            edit_mode="transform",
+            candidate_transform=pending_transform,
+        ),
+        command_result=CommandResult(
+            command=["python", "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/seed.py"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+    write_step_record(attempts, EvolutionStep(attempt=compile_attempt, gate_decision=None))
+    failed_score_attempt = VariationAttempt(
+        decision=VariationDecision(
+            hypothesis="score pending transform",
+            files_to_inspect=["candidates/seed.py"],
+            candidate_edit="Score the pending transform.",
+            expected_effect="score should pass",
+            risk="mock failed score",
+            next_command="avo score --backend candidate --candidate candidates/seed.py",
+            edit_mode="transform",
+            candidate_transform=pending_transform,
+        ),
+        command_result=CommandResult(
+            command=["python", "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="{}",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:02+00:00",
+        completed_at="2026-05-08T00:00:03+00:00",
+        score_payload={
+            "backend": "mock",
+            "all_correct": False,
+            "geomean_tflops": 0.0,
+            "cases": [{"correct": False, "error": "candidate output contains non-finite values"}],
+        },
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/seed.py"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+    repair_decision = VariationDecision(
+        hypothesis="repair correctness failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="Repair the pending transform with initialized output.",
+        expected_effect="score should pass",
+        risk="mock repair",
+        next_command="avo score --backend candidate --candidate candidates/seed.py",
+        edit_mode="transform",
+        candidate_transform=repair_transform,
+    )
+
+    def fake_request_variation_decision(**kwargs):
+        return repair_decision
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="{}",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:04+00:00",
+            completed_at="2026-05-08T00:00:05+00:00",
+            score_payload={
+                "backend": "mock",
+                "all_correct": True,
+                "geomean_tflops": 10.0,
+                "cases": [{}],
+            },
+            patch_result=PatchResult(
+                ok=True,
+                patch_paths=["candidates/seed.py"],
+                returncode=0,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+    monkeypatch.setattr("avo.cli.cleanup_rejected_candidate_patch", lambda step, *, cwd: step)
+
+    result = _run_compile_repair_loop(
+        SimpleNamespace(
+            cwd=tmp_path,
+            timeout_s=10,
+            attempts_dir=attempts,
+            compile_repair_attempts=1,
+            model="claude",
+        ),
+        initial_attempt=failed_score_attempt,
+        lineage_summary="{}",
+        attempt_history="",
+        repo_context="",
+        knowledge="Ampere only.",
+    )
+
+    assert not isinstance(result, EvolutionStep)
+    repaired_attempt, repair_attempts, _ = result
+    assert repaired_attempt.decision.candidate_transform == repair_transform
+    assert repair_attempts == [failed_score_attempt]
+
+
 def test_pending_transform_payload_normalizer_attaches_transform_to_score(
     tmp_path: Path,
 ) -> None:

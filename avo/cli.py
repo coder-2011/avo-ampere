@@ -977,7 +977,13 @@ def _run_compile_repair_loop(
                 normalize_payload=None,
             )
             _validate_edit_repair_decision(repair_decision, current_attempt, repair_kind)
-            validate_decision_against_attempt_history(repair_decision, args.attempts_dir)
+            validate_decision_against_attempt_history(
+                repair_decision,
+                args.attempts_dir,
+                extra_payloads=(
+                    EvolutionStep(attempt=current_attempt, gate_decision=None).as_dict(),
+                ),
+            )
         except ValueError as exc:
             return planning_failure_step(
                 exc,

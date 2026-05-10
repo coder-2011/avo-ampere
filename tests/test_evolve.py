@@ -23,6 +23,7 @@ from avo.evolve import (
     load_promoted_preflight_classes,
     materialize_candidate_transform,
     paths_from_unified_diff,
+    pending_compile_only_transform,
     planning_failure_step,
     revert_candidate_patch,
     run_decision_command,
@@ -2107,6 +2108,88 @@ def test_attempt_history_rejects_repeated_compile_only_transform(tmp_path: Path)
         ),
         attempts,
     )
+
+
+def test_pending_compile_transform_uses_payload_timestamps_not_filename_order(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "set_constexpr_int",
+        "path": "candidates/kernel.cu",
+        "name": "kMaxSeqLen",
+        "value": 512,
+    }
+    old_score_attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 512",
+            candidate_transform={
+                "op": "set_constexpr_int",
+                "path": "candidates/kernel.cu",
+                "name": "kThreads",
+                "value": 80,
+            },
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={
+            "all_correct": True,
+            "geomean_tflops": 9.0,
+            "cases": [],
+        },
+        started_at="2026-05-07T00:00:00+00:00",
+        completed_at="2026-05-07T00:00:01+00:00",
+    )
+    attempts.mkdir()
+    (attempts / "zz_old_score.json").write_text(
+        json.dumps(
+            EvolutionStep(
+                attempt=old_score_attempt,
+                gate_decision=GateDecision(
+                    accepted=False,
+                    reason="candidate regressed geomean throughput",
+                    candidate_geomean=9.0,
+                    best_geomean=9.5,
+                ),
+            ).as_dict(),
+            indent=2,
+            sort_keys=True,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    compile_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=compile_attempt, gate_decision=None))
+
+    assert pending_compile_only_transform(attempts) == transform
 
 
 def test_attempt_history_rejects_repeated_scored_unaccepted_transform(
