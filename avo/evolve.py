@@ -1692,7 +1692,19 @@ def _transform_insert_once(content: str, *, anchor: str, text: str, before: bool
     index = content.index(anchor)
     if not before:
         index += len(anchor)
-    return f"{content[:index]}{text}{content[index:]}"
+    return f"{content[:index]}{_linewise_insert_text(content, index, text)}{content[index:]}"
+
+
+def _linewise_insert_text(content: str, index: int, text: str) -> str:
+    if not text:
+        return text
+    prefix = ""
+    suffix = ""
+    if index > 0 and not content[:index].endswith("\n") and not text.startswith("\n"):
+        prefix = "\n"
+    if index < len(content) and not content[index:].startswith("\n") and not text.endswith("\n"):
+        suffix = "\n"
+    return f"{prefix}{text}{suffix}"
 
 
 def _transform_match_error(

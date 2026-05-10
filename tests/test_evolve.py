@@ -162,6 +162,48 @@ def test_materialize_candidate_transform_generates_batch_patch(tmp_path: Path) -
     assert "+VALUES = {1, 2}" in patch
 
 
+def test_materialize_candidate_transform_inserts_after_anchor_on_new_line(
+    tmp_path: Path,
+) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text("  __shared__ float old_scale[kTile];\n  int next = 0;\n", encoding="utf-8")
+
+    patch = materialize_candidate_transform(
+        {
+            "op": "insert_after_once",
+            "path": "candidates/kernel.cu",
+            "anchor": "  __shared__ float old_scale[kTile];",
+            "text": "  __shared__ __nv_bfloat16 v_tile[kTile * kHeadDim];",
+        },
+        cwd=tmp_path,
+    )
+
+    assert "+  __shared__ __nv_bfloat16 v_tile[kTile * kHeadDim];" in patch
+    assert "old_scale[kTile];  __shared__" not in patch
+
+
+def test_materialize_candidate_transform_inserts_before_anchor_on_own_line(
+    tmp_path: Path,
+) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text("  int next = 0;\n", encoding="utf-8")
+
+    patch = materialize_candidate_transform(
+        {
+            "op": "insert_before_once",
+            "path": "candidates/kernel.cu",
+            "anchor": "  int next = 0;",
+            "text": "  int inserted = 1;",
+        },
+        cwd=tmp_path,
+    )
+
+    assert "+  int inserted = 1;" in patch
+    assert "inserted = 1;  int next" not in patch
+
+
 def test_materialize_candidate_transform_adds_include(tmp_path: Path) -> None:
     kernel = tmp_path / "candidates" / "kernel.cu"
     kernel.parent.mkdir()
