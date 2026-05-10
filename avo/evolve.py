@@ -1998,6 +1998,12 @@ def _candidate_python_import_paths(source_root: Path, relative_path: str) -> set
     except (OSError, SyntaxError, UnicodeDecodeError):
         return set()
     paths: set[str] = set()
+    path_bindings = _candidate_python_path_bindings(relative_path, tree)
+    sequence_bindings = _candidate_python_path_sequence_bindings(
+        relative_path,
+        tree,
+        path_bindings,
+    )
     package_parts = _candidate_python_package_parts(relative_path)
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
@@ -2014,7 +2020,143 @@ def _candidate_python_import_paths(source_root: Path, relative_path: str) -> set
                 paths.update(
                     _candidate_module_source_paths(source_root, [*module_parts, alias.name])
                 )
+        elif isinstance(node, ast.Call):
+            paths.update(
+                _candidate_python_extension_source_paths(
+                    source_root,
+                    relative_path,
+                    node,
+                    path_bindings,
+                    sequence_bindings,
+                )
+            )
     return paths
+
+
+def _candidate_python_path_bindings(
+    relative_path: str,
+    tree: ast.AST,
+) -> dict[str, PurePosixPath]:
+    bindings: dict[str, PurePosixPath] = {}
+    for node in getattr(tree, "body", []):
+        if isinstance(node, ast.Assign):
+            resolved = _candidate_python_path_expr(relative_path, node.value, bindings)
+            if resolved is None:
+                continue
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = resolved
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            resolved = _candidate_python_path_expr(relative_path, node.value, bindings)
+            if resolved is not None:
+                bindings[node.target.id] = resolved
+    return bindings
+
+
+def _candidate_python_path_sequence_bindings(
+    relative_path: str,
+    tree: ast.AST,
+    path_bindings: dict[str, PurePosixPath],
+) -> dict[str, tuple[PurePosixPath, ...]]:
+    bindings: dict[str, tuple[PurePosixPath, ...]] = {}
+    for node in getattr(tree, "body", []):
+        value = getattr(node, "value", None)
+        if value is None:
+            continue
+        resolved = _candidate_python_path_sequence_expr(
+            relative_path,
+            value,
+            path_bindings,
+            bindings,
+        )
+        if not resolved:
+            continue
+        if isinstance(node, ast.Assign):
+            for target in node.targets:
+                if isinstance(target, ast.Name):
+                    bindings[target.id] = tuple(resolved)
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            bindings[node.target.id] = tuple(resolved)
+    return bindings
+
+
+def _candidate_python_extension_source_paths(
+    source_root: Path,
+    relative_path: str,
+    node: ast.Call,
+    path_bindings: dict[str, PurePosixPath],
+    sequence_bindings: dict[str, tuple[PurePosixPath, ...]],
+) -> set[str]:
+    paths: set[str] = set()
+    for keyword in node.keywords:
+        if keyword.arg != "sources":
+            continue
+        for source_path in _candidate_python_path_sequence_expr(
+            relative_path,
+            keyword.value,
+            path_bindings,
+            sequence_bindings,
+        ):
+            normalized = _normalize_candidate_source_path(source_path.as_posix())
+            if normalized is not None and _is_snapshot_source_file(source_root, normalized):
+                paths.add(normalized)
+    return paths
+
+
+def _candidate_python_path_sequence_expr(
+    relative_path: str,
+    node: ast.AST,
+    path_bindings: dict[str, PurePosixPath],
+    sequence_bindings: dict[str, tuple[PurePosixPath, ...]],
+) -> tuple[PurePosixPath, ...]:
+    if isinstance(node, ast.Name):
+        return sequence_bindings.get(node.id, ())
+    if isinstance(node, (ast.List, ast.Tuple, ast.Set)):
+        paths = []
+        for item in node.elts:
+            resolved = _candidate_python_path_expr(relative_path, item, path_bindings)
+            if resolved is not None:
+                paths.append(resolved)
+        return tuple(paths)
+    resolved = _candidate_python_path_expr(relative_path, node, path_bindings)
+    return (resolved,) if resolved is not None else ()
+
+
+def _candidate_python_path_expr(
+    relative_path: str,
+    node: ast.AST | None,
+    bindings: dict[str, PurePosixPath],
+) -> PurePosixPath | None:
+    if node is None:
+        return None
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        path = PurePosixPath(node.value)
+        if path.is_absolute() or str(path).startswith("candidates/"):
+            return path
+        return PurePosixPath(relative_path).parent / path
+    if isinstance(node, ast.Name):
+        if node.id == "__file__":
+            return PurePosixPath(relative_path)
+        return bindings.get(node.id)
+    if isinstance(node, ast.Call):
+        if isinstance(node.func, ast.Name) and node.func.id in {"Path", "PurePath"} and node.args:
+            return _candidate_python_path_expr(relative_path, node.args[0], bindings)
+        if isinstance(node.func, ast.Name) and node.func.id == "str" and node.args:
+            return _candidate_python_path_expr(relative_path, node.args[0], bindings)
+        if isinstance(node.func, ast.Attribute) and node.func.attr == "resolve":
+            return _candidate_python_path_expr(relative_path, node.func.value, bindings)
+    if isinstance(node, ast.Attribute) and node.attr == "parent":
+        resolved = _candidate_python_path_expr(relative_path, node.value, bindings)
+        return resolved.parent if resolved is not None else None
+    if (
+        isinstance(node, ast.BinOp)
+        and isinstance(node.op, ast.Div)
+        and (left := _candidate_python_path_expr(relative_path, node.left, bindings)) is not None
+        and isinstance(node.right, ast.Constant)
+        and isinstance(node.right.value, str)
+    ):
+        return left / node.right.value
+    return None
 
 
 def _candidate_python_package_parts(relative_path: str) -> list[str]:

@@ -1015,6 +1015,59 @@ def test_finalize_attempt_snapshots_local_python_import_dependencies(
     ) == "// package cuda helper\n"
 
 
+def test_finalize_attempt_snapshots_static_extension_sources_outside_companion(
+    tmp_path: Path,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    extension_dir = candidate_dir / "shared_extension"
+    extension_dir.mkdir(parents=True)
+    seed = candidate_dir / "cuda_demo_seed.py"
+    seed.write_text(
+        "from pathlib import Path\n"
+        "from torch.utils.cpp_extension import load\n"
+        "EXTENSION_DIR = Path(__file__).resolve().parent / 'shared_extension'\n"
+        "EXTENSION_SOURCES = [\n"
+        "    str(EXTENSION_DIR / 'attention.cpp'),\n"
+        "    str(EXTENSION_DIR / 'attention_kernel.cu'),\n"
+        "]\n"
+        "def _extension():\n"
+        "    return load(name='demo', sources=EXTENSION_SOURCES)\n",
+        encoding="utf-8",
+    )
+    (extension_dir / "attention.cpp").write_text("// cpp binding\n", encoding="utf-8")
+    (extension_dir / "attention_kernel.cu").write_text("// cuda kernel\n", encoding="utf-8")
+    attempt = VariationAttempt(
+        decision=decision("avo score --backend candidate --candidate candidates/cuda_demo_seed.py"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        score_payload={
+            "backend": "candidate",
+            "candidate_path": "candidates/cuda_demo_seed.py",
+            "all_correct": True,
+            "geomean_tflops": 3.0,
+            "cases": [{}],
+        },
+    )
+
+    step = finalize_attempt(tmp_path / "lineage", attempt, source_root=tmp_path)
+
+    assert step.accepted
+    source_root = tmp_path / "lineage" / "sources" / "latest"
+    assert (source_root / "candidates" / "shared_extension" / "attention.cpp").read_text(
+        encoding="utf-8"
+    ) == "// cpp binding\n"
+    assert (source_root / "candidates" / "shared_extension" / "attention_kernel.cu").read_text(
+        encoding="utf-8"
+    ) == "// cuda kernel\n"
+
+
 def test_write_attempt_records_json(tmp_path: Path) -> None:
     attempt = run_decision_command(
         decision("avo worker-sleep --seconds 0"),
