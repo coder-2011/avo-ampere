@@ -1243,6 +1243,8 @@ def _step_transform_family(payload: dict[str, Any]) -> str:
     if not has_edit_payload:
         return "diagnostic_or_planning"
     text = _payload_transform_family_text(payload)
+    if _payload_transform_sets_constexpr(payload, {"kThreads", "kWarps"}):
+        return "thread_count_or_warp_mapping"
     if (
         "kquerytilesperblock" in text
         or "query tiles per block" in text
@@ -1250,18 +1252,22 @@ def _step_transform_family(payload: dict[str, Any]) -> str:
         or "multi query" in text
     ):
         return "query_tile_work_mapping"
-    if _payload_transform_sets_constexpr(payload, {"kThreads", "kWarps"}) or re.search(
+    if any(marker in text for marker in ("cp.async", "__pipeline", "async copy", "async-copy")):
+        return "async_copy_pipeline"
+    if "__syncwarp" in text:
+        return "synchronization_or_barrier"
+    if re.search(
         r"\b(?:thread\s+count|threads?\s+per\s+block|warp\s+only|warp-only|"
-        r"warp\s+mapping|blockdim\.x|kthreads)\b",
+        r"warp\s+mapping|kthreads|kwarps)\b",
         text,
     ):
         return "thread_count_or_warp_mapping"
-    if any(marker in text for marker in ("cp.async", "__pipeline", "async copy", "async-copy")):
-        return "async_copy_pipeline"
     if "shared" in text and any(
         marker in text for marker in ("stage", "staging", "tile", "buffer", "smem")
     ):
         return "shared_memory_staging"
+    if "__syncthreads" in text or "barrier" in text:
+        return "synchronization_or_barrier"
     if "q_frags" in text or ("register" in text and "reuse" in text):
         return "register_reuse"
     if "wmma" in text and any(marker in text for marker in ("fragment", "shape", "tile")):

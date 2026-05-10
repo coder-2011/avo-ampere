@@ -2318,6 +2318,13 @@ def test_summarize_attempt_history_flags_thread_count_family(
                 stderr_tail="",
             ),
             score_payload={"all_correct": True, "geomean_tflops": 1.0, "cases": []},
+            materialized_patch=(
+                "diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n"
+                "@@ -1,4 +1,4 @@\n"
+                " __shared__ float scores[kTile * kTile];\n"
+                f"-constexpr int kThreads = {value - 1};\n"
+                f"+constexpr int kThreads = {value};\n"
+            ),
             patch_result=PatchResult(
                 ok=True,
                 patch_paths=["candidates/kernel.cu"],
@@ -2346,6 +2353,143 @@ def test_summarize_attempt_history_flags_thread_count_family(
     assert "family=thread_count_or_warp_mapping" in summary
     assert "thread_count_or_warp_mapping(count=3)" in summary
     assert "Choose a materially different optimization family" in summary
+
+
+def test_summarize_attempt_history_keeps_blockdim_shared_staging_family(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "insert_after_once",
+                "path": "candidates/kernel.cu",
+                "anchor": "for (int key_start = 0;",
+                "text": (
+                    "for (int linear = threadIdx.x; linear < kTile * kHeadDim; "
+                    "linear += blockDim.x) { k_shared[linear] = k[linear]; }\n"
+                    "__syncthreads();"
+                ),
+            },
+            {
+                "op": "replace_once",
+                "path": "candidates/kernel.cu",
+                "find": "load K from global",
+                "replace": "load K from shared staging buffer",
+            },
+        ],
+    }
+    attempt = VariationAttempt(
+        decision=VariationDecision(
+            hypothesis="current accepted state uses kThreads=96",
+            files_to_inspect=["candidates/kernel.cu"],
+            candidate_edit=(
+                "Use all 96 threads for cooperative shared-memory K tile staging."
+            ),
+            expected_effect="reduce global memory traffic",
+            risk="barrier overhead may dominate",
+            next_command="avo score --backend candidate --candidate candidates/seed.py",
+            edit_mode="transform",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={"all_correct": True, "geomean_tflops": 1.0, "cases": []},
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(
+        attempts,
+        EvolutionStep(
+            attempt=attempt,
+            gate_decision=GateDecision(
+                accepted=False,
+                reason="candidate regressed geomean throughput",
+                candidate_geomean=1.0,
+                best_geomean=2.0,
+            ),
+        ),
+    )
+
+    summary = summarize_attempt_history(attempts, limit=2)
+
+    assert "family=shared_memory_staging" in summary
+    assert "family=thread_count_or_warp_mapping" not in summary
+
+
+def test_summarize_attempt_history_classifies_syncwarp_family(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "replace_once",
+        "path": "candidates/kernel.cu",
+        "find": "wmma::store_matrix_sync(scores, score_frag, kTile);\n__syncthreads();",
+        "replace": (
+            "wmma::store_matrix_sync(scores, score_frag, kTile);\n"
+            "__syncwarp();\n"
+            "__syncthreads();"
+        ),
+    }
+    attempt = VariationAttempt(
+        decision=VariationDecision(
+            hypothesis="score-store synchronization may affect scheduler behavior",
+            files_to_inspect=["candidates/kernel.cu"],
+            candidate_edit="Add __syncwarp before the score-store block barrier.",
+            expected_effect="may improve warp convergence before block synchronization",
+            risk="extra synchronization may regress",
+            next_command="avo score --backend candidate --candidate candidates/seed.py",
+            edit_mode="transform",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={"all_correct": True, "geomean_tflops": 1.0, "cases": []},
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(
+        attempts,
+        EvolutionStep(
+            attempt=attempt,
+            gate_decision=GateDecision(
+                accepted=False,
+                reason="candidate regressed geomean throughput",
+                candidate_geomean=1.0,
+                best_geomean=2.0,
+            ),
+        ),
+    )
+
+    summary = summarize_attempt_history(attempts, limit=2)
+
+    assert "family=synchronization_or_barrier" in summary
+    assert "family=thread_count_or_warp_mapping" not in summary
 
 
 def test_summarize_attempt_history_flags_query_tile_work_mapping_family(
