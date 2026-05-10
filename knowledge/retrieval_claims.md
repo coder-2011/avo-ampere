@@ -524,7 +524,9 @@ reject a bad transform family, or explain a score/gate result.
   global-to-shared copies with at least 4-byte alignment, while 16-byte groups
   remain the preferred throughput shape. A scalar BF16 async-copy patch is weak
   evidence but should still be able to reach compile/repair when it is part of
-  coherent dataflow.
+  coherent dataflow. Runtime compile failures that mention async-copy APIs are
+  classified as `async_copy_compile_error`, which is repair feedback rather than
+  an eligible hard-preflight promotion class.
 - Retrieval query: `NVIDIA cuda::memcpy_async Ampere cp.async 4 byte alignment 16 byte vector groups pipeline producer commit consumer wait`.
 
 - Claim: repair-specific validation failures are fed back once inside the same

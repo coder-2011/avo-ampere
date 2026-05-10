@@ -3077,6 +3077,48 @@ def test_update_promoted_preflight_tracks_persists_recurring_class(tmp_path: Pat
     assert "checks=promoted_symbol_lifecycle_duplicate_declaration" in summary
 
 
+def test_async_copy_compile_errors_are_not_promoted_to_hard_preflight(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    errors = [
+        "attention_kernel.cu: error: identifier __pipeline_memcpy_async is undefined\n",
+        "attention_kernel.cu: error: expected a declaration near __pipeline_commit\n",
+        "attention_kernel.cu: error: expected a ';' before cuda::memcpy_async\n",
+    ]
+    for index, stderr in enumerate(errors):
+        attempt = VariationAttempt(
+            decision=decision(
+                f"avo compile --source candidates/kernel_{index}.cu --out-dir build/kernel_{index}",
+                candidate_transform={
+                    "op": "replace_once",
+                    "path": "candidates/kernel.cu",
+                    "find": "old",
+                    "replace": "__pipeline_memcpy_async(dst, src, 4);",
+                },
+            ),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "compile"],
+                returncode=2,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail=stderr,
+            ),
+            started_at=f"2026-05-08T00:00:0{index}+00:00",
+            completed_at=f"2026-05-08T00:00:0{index + 1}+00:00",
+        )
+        write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    state = update_promoted_preflight_tracks(attempts)
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert state.get("tracks") == {}
+    assert load_promoted_preflight_classes(attempts) == frozenset()
+    assert "share failure class 'async_copy_compile_error'" in summary
+    assert "No concrete hard preflight track exists" in summary
+    assert "eligible for hard preflight promotion" not in summary
+
+
 def test_summarize_attempt_history_counts_mixed_recurring_failure_classes(
     tmp_path: Path,
 ) -> None:

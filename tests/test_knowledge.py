@@ -61,6 +61,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("cp.async", "16-byte", "bf16", "real overlap"),
         ),
         (
+            "async-copy compile error repair feedback not hard preflight promotion",
+            ("async_copy_compile_error", "repair-feedback", "not promoted"),
+        ),
+        (
             "compile score torch extension CUDA_NO_BFLOAT16_CONVERSIONS __nv_bfloat16 constructor",
             ("compile", "__cuda_no_bfloat16_conversions__", "__nv_bfloat16", "torch extension"),
         ),

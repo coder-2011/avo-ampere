@@ -1613,6 +1613,9 @@ source files.
   compile/repair. This matches the CUDA source evidence: Ampere+
   `cuda::memcpy_async` may lower to `cp.async` for global-to-shared copies with
   at least 4-byte alignment, while 16-byte vector groups remain the better
-  throughput target when the dataflow supports them. Keep hard preflights for
-  invalid pipeline lifecycle, disconnected helpers, unsupported WMMA contracts,
-  stale symbols, tile-scope mistakes, and malformed transform materialization.
+  throughput target when the dataflow supports them. Runtime compile failures
+  that mention async-copy APIs are classified as `async_copy_compile_error`, a
+  repair-feedback class that is not promoted to hard preflight. Keep hard
+  preflights for invalid pipeline lifecycle, disconnected helpers, unsupported
+  WMMA contracts, stale symbols, tile-scope mistakes, and malformed transform
+  materialization.

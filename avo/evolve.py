@@ -1461,6 +1461,15 @@ IGNORED_TRANSFORM_FAMILIES = frozenset(
     }
 )
 
+ASYNC_COPY_COMPILE_MARKERS = (
+    "cp.async",
+    "__pipeline",
+    "cuda::memcpy_async",
+    "memcpy_async",
+    "async-copy",
+    "async copy",
+)
+
 
 def _payload_transform_families(payload: dict[str, Any]) -> frozenset[str]:
     families = {_step_transform_family(payload)}
@@ -2808,6 +2817,8 @@ def _classified_structural_preflight_failure(text: str) -> str | None:
 def _classify_compile_failure(detail: str) -> str:
     if "wmma::fragment" in detail or "incomplete type" in detail or "fill_fragment" in detail:
         return "unsupported_wmma_shape"
+    if any(marker in detail for marker in ASYNC_COPY_COMPILE_MARKERS):
+        return "async_copy_compile_error"
     if "invalid specifier" in detail or "expected a" in detail or "syntax" in detail:
         return "cuda_syntax_error"
     if "identifier" in detail and "undefined" in detail:
