@@ -1284,6 +1284,7 @@ def test_evolve_once_repairs_score_time_extension_build_failure_before_finishing
         if not ok:
             score_payload = {
                 "backend": "candidate",
+                "candidate_path": "candidates/seed.py",
                 "all_correct": False,
                 "geomean_tflops": 0.0,
                 "candidate_source_files": [
@@ -1344,6 +1345,7 @@ def test_evolve_once_repairs_score_time_extension_build_failure_before_finishing
     assert "Immediate score-time compile-repair request" in seen_attempt_histories[1]
     assert "score_time_compile_failure" in seen_attempt_histories[1]
     assert "score_build_diagnostic_summary" in seen_attempt_histories[1]
+    assert "candidates/seed.py" in seen_attempt_histories[1]
     assert "candidates/dynamic_extension/attention_kernel.cu" in seen_attempt_histories[1]
     assert "locations=attention_kernel.cu" in seen_attempt_histories[1]
     assert "symbols=__pipeline_memcpy_async" in seen_attempt_histories[1]

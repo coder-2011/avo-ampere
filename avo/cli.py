@@ -1101,10 +1101,16 @@ def _repair_kind_for_attempt(attempt: VariationAttempt) -> str | None:
 def _score_candidate_source_files_summary(attempt: VariationAttempt) -> str:
     if not isinstance(attempt.score_payload, dict):
         return ""
+    paths: list[str] = []
+    candidate_path = attempt.score_payload.get("candidate_path")
+    if isinstance(candidate_path, str) and candidate_path:
+        paths.append(candidate_path)
     source_files = attempt.score_payload.get("candidate_source_files")
-    if not isinstance(source_files, list):
+    if isinstance(source_files, list):
+        paths.extend(str(path) for path in source_files if isinstance(path, str))
+    paths = list(dict.fromkeys(paths))
+    if not paths:
         return ""
-    paths = [str(path) for path in source_files if isinstance(path, str)]
     lines = [f"  - {path}" for path in paths[:20]]
     if len(paths) > 20:
         lines.append(f"  - ... {len(paths) - 20} more")

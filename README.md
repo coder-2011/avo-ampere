@@ -365,7 +365,7 @@ within `max_chars`, the summary is bounded to the remaining character budget;
 if the recent tail alone exceeds the budget, recency wins and the summary is
 reduced to the smallest possible marker.
 If a candidate edit fails transform materialization, compile, or score correctness, the evolve step can ask the agent for an immediate revised executable edit after reverting the failed patch.
-Score-time Torch extension build failures are classified as compile/build feedback, and the repair request includes runtime-captured `candidate_source_files` when available.
+Score-time Torch extension build failures are classified as compile/build feedback, and the repair request includes the scored `candidate_path` plus runtime-captured `candidate_source_files` when available.
 When `--attempts-dir` is provided, `evolve-once` also writes a timestamped step JSON for every run, including rejected and failed attempts. Later `agent-plan` or `evolve-once` calls summarize the latest records from that directory so the agent can avoid repeating known dead ends without adding them to committed lineage.
 
 Run a bounded multi-step session by repeating the same safe one-step unit:
@@ -389,7 +389,6 @@ When an applied edit fails compile, transform materialization, or correctness, t
 - Optimizing the accepted seq32768 WMMA QK/PV seed beyond shape coverage toward FA2-competitive throughput.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
 - Longer-running autonomous supervision beyond the capped `evolve-loop`, including richer active intervention beyond the current attempt-memory signals, promoted checks, and provider-outage stop policy.
-- Automatic capture of generated source files outside the candidate module, scoped companion directories, observed `torch.utils.cpp_extension.load` calls, imports, or explicit source-file manifest hook.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.
 

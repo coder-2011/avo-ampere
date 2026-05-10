@@ -53,8 +53,9 @@ reject a bad transform family, or explain a score/gate result.
 - Retrieval query: `candidate companion source directory generated CUDA helper runtime torch cpp_extension load AVO_SOURCE_FILES lineage snapshot`.
 
 - Claim: score-time Torch extension build failures are classified as
-  `score_time_compile_failure` and routed to compile-style repair with captured
-  `candidate_source_files` when the score payload reports them.
+  `score_time_compile_failure` and routed to compile-style repair with the
+  scored `candidate_path` plus captured `candidate_source_files` when the score
+  payload reports them.
 - Evidence source: runtime score-failure classification and repair-prompt
   routing.
 - Why useful: lets the agent repair CUDA build failures that appear during
