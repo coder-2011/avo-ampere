@@ -516,6 +516,39 @@ def test_run_decision_command_preflights_materialized_cuda_transform(tmp_path: P
     assert kernel.read_text(encoding="utf-8") == "old\n"
 
 
+def test_run_decision_command_records_soft_cuda_advisories(tmp_path: Path) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text("old\n", encoding="utf-8")
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+
+    attempt = run_decision_command(
+        decision(
+            "avo worker-sleep --seconds 0",
+            candidate_transform={
+                "op": "replace_once",
+                "path": "candidates/kernel.cu",
+                "find": "old",
+                "replace": "__pipeline_memcpy_async(dst, src, sizeof(__nv_bfloat16));",
+            },
+        ),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+
+    assert attempt.patch_result is not None
+    assert attempt.patch_result.ok
+    assert attempt.command_result.ok
+    assert any(
+        "async_copy_granularity_preference" in advisory
+        for advisory in attempt.patch_result.advisories
+    )
+    assert attempt.as_dict()["patch_result"]["advisories"]
+
+
 def test_run_decision_command_rejects_materialized_unused_shared_buffer(
     tmp_path: Path,
 ) -> None:

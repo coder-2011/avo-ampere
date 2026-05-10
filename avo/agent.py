@@ -232,6 +232,14 @@ class CandidatePatchPreflightTrack:
     detector: Callable[[CandidatePatchInspection], bool]
 
 
+@dataclass(frozen=True)
+class CandidatePatchAdvisoryTrack:
+    name: str
+    category: str
+    message: str
+    detector: Callable[[CandidatePatchInspection], bool]
+
+
 TRANSFORM_STEP_SCHEMA: dict[str, Any] = {
     "type": "object",
     "properties": {
@@ -2004,6 +2012,18 @@ def validate_candidate_patch_structural_preflight(
         )
 
 
+def candidate_patch_structural_advisories(candidate_patch: str) -> tuple[str, ...]:
+    if not candidate_patch.strip():
+        return ()
+    inspection = _inspect_candidate_patch(candidate_patch)
+    return tuple(
+        f"structural advisory track {track.name} categorized as "
+        f"{track.category}: {track.message}"
+        for track in CUDA_STRUCTURAL_ADVISORY_TRACKS
+        if track.detector(inspection)
+    )
+
+
 def _inspect_candidate_patch(candidate_patch: str) -> CandidatePatchInspection:
     added_lines = tuple(_candidate_patch_added_lines(candidate_patch))
     removed_lines = tuple(_candidate_patch_removed_lines(candidate_patch))
@@ -2446,6 +2466,23 @@ def _candidate_patch_has_invalid_async_pipeline_stage_lifecycle(
     )
 
 
+def _candidate_patch_uses_narrow_async_copy_granularity(added_text: str) -> bool:
+    if "__pipeline_memcpy_async" not in added_text and "cuda::memcpy_async" not in added_text:
+        return False
+    narrow_size_patterns = (
+        r"sizeof\s*\(\s*__nv_bfloat16\s*\)",
+        r"sizeof\s*\(\s*__half\s*\)",
+        r"sizeof\s*\(\s*half\s*\)",
+    )
+    return any(re.search(pattern, added_text) for pattern in narrow_size_patterns) or bool(
+        re.search(
+            r"(?:__pipeline_memcpy_async|cuda::memcpy_async)\s*\([^;]*,\s*(?:2|4)\s*\)",
+            added_text,
+            flags=re.DOTALL,
+        )
+    )
+
+
 def _candidate_patch_waits_for_two_stage_pipeline_before_two_commits(added_text: str) -> bool:
     compact = re.sub(r"\s+", "", added_text)
     first_wait = compact.find("__pipeline_wait_prior(1);")
@@ -2662,6 +2699,21 @@ CUDA_STRUCTURAL_PREFLIGHT_TRACKS: tuple[CandidatePatchPreflightTrack, ...] = (
         failure_class="cuda_syntax_error",
         message="helper definitions must not be inserted inside the CUDA kernel signature",
         detector=lambda inspection: _candidate_patch_inserts_async_helper_inside_mma_signature(
+            inspection.added_text
+        ),
+    ),
+)
+
+
+CUDA_STRUCTURAL_ADVISORY_TRACKS: tuple[CandidatePatchAdvisoryTrack, ...] = (
+    CandidatePatchAdvisoryTrack(
+        name="async_copy_granularity_preference",
+        category="async_copy_pipeline",
+        message=(
+            "narrow async-copy sizes are allowed for compile repair, but Ampere throughput "
+            "hypotheses should prefer aligned vector groups when the dataflow supports them"
+        ),
+        detector=lambda inspection: _candidate_patch_uses_narrow_async_copy_granularity(
             inspection.added_text
         ),
     ),

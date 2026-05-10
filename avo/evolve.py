@@ -15,6 +15,7 @@ from typing import Any
 from .agent import (
     SUPPORT_ONLY_TRANSFORM_OPS,
     VariationDecision,
+    candidate_patch_structural_advisories,
     promoted_preflight_track_names_for_classes,
     validate_candidate_patch_structural_preflight,
 )
@@ -106,6 +107,7 @@ class PatchResult:
     stdout_tail: str
     stderr_tail: str
     rejected_reason: str | None = None
+    advisories: tuple[str, ...] = ()
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -115,6 +117,7 @@ class PatchResult:
             "stdout_tail": self.stdout_tail,
             "stderr_tail": self.stderr_tail,
             "rejected_reason": self.rejected_reason,
+            "advisories": list(self.advisories),
         }
 
 
@@ -1471,7 +1474,14 @@ def _maybe_apply_candidate_edit(
                 ),
                 None,
             )
-        return apply_candidate_patch(patch_text, cwd=cwd), patch_text
+        advisories = candidate_patch_structural_advisories(patch_text)
+        return (
+            _patch_result_with_advisories(
+                apply_candidate_patch(patch_text, cwd=cwd),
+                advisories,
+            ),
+            patch_text,
+        )
     if not decision.candidate_patch.strip():
         return None, None
     try:
@@ -1492,7 +1502,31 @@ def _maybe_apply_candidate_edit(
             ),
             None,
         )
-    return apply_candidate_patch(decision.candidate_patch, cwd=cwd), decision.candidate_patch
+    advisories = candidate_patch_structural_advisories(decision.candidate_patch)
+    return (
+        _patch_result_with_advisories(
+            apply_candidate_patch(decision.candidate_patch, cwd=cwd),
+            advisories,
+        ),
+        decision.candidate_patch,
+    )
+
+
+def _patch_result_with_advisories(
+    result: PatchResult,
+    advisories: tuple[str, ...],
+) -> PatchResult:
+    if not advisories:
+        return result
+    return PatchResult(
+        ok=result.ok,
+        patch_paths=result.patch_paths,
+        returncode=result.returncode,
+        stdout_tail=result.stdout_tail,
+        stderr_tail=result.stderr_tail,
+        rejected_reason=result.rejected_reason,
+        advisories=advisories,
+    )
 
 
 def _preflight_materialized_candidate_patch(
@@ -2327,8 +2361,12 @@ def _patch_status(patch_result: Any) -> str:
     ok = patch_result.get("ok")
     paths = patch_result.get("patch_paths")
     reason = _shorten(str(patch_result.get("rejected_reason") or ""), 120)
+    advisories = patch_result.get("advisories")
+    advisory = ""
+    if isinstance(advisories, list) and advisories:
+        advisory = f" advisories={_shorten('; '.join(str(item) for item in advisories), 180)}"
     if ok:
-        return f"patch ok paths={paths}"
+        return f"patch ok paths={paths}{advisory}"
     detail = _result_detail(patch_result)
     if detail:
         return f"patch rejected reason={reason} detail={detail}"

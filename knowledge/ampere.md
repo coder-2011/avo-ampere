@@ -1544,3 +1544,23 @@ source files.
   planner-only smoke with `AVO_AGENT_REQUEST_TIMEOUT_S=45` returned a structured
   transform without dirtying the tree. This bounds model-call latency separately
   from CUDA compile/score subprocess timeouts.
+- A follow-up 4-step loop with `AVO_AGENT_REQUEST_TIMEOUT_S=45` validated the
+  forced pending-score invariant live. The planner compiled
+  `mma_k_fragment_prefetch_v1`, then the runtime forced the next useful step to
+  score that exact transform; it passed correctness but regressed to
+  `3.6639716243616083` geomean TFLOPS. The same compile-then-score sequence
+  happened for `mma_q_fragment_coop_load_v1`; it passed correctness but
+  regressed to `9.40853995478011` versus the current `9.507832270603132` best.
+  No candidate was accepted. This validates the orchestration invariant without
+  adding a CUDA family ban.
+- Async-copy granularity is now a soft runtime advisory rather than a hard
+  structural rejection. Runtime records `async_copy_granularity_preference` in
+  `PatchResult.advisories` when a materialized patch uses narrow async-copy
+  sizes such as scalar BF16 `__pipeline_memcpy_async(...,
+  sizeof(__nv_bfloat16))`, but the patch can still apply and proceed to
+  compile/repair. This matches the CUDA source evidence: Ampere+
+  `cuda::memcpy_async` may lower to `cp.async` for global-to-shared copies with
+  at least 4-byte alignment, while 16-byte vector groups remain the better
+  throughput target when the dataflow supports them. Keep hard preflights for
+  invalid pipeline lifecycle, disconnected helpers, unsupported WMMA contracts,
+  stale symbols, tile-scope mistakes, and malformed transform materialization.

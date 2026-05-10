@@ -15,6 +15,7 @@ from avo.agent import (
     _request_valid_decision,
     build_repo_context,
     build_variation_prompt,
+    candidate_patch_structural_advisories,
     decision_tool,
     parse_decision_response,
     parse_decision_text,
@@ -2785,6 +2786,25 @@ def test_structural_preflight_allows_scalar_bf16_async_copy_for_repair() -> None
     )
 
     validate_candidate_patch_structural_preflight(patch, allow_cuda_source_edits=True)
+
+
+def test_structural_advisory_flags_scalar_bf16_async_copy_without_rejecting() -> None:
+    patch = (
+        "diff --git a/candidates/cuda_mma_attention/attention_kernel.cu "
+        "b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "--- a/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "+++ b/candidates/cuda_mma_attention/attention_kernel.cu\n"
+        "@@ -1 +1 @@\n"
+        "-old\n"
+        "+__pipeline_memcpy_async(dst, src, sizeof(__nv_bfloat16));\n"
+    )
+
+    validate_candidate_patch_structural_preflight(patch, allow_cuda_source_edits=True)
+
+    advisories = candidate_patch_structural_advisories(patch)
+    assert len(advisories) == 1
+    assert "async_copy_granularity_preference" in advisories[0]
+    assert "allowed for compile repair" in advisories[0]
 
 
 def test_structural_preflight_allows_non_scalar_async_copy_size_expression() -> None:

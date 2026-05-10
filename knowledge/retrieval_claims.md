@@ -441,3 +441,25 @@ reject a bad transform family, or explain a score/gate result.
   evolve loop indefinitely. Runtime now defaults to a 180-second planner request
   timeout and allows `AVO_AGENT_REQUEST_TIMEOUT_S` override.
 - Retrieval query: `Anthropic SDK messages create timeout agent planner request latency`.
+
+- Claim: successful compile-only semantic transforms are now live-validated as
+  pending score obligations under a bounded planner timeout.
+- Evidence source:
+  `attempts/loop_after_forced_pending_score_timeout_20260510T1331Z.json`.
+- Why useful: the loop compiled and then scored `mma_k_fragment_prefetch_v1`
+  (`3.6639716243616083` geomean TFLOPS, correct, rejected) and
+  `mma_q_fragment_coop_load_v1` (`9.40853995478011` geomean TFLOPS, correct,
+  rejected) without drifting to unrelated compile-only transforms.
+- Retrieval query: `AVO pending transform compile score obligation bounded planner timeout validation`.
+
+- Claim: async-copy granularity should be recorded as an advisory unless it
+  creates a concrete structural invalidity.
+- Evidence source: NVIDIA CCCL/libcu++ `cuda::memcpy_async` docs, NVIDIA CUDA
+  pipeline docs, and the soft advisory implementation in runtime
+  `PatchResult.advisories`.
+- Why useful: Ampere+ `cuda::memcpy_async` may lower to `cp.async` for
+  global-to-shared copies with at least 4-byte alignment, while 16-byte groups
+  remain the preferred throughput shape. A scalar BF16 async-copy patch is weak
+  evidence but should still be able to reach compile/repair when it is part of
+  coherent dataflow.
+- Retrieval query: `NVIDIA cuda::memcpy_async Ampere cp.async 4 byte alignment 16 byte vector groups pipeline producer commit consumer wait`.
