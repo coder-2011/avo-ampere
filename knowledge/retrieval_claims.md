@@ -297,16 +297,18 @@ reject a bad transform family, or explain a score/gate result.
 ## Search Evidence
 
 - Claim: the current best accepted local candidate preserves Q-fragment register
-  reuse and additionally hoists the PV-side `probability_frag` load out of the
-  output-chunk loop. It passed all 8 full-target BF16 cases with gate geomean
-  `9.157629176515384` TFLOPS; a repeats-3 confirmation scored
-  `9.237725222665237` geomean TFLOPS.
-- Evidence source: accepted lineage, loop
-  `loop_after_semantic_family_async_softening_20260510T0540Z.json`, and
-  confirmation score.
+  reuse, hoists the PV-side `probability_frag` load out of the output-chunk
+  loop, and uses `kThreads=64`. It passed all 8 full-target BF16 cases with gate
+  geomean `9.168741394385114` TFLOPS; a repeats-3 confirmation scored
+  `9.254126656665425` geomean TFLOPS.
+- Evidence source: accepted lineage, loops
+  `loop_after_semantic_family_async_softening_20260510T0540Z.json` and
+  `loop_after_load_reuse_semantic_validation_20260510T0615Z.json`, plus
+  confirmation scores.
 - Why useful: anchors the gate and distinguishes the real accepted move
-  (probability-fragment reuse) from the planner's overstated V-reuse rationale.
-- Retrieval query: `accepted probability_frag reuse geomean 9.157629176515384 repeat confirmation 9.237725222665237`.
+  (probability-fragment reuse plus thread-count retune) from regressed K/V
+  staging and V-register-cache attempts.
+- Retrieval query: `accepted probability_frag reuse kThreads 64 geomean 9.168741394385114 confirmation 9.254126656665425`.
 
 - Claim: `kThreads=64` is correct but slower, scoring geomean
   `7.587127963961811` TFLOPS versus best `7.777584666360881`.

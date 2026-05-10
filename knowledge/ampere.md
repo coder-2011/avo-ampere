@@ -1416,3 +1416,23 @@ source files.
   across PV output chunks. Future PV/V work should not undo this hoist; if it
   claims V reuse, the materialized patch must actually reduce V loads or change
   V staging rather than only rewording the probability-fragment hoist.
+- A follow-up loop after adding claimed-load-reuse semantic validation found
+  more negative evidence and one small accepted resource-tuning move. The first
+  step still failed planning validation because the self-invalid detector
+  treated historical discussion of a previous failed K-staging patch as if the
+  current patch admitted it was invalid. The loop then retried cooperative
+  K shared-memory staging anyway: a corrected version compiled with 64
+  registers, 1 barrier, 14016 bytes shared memory, and no spills, then scored
+  correct but regressed to `4.393552873015184` geomean TFLOPS. A true
+  V-fragment register-cache transform compiled with 110 registers, 1 barrier,
+  9920 bytes shared memory, and no spills; it scored correct but regressed to
+  `8.359720357318682` geomean TFLOPS, so caching all eight V fragments costs too
+  much register pressure for this seed. The accepted move changed `kThreads`
+  from 128 to 64. Gate score was `9.168741394385114` geomean TFLOPS versus the
+  previous gate best `9.157629176515384`; a repeats-3/warmup-2 confirmation
+  scored `9.254126656665425` geomean TFLOPS versus the previous confirmation
+  `9.237725222665237`. This is a small improvement, not a new dataflow family.
+  Preserve `q_frags[8]`, `probability_frag` hoisting, and `kThreads=64` as the
+  current accepted local state. Treat all isolated K shared staging variants as
+  exhausted for this seed, and treat full V-fragment caching as negative unless
+  a future transform reduces register pressure or changes the PV schedule.
