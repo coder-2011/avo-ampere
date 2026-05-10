@@ -5,17 +5,20 @@ import math
 import os
 import platform
 import statistics
+import sys
 import time
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 from typing import Any, Literal
 
 from .config import AMPERE_A6000, AttentionCase
 
 BackendName = Literal["torch-sdpa", "flash-attn", "candidate"]
 CANDIDATE_SOURCE_FILE_ATTRIBUTES = ("AVO_SOURCE_FILES", "__avo_source_files__")
+CANDIDATE_RUNTIME_SOURCE_SUFFIXES = frozenset({".py", ".cpp", ".cu", ".cuh", ".h", ".hpp"})
+SKIPPED_RUNTIME_SOURCE_PARTS = frozenset({"__pycache__"})
 
 
 @dataclass(frozen=True)
@@ -134,6 +137,12 @@ def score_backend(
                 )
                 for case in cases
             ]
+            candidate_source_files = _dedupe_source_files(
+                (
+                    *candidate_source_files,
+                    *_candidate_runtime_imported_source_files(candidate),
+                )
+            )
     else:
         raise ValueError(f"unsupported backend: {backend}")
     summary = score_summary(backend, scores)
@@ -428,6 +437,46 @@ def _candidate_source_file_path(candidate_path: Path, raw_path: str | os.PathLik
     if path.as_posix().startswith("candidates/"):
         return path.as_posix()
     return (candidate_path.parent / path).as_posix()
+
+
+def _candidate_runtime_imported_source_files(candidate_path: Path) -> tuple[str, ...]:
+    source_root = _candidate_source_root(candidate_path)
+    if source_root is None:
+        return ()
+    paths = []
+    for module in tuple(sys.modules.values()):
+        raw_file = getattr(module, "__file__", None)
+        if not isinstance(raw_file, str):
+            continue
+        normalized = _candidate_runtime_source_path(source_root, Path(raw_file))
+        if normalized is not None:
+            paths.append(normalized)
+    return _dedupe_source_files(paths)
+
+
+def _candidate_source_root(candidate_path: Path) -> Path | None:
+    resolved = candidate_path.resolve()
+    for parent in (resolved.parent, *resolved.parents):
+        if parent.name == "candidates":
+            return parent.parent
+    return None
+
+
+def _candidate_runtime_source_path(source_root: Path, raw_path: Path) -> str | None:
+    try:
+        relative = raw_path.resolve().relative_to((source_root / "candidates").resolve())
+    except (OSError, ValueError):
+        return None
+    if (
+        raw_path.suffix not in CANDIDATE_RUNTIME_SOURCE_SUFFIXES
+        or any(part in SKIPPED_RUNTIME_SOURCE_PARTS for part in relative.parts)
+    ):
+        return None
+    return PurePosixPath("candidates", *relative.parts).as_posix()
+
+
+def _dedupe_source_files(paths: Iterable[str]) -> tuple[str, ...]:
+    return tuple(dict.fromkeys(paths))
 
 
 def _score_candidate(

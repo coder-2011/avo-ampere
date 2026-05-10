@@ -1,4 +1,5 @@
 import re
+import sys
 from pathlib import Path
 
 import pytest
@@ -51,6 +52,31 @@ def test_candidate_backend_reports_declared_runtime_source_files(tmp_path: Path)
         (candidate_dir / "dynamic_kernel.cu").as_posix(),
         "candidates/shared_runtime.cuh",
     ]
+
+
+def test_candidate_backend_reports_runtime_imported_candidate_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.syspath_prepend(str(tmp_path))
+    sys.modules.pop("candidates.runtime_trace_helper", None)
+    sys.modules.pop("candidates", None)
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    candidate = candidate_dir / "candidate.py"
+    helper = candidate_dir / "runtime_trace_helper.py"
+    helper.write_text("VALUE = 1\n", encoding="utf-8")
+    candidate.write_text(
+        "import importlib\n"
+        "runtime_helper = importlib.import_module('candidates.runtime_trace_helper')\n"
+        "def attention(q, k, v, causal):\n"
+        "    return q\n",
+        encoding="utf-8",
+    )
+
+    summary = score_backend("candidate", [], warmup=0, repeats=0, candidate=candidate)
+
+    assert summary["candidate_source_files"] == ["candidates/runtime_trace_helper.py"]
 
 
 def test_candidate_backend_rejects_missing_attention(tmp_path: Path) -> None:

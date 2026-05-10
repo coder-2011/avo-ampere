@@ -41,13 +41,14 @@ reject a bad transform family, or explain a score/gate result.
 - Retrieval query: `lineage baseline_comparisons candidate_vs_baseline FA2 gap_tflops`.
 
 - Claim: accepted candidate lineage snapshots include the scored candidate,
-  local imports, static extension source lists, and runtime-declared source
-  manifests exposed as `AVO_SOURCE_FILES` or `__avo_source_files__`.
+  local imports, runtime-loaded Python modules under `candidates/`, static
+  extension source lists, and runtime-declared source manifests exposed as
+  `AVO_SOURCE_FILES` or `__avo_source_files__`.
 - Evidence source: runtime score-summary and lineage source-snapshot
   implementation.
-- Why useful: keeps dynamically assembled CUDA extension sources auditable when
-  the candidate reports them after module execution.
-- Retrieval query: `candidate runtime source manifest AVO_SOURCE_FILES __avo_source_files__ lineage snapshot`.
+- Why useful: keeps candidate helper modules and dynamically assembled CUDA
+  extension sources auditable when the runtime can identify them.
+- Retrieval query: `candidate runtime source manifest dynamic import AVO_SOURCE_FILES __avo_source_files__ lineage snapshot`.
 
 ## FA2/CUTLASS Directional Cues
 

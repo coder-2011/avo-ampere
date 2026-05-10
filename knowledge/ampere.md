@@ -124,10 +124,13 @@ history.
   leak into later attempts. If a candidate step is accepted, the lineage commit
   stores snapshots of the scored candidate module and companion source directory
   under `sources/latest/`; direct local imports, static extension source lists,
-  and candidate-declared runtime source manifests (`AVO_SOURCE_FILES` or
+  Python modules dynamically imported from the same `candidates/` tree, and
+  candidate-declared runtime source manifests (`AVO_SOURCE_FILES` or
   `__avo_source_files__`) are also captured when they normalize under
-  `candidates/`. Patched accepted steps also store the raw patch under
-  `patches/latest.patch`.
+  `candidates/`. Dynamic Python import tracing reads loaded module `__file__`
+  paths only; dynamically assembled extension source lists should still be
+  reported through `AVO_SOURCE_FILES` or a static `sources=[...]` expression.
+  Patched accepted steps also store the raw patch under `patches/latest.patch`.
 
 ## Search Space
 

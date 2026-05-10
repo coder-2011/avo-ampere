@@ -111,9 +111,14 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("baseline_comparisons", "candidate-vs-baseline", "gap"),
         ),
         (
-            "candidate runtime source manifest AVO_SOURCE_FILES __avo_source_files__ "
-            "lineage snapshot",
-            ("AVO_SOURCE_FILES", "__avo_source_files__", "lineage snapshots"),
+            "candidate runtime source manifest dynamic import AVO_SOURCE_FILES "
+            "__avo_source_files__ lineage snapshot",
+            (
+                "runtime-loaded python modules",
+                "AVO_SOURCE_FILES",
+                "__avo_source_files__",
+                "lineage snapshots",
+            ),
         ),
         (
             "wmma_fragment_shape Ampere BF16 fragment dimension outside supported 16x16x16",
