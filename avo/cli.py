@@ -9,6 +9,7 @@ import shutil
 import subprocess
 import sys
 import sysconfig
+import time
 from pathlib import Path
 from typing import Any
 
@@ -177,6 +178,7 @@ def main(argv: list[str] | None = None) -> int:
     loop_parser.add_argument("--env-file", type=Path, default=None)
     loop_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
     loop_parser.add_argument("--max-steps", type=int, default=3)
+    loop_parser.add_argument("--max-wall-time-s", type=int, default=None)
     loop_parser.add_argument("--loop-json", type=Path, default=None)
     loop_parser.add_argument(
         "--compile-repair-attempts",
@@ -778,15 +780,25 @@ def _evolve_once(args: argparse.Namespace) -> int:
 def _evolve_loop(args: argparse.Namespace) -> int:
     if args.max_steps <= 0:
         raise ValueError("--max-steps must be positive")
+    max_wall_time_s = getattr(args, "max_wall_time_s", None)
+    if max_wall_time_s is not None and max_wall_time_s <= 0:
+        raise ValueError("--max-wall-time-s must be positive when provided")
     if args.attempts_dir is None:
         raise ValueError("evolve-loop requires --attempts-dir for cross-step memory")
     if args.env_file:
         load_env_file(args.env_file)
 
+    loop_started = time.monotonic()
+    wall_deadline = None
+    if max_wall_time_s is not None:
+        wall_deadline = loop_started + max_wall_time_s
     steps: list[EvolutionStep] = []
     stopped_reason = "max_steps"
     update_promoted_preflight_tracks(args.attempts_dir)
     for _ in range(args.max_steps):
+        if steps and wall_deadline is not None and time.monotonic() >= wall_deadline:
+            stopped_reason = "max_wall_time"
+            break
         step = _run_evolve_step(args)
         _record_loop_step(args, steps, step)
         if step.accepted:
@@ -815,7 +827,9 @@ def _evolve_loop(args: argparse.Namespace) -> int:
     payload = {
         "accepted": any(step.accepted for step in steps),
         "completed_steps": len(steps),
+        "elapsed_wall_time_s": round(time.monotonic() - loop_started, 3),
         "max_steps": args.max_steps,
+        "max_wall_time_s": max_wall_time_s,
         "stopped_reason": stopped_reason,
         "steps": [step.as_dict() for step in steps],
     }

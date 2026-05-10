@@ -2244,6 +2244,77 @@ def test_evolve_loop_runs_until_accepted_and_records_attempts(
     assert json.loads((tmp_path / "loop.json").read_text(encoding="utf-8"))["accepted"] is True
 
 
+def test_evolve_loop_stops_between_steps_after_wall_time(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    decisions = [
+        loop_decision("first rejected"),
+        loop_decision("should not run"),
+    ]
+    monotonic_values = iter((0.0, 11.0, 11.0))
+
+    def fake_request_variation_decision(**kwargs):
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="{}",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:00+00:00",
+            completed_at="2026-05-08T00:00:01+00:00",
+            score_payload={
+                "backend": "mock",
+                "all_correct": True,
+                "geomean_tflops": 0.0,
+                "cases": [{}],
+            },
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+    monkeypatch.setattr("avo.cli.time.monotonic", lambda: next(monotonic_values))
+
+    exit_code = _evolve_loop(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            env_file=None,
+            model="claude",
+            max_steps=5,
+            max_wall_time_s=10,
+            loop_json=tmp_path / "loop.json",
+            attempts_dir=tmp_path / "attempts",
+            attempt_limit=5,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["accepted"] is False
+    assert payload["completed_steps"] == 1
+    assert payload["max_steps"] == 5
+    assert payload["max_wall_time_s"] == 10
+    assert payload["elapsed_wall_time_s"] == 11.0
+    assert payload["stopped_reason"] == "max_wall_time"
+    assert [step["attempt"]["decision"]["hypothesis"] for step in payload["steps"]] == [
+        "first rejected"
+    ]
+    assert len(decisions) == 1
+    assert json.loads((tmp_path / "loop.json").read_text(encoding="utf-8")) == payload
+
+
 def test_evolve_loop_scores_pending_compile_transform_at_step_limit(
     tmp_path: Path,
     monkeypatch,

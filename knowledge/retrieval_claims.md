@@ -505,6 +505,13 @@ reject a bad transform family, or explain a score/gate result.
   timeout and allows `AVO_AGENT_REQUEST_TIMEOUT_S` override.
 - Retrieval query: `Anthropic SDK messages create timeout agent planner request latency`.
 
+- Claim: `evolve-loop` supports an optional wall-clock budget between steps.
+- Evidence source: runtime `--max-wall-time-s` loop stop condition.
+- Why useful: long-running autonomous loops need both step budgets and duration
+  budgets. The wall-clock cap stops before starting another step, while allowing
+  the current compile/score/repair step to finish and remain auditable.
+- Retrieval query: `long running agent loop wall clock budget max duration checkpoint stop between iterations`.
+
 - Claim: successful compile-only semantic transforms are now live-validated as
   pending score obligations under a bounded planner timeout.
 - Evidence source:

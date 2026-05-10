@@ -1586,6 +1586,11 @@ source files.
   planner-only smoke with `AVO_AGENT_REQUEST_TIMEOUT_S=45` returned a structured
   transform without dirtying the tree. This bounds model-call latency separately
   from CUDA compile/score subprocess timeouts.
+- Long evolve-loop runs can now also take a wall-clock budget with
+  `--max-wall-time-s`. The loop checks that budget between steps, records
+  `stopped_reason=max_wall_time`, and still lets an in-flight step finish so
+  compile/score/repair cleanup remains auditable. This is a run-budget stop
+  condition, not an active supervision policy.
 - A follow-up 4-step loop with `AVO_AGENT_REQUEST_TIMEOUT_S=45` validated the
   forced pending-score invariant live. The planner compiled
   `mma_k_fragment_prefetch_v1`, then the runtime forced the next useful step to
