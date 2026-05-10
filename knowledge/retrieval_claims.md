@@ -536,9 +536,10 @@ reject a bad transform family, or explain a score/gate result.
 - Retrieval query: `repair validation feedback invalid repair decision not executed retry same repair episode`.
 
 - Claim: transcript compaction should keep recent turns verbatim and replace
-  older turns with structured breadcrumbs plus durable-state recovery pointers.
+  older turns with structured breadcrumbs plus durable-state recovery pointers,
+  bounded to remaining budget when the recent tail fits.
 - Evidence source: local High agent context-transform pattern, external
   compaction references, and runtime transcript helper.
 - Why useful: long AVO runs need context relief without pretending old compiler,
   score, or tool output remains fully present in active model context.
-- Retrieval query: `transcript compaction recent messages verbatim structured breadcrumbs durable files lineage attempts`.
+- Retrieval query: `transcript compaction recent messages verbatim structured breadcrumbs remaining budget durable files lineage attempts`.

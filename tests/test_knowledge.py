@@ -106,8 +106,8 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
         ),
         (
             "transcript compaction recent messages verbatim structured breadcrumbs "
-            "durable files lineage attempts",
-            ("recent turns verbatim", "structured breadcrumbs", "durable files"),
+            "remaining budget durable files lineage attempts",
+            ("recent turns verbatim", "structured breadcrumbs", "remaining character budget"),
         ),
         (
             "stagnation supervisor strategy reset candidates Ampere work "

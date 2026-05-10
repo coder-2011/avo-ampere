@@ -1600,7 +1600,10 @@ source files.
   older turns with structured breadcrumbs containing role, character count, and
   bounded excerpts, and point the agent back to durable files, git lineage,
   score JSON, attempts JSON, and `experiments.md` for exact recovery. This is
-  deliberately deterministic and local; it does not pretend to preserve full
+  deliberately deterministic and local; when the recent tail fits within the
+  requested budget, the summary is bounded to the remaining character budget.
+  If the recent tail alone exceeds that budget, recency wins and the summary is
+  reduced to the smallest possible marker. It does not pretend to preserve full
   old tool output inside active model context.
 - Async-copy granularity is now a soft runtime advisory rather than a hard
   structural rejection. Runtime records `async_copy_granularity_preference` in

@@ -3,7 +3,7 @@ from avo.transcript import compact_messages
 
 def test_compact_messages_keeps_recent_context() -> None:
     messages = [{"role": "user", "content": f"message {index} " * 20} for index in range(12)]
-    compacted = compact_messages(messages, max_chars=100, keep_last=3)
+    compacted = compact_messages(messages, max_chars=2_000, keep_last=3)
     assert compacted[0]["role"] == "assistant"
     assert "Compacted 9 older messages" in compacted[0]["content"]
     assert "Kept 3 most recent messages verbatim" in compacted[0]["content"]
@@ -22,7 +22,7 @@ def test_compact_messages_bounds_older_breadcrumbs() -> None:
         {"role": "tool", "content": f"tool output {index} " * 30} for index in range(20)
     ]
 
-    compacted = compact_messages(messages, max_chars=100, keep_last=2)
+    compacted = compact_messages(messages, max_chars=6_000, keep_last=2)
 
     summary = compacted[0]["content"]
     assert "#12 role=tool" in summary
@@ -37,10 +37,36 @@ def test_compact_messages_summarizes_long_content_with_head_and_tail() -> None:
         {"role": "assistant", "content": "recent"},
     ]
 
-    compacted = compact_messages(messages, max_chars=100, keep_last=1)
+    compacted = compact_messages(messages, max_chars=1_000, keep_last=1)
 
     summary = compacted[0]["content"]
     assert "alpha" in summary
     assert "omega" in summary
     assert "middle middle" in summary
+    assert compacted[1:] == messages[-1:]
+
+
+def test_compact_messages_uses_remaining_budget_for_summary() -> None:
+    messages = [
+        {"role": "tool", "content": "old output " * 80},
+        {"role": "assistant", "content": "recent"},
+    ]
+
+    compacted = compact_messages(messages, max_chars=260, keep_last=1)
+
+    total_chars = sum(len(str(message.get("content", ""))) for message in compacted)
+    assert total_chars <= 260
+    assert compacted[-1] == messages[-1]
+    assert "Compacted 1 older messages" in compacted[0]["content"]
+
+
+def test_compact_messages_preserves_recent_when_tail_exceeds_budget() -> None:
+    messages = [
+        {"role": "tool", "content": "old output " * 80},
+        {"role": "assistant", "content": "recent " * 80},
+    ]
+
+    compacted = compact_messages(messages, max_chars=100, keep_last=1)
+
+    assert compacted[0]["content"] == ""
     assert compacted[1:] == messages[-1:]
