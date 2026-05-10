@@ -636,6 +636,9 @@ def summarize_attempt_history(
     supervisor_signal = _summarize_supervisor_signal(payloads)
     if supervisor_signal:
         summary = f"{summary}\n{supervisor_signal}"
+    family_signal = _summarize_transform_family_signal(payloads)
+    if family_signal:
+        summary = f"{summary}\n{family_signal}"
     followup_signal = _summarize_followup_signal(payloads)
     if followup_signal:
         summary = f"{summary}\n{followup_signal}"
@@ -924,6 +927,25 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
     return ""
 
 
+def _summarize_transform_family_signal(payloads: list[dict[str, Any]]) -> str:
+    recurring_families = _recurring_unaccepted_transform_families(
+        payloads,
+        threshold=SUPERVISOR_REPEAT_THRESHOLD,
+    )
+    if not recurring_families:
+        return ""
+    recurring = ", ".join(
+        f"{family}(count={count})"
+        for family, count in sorted(recurring_families.items())
+    )
+    return (
+        "Semantic-family signal: recent unaccepted attempts include recurring "
+        f"transform families: {recurring}. Choose a materially different "
+        "optimization family unless the next transform changes the dataflow, "
+        "pipeline overlap, or validation contract in a way the prior family did not."
+    )
+
+
 def _summarize_followup_signal(payloads: list[dict[str, Any]]) -> str:
     if not payloads:
         return ""
@@ -1169,6 +1191,88 @@ def _recurring_unaccepted_failure_classes(
         for failure_class, count in counts.items()
         if count >= threshold
     }
+
+
+def _recurring_unaccepted_transform_families(
+    payloads: list[dict[str, Any]],
+    *,
+    threshold: int,
+) -> dict[str, int]:
+    if threshold <= 0:
+        return {}
+    counts: dict[str, int] = {}
+    for payload in _unaccepted_tail(payloads):
+        for family in _payload_transform_families(payload):
+            if family in IGNORED_TRANSFORM_FAMILIES:
+                continue
+            counts[family] = counts.get(family, 0) + 1
+    return {family: count for family, count in counts.items() if count >= threshold}
+
+
+IGNORED_TRANSFORM_FAMILIES = frozenset(
+    {
+        "diagnostic_or_planning",
+        "unknown_transform",
+    }
+)
+
+
+def _payload_transform_families(payload: dict[str, Any]) -> frozenset[str]:
+    families = {_step_transform_family(payload)}
+    repair_attempts = payload.get("repair_attempts")
+    if isinstance(repair_attempts, list):
+        families.update(
+            _step_transform_family({"attempt": attempt})
+            for attempt in repair_attempts
+            if isinstance(attempt, dict)
+        )
+    return frozenset(families)
+
+
+def _step_transform_family(payload: dict[str, Any]) -> str:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    candidate_transform = decision.get("candidate_transform")
+    candidate_patch = str(decision.get("candidate_patch") or "")
+    materialized_patch = str(attempt.get("materialized_patch") or "")
+    has_edit_payload = (
+        isinstance(candidate_transform, dict)
+        or bool(candidate_patch.strip())
+        or bool(materialized_patch.strip())
+    )
+    if not has_edit_payload:
+        return "diagnostic_or_planning"
+    text = _payload_transform_family_text(payload)
+    if any(marker in text for marker in ("cp.async", "__pipeline", "async copy", "async-copy")):
+        return "async_copy_pipeline"
+    if "shared" in text and any(
+        marker in text for marker in ("stage", "staging", "tile", "buffer", "smem")
+    ):
+        return "shared_memory_staging"
+    if "q_frags" in text or ("register" in text and "reuse" in text):
+        return "register_reuse"
+    if "wmma" in text and any(marker in text for marker in ("fragment", "shape", "tile")):
+        return "wmma_contract_or_tile_shape"
+    if "softmax" in text or "row_max" in text or "row_sum" in text or "rescale" in text:
+        return "online_softmax_or_rescale"
+    if "unroll" in text or "#pragma" in text:
+        return "scheduler_or_unroll"
+    return "unknown_transform"
+
+
+def _payload_transform_family_text(payload: dict[str, Any]) -> str:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    parts = [
+        str(decision.get(key) or "")
+        for key in ("candidate_edit",)
+    ]
+    transform = decision.get("candidate_transform")
+    if isinstance(transform, dict):
+        parts.append(json.dumps(transform, sort_keys=True))
+    parts.append(str(decision.get("candidate_patch") or ""))
+    parts.append(str(attempt.get("materialized_patch") or ""))
+    return " ".join(parts).lower()
 
 
 def _unaccepted_tail(payloads: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -1904,11 +2008,12 @@ def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
     gate = _gate_status(gate_decision)
     score = _score_status(score_payload)
     failure_class = _step_failure_class(payload)
+    transform_family = _step_transform_family(payload)
     repair_details = _repair_attempts_status(repair_attempts)
     command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
     hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
     return (
-        f"{name}: class={failure_class}; {status}; {patch}; {cleanup}; "
+        f"{name}: class={failure_class}; family={transform_family}; {status}; {patch}; {cleanup}; "
         f"repairs={repair_count}{repair_details}; {gate}; {score}; "
         f"command={command}; hypothesis={hypothesis}"
     )
@@ -1941,6 +2046,7 @@ def _repair_attempts_status(repair_attempts: Any) -> str:
         details.append(
             "repair("
             f"class={_step_failure_class(repair_payload)}, "
+            f"family={_step_transform_family(repair_payload)}, "
             f"{_command_status(command_result)}, "
             f"{_patch_status(patch_result)}, "
             f"{_score_status(score_payload)}, "
