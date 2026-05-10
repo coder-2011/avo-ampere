@@ -936,6 +936,8 @@ def test_evolve_once_repairs_candidate_correctness_failure_before_finishing(
     assert "Immediate correctness-repair request" in seen_attempt_histories[1]
     assert "all_correct=false" in seen_attempt_histories[1]
     assert "max_abs_error exceeded tolerance" in seen_attempt_histories[1]
+    assert "already restored the clean pre-edit source" in seen_attempt_histories[1]
+    assert "do not return a revert-only repair" in seen_attempt_histories[1]
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
 
 

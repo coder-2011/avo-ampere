@@ -973,7 +973,12 @@ def _edit_repair_attempt_history(
             "CUDA sources, keep candidate_patch empty in transform mode, and make "
             "the smallest coherent semantic repair that addresses the violated "
             "correctness invariant, such as initialized dataflow, alignment, bounds, "
-            "masking, synchronization, or accumulation semantics.\n"
+            "masking, synchronization, or accumulation semantics. Because cleanup "
+            "already restored the clean pre-edit source, do not return a revert-only "
+            "repair; the repair payload must make a real source change against the "
+            "current source. If the only useful action is to abandon the failed family, "
+            "choose a different coherent transform family instead of restoring "
+            "baseline code.\n"
             f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
             f"- score_error_summary:\n{score_error_summary or '<empty>'}"
         )
