@@ -1,3 +1,4 @@
+import hashlib
 import json
 import math
 import subprocess
@@ -218,8 +219,22 @@ def test_commit_score_records_accepted_source_artifacts(tmp_path) -> None:
         cwd=repo,
         text=True,
     )
+    manifest = json.loads(
+        subprocess.check_output(
+            ["git", "show", "HEAD:sources/latest/manifest.json"],
+            cwd=repo,
+            text=True,
+        )
+    )
     assert source == "VALUE = 2\n"
     assert stored_patch == patch
+    assert manifest["files"] == [
+        {
+            "bytes": len(b"VALUE = 2\n"),
+            "path": "candidates/seed.py",
+            "sha256": hashlib.sha256(b"VALUE = 2\n").hexdigest(),
+        }
+    ]
 
 
 def test_commit_score_does_not_record_source_for_rejected_candidate(tmp_path) -> None:

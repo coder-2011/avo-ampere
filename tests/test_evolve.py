@@ -951,9 +951,68 @@ def test_finalize_attempt_snapshots_scored_candidate_sources_without_patch(tmp_p
     assert (source_root / "candidates" / "cuda_demo" / "attention_kernel.cu").read_text(
         encoding="utf-8"
     ) == "// cuda kernel\n"
+    manifest = json.loads((source_root / "manifest.json").read_text(encoding="utf-8"))
+    manifest_paths = {entry["path"] for entry in manifest["files"]}
+    assert "candidates/cuda_demo_seed.py" in manifest_paths
+    assert "candidates/cuda_demo/attention.cpp" in manifest_paths
+    assert "candidates/cuda_demo/attention_kernel.cu" in manifest_paths
     assert not (source_root / "candidates" / "cuda_demo" / "compiled.so").exists()
     assert not (source_root / "candidates" / "__pycache__").exists()
     assert not (tmp_path / "lineage" / "patches" / "latest.patch").exists()
+
+
+def test_finalize_attempt_snapshots_local_python_import_dependencies(
+    tmp_path: Path,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    shared_pkg = candidate_dir / "shared_pkg"
+    shared_pkg.mkdir(parents=True)
+    seed = candidate_dir / "cuda_demo_seed.py"
+    seed.write_text(
+        "from candidates import shared_helper\n"
+        "from candidates.shared_pkg import helper\n",
+        encoding="utf-8",
+    )
+    (candidate_dir / "shared_helper.py").write_text("SCALE = 1\n", encoding="utf-8")
+    (shared_pkg / "__init__.py").write_text("from .helper import VALUE\n", encoding="utf-8")
+    (shared_pkg / "helper.py").write_text("VALUE = 2\n", encoding="utf-8")
+    (shared_pkg / "helper_kernel.cu").write_text("// package cuda helper\n", encoding="utf-8")
+    attempt = VariationAttempt(
+        decision=decision("avo score --backend candidate --candidate candidates/cuda_demo_seed.py"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        score_payload={
+            "backend": "candidate",
+            "candidate_path": "candidates/cuda_demo_seed.py",
+            "all_correct": True,
+            "geomean_tflops": 3.0,
+            "cases": [{}],
+        },
+    )
+
+    step = finalize_attempt(tmp_path / "lineage", attempt, source_root=tmp_path)
+
+    assert step.accepted
+    source_root = tmp_path / "lineage" / "sources" / "latest"
+    assert (source_root / "candidates" / "shared_helper.py").read_text(
+        encoding="utf-8"
+    ) == "SCALE = 1\n"
+    assert (source_root / "candidates" / "shared_pkg" / "__init__.py").read_text(
+        encoding="utf-8"
+    ) == "from .helper import VALUE\n"
+    assert (source_root / "candidates" / "shared_pkg" / "helper.py").read_text(
+        encoding="utf-8"
+    ) == "VALUE = 2\n"
+    assert (source_root / "candidates" / "shared_pkg" / "helper_kernel.cu").read_text(
+        encoding="utf-8"
+    ) == "// package cuda helper\n"
 
 
 def test_write_attempt_records_json(tmp_path: Path) -> None:

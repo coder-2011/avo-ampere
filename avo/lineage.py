@@ -414,6 +414,10 @@ def _write_source_artifacts(
             dest = source_root / _validate_candidate_source_path(relative)
             dest.parent.mkdir(parents=True, exist_ok=True)
             dest.write_text(content, encoding="utf-8")
+        (source_root / "manifest.json").write_text(
+            json.dumps(_source_manifest(source_files), indent=2, sort_keys=True) + "\n",
+            encoding="utf-8",
+        )
 
     if candidate_patch:
         patch_path.parent.mkdir(parents=True, exist_ok=True)
@@ -433,7 +437,7 @@ def _source_snapshot_matches_latest(
     latest_paths = sorted(
         line.removeprefix("sources/latest/")
         for line in tracked.splitlines()
-        if line.startswith("sources/latest/")
+        if line.startswith("sources/latest/") and line != "sources/latest/manifest.json"
     )
     if latest_paths != sorted(source_files):
         return False
@@ -445,6 +449,20 @@ def _source_snapshot_matches_latest(
         if latest_content != content:
             return False
     return True
+
+
+def _source_manifest(source_files: Mapping[str, str]) -> dict[str, Any]:
+    return {
+        "version": 1,
+        "files": [
+            {
+                "path": relative,
+                "sha256": hashlib.sha256(content.encode("utf-8")).hexdigest(),
+                "bytes": len(content.encode("utf-8")),
+            }
+            for relative, content in sorted(source_files.items())
+        ],
+    }
 
 
 def _validate_candidate_source_path(path: str) -> PurePosixPath:

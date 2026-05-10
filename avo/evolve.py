@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import ast
 import difflib
 import hashlib
 import json
@@ -1938,6 +1939,7 @@ def _candidate_source_snapshot(
     if attempt.patch_result is not None and attempt.patch_result.ok:
         snapshot_paths.update(attempt.patch_result.patch_paths)
     snapshot_paths.update(_scored_candidate_source_paths(source_root, attempt.score_payload))
+    snapshot_paths.update(_candidate_python_dependency_source_paths(source_root, snapshot_paths))
     if not snapshot_paths:
         return None
     return {
@@ -1961,6 +1963,90 @@ def _scored_candidate_source_paths(
     candidate = PurePosixPath(candidate_path)
     for companion in _candidate_companion_directories(candidate):
         paths.update(_candidate_source_paths_under(source_root, companion))
+    return paths
+
+
+def _candidate_python_dependency_source_paths(
+    source_root: Path,
+    initial_paths: set[str],
+) -> set[str]:
+    dependencies: set[str] = set()
+    pending = [path for path in sorted(initial_paths) if path.endswith(".py")]
+    seen: set[str] = set()
+    while pending and len(seen) < 64:
+        relative_path = pending.pop(0)
+        if relative_path in seen or not _is_snapshot_source_file(source_root, relative_path):
+            continue
+        seen.add(relative_path)
+        for dependency in sorted(_candidate_python_import_paths(source_root, relative_path)):
+            if dependency in dependencies:
+                continue
+            dependencies.add(dependency)
+            if dependency.endswith(".py") and dependency not in seen:
+                pending.append(dependency)
+    return dependencies
+
+
+def _candidate_python_import_paths(source_root: Path, relative_path: str) -> set[str]:
+    path = source_root / relative_path
+    try:
+        tree = ast.parse(path.read_text(encoding="utf-8"))
+    except (OSError, SyntaxError, UnicodeDecodeError):
+        return set()
+    paths: set[str] = set()
+    package_parts = _candidate_python_package_parts(relative_path)
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                paths.update(_candidate_module_source_paths(source_root, alias.name.split(".")))
+        elif isinstance(node, ast.ImportFrom):
+            module_parts = _candidate_import_from_module_parts(package_parts, node)
+            if module_parts is None:
+                continue
+            paths.update(_candidate_module_source_paths(source_root, module_parts))
+            for alias in node.names:
+                if alias.name == "*":
+                    continue
+                paths.update(
+                    _candidate_module_source_paths(source_root, [*module_parts, alias.name])
+                )
+    return paths
+
+
+def _candidate_python_package_parts(relative_path: str) -> list[str]:
+    path = PurePosixPath(relative_path)
+    if path.name == "__init__.py":
+        return list(path.with_suffix("").parts[:-1])
+    return list(path.parent.parts)
+
+
+def _candidate_import_from_module_parts(
+    package_parts: list[str],
+    node: ast.ImportFrom,
+) -> list[str] | None:
+    if node.level:
+        if node.level > len(package_parts):
+            return None
+        parts = package_parts[: len(package_parts) - node.level + 1]
+    else:
+        parts = []
+    if node.module:
+        parts.extend(part for part in node.module.split(".") if part)
+    return parts
+
+
+def _candidate_module_source_paths(source_root: Path, module_parts: list[str]) -> set[str]:
+    if not module_parts or module_parts[0] != "candidates":
+        return set()
+    module_path = PurePosixPath(*module_parts)
+    paths: set[str] = set()
+    file_path = f"{module_path.as_posix()}.py"
+    if _is_snapshot_source_file(source_root, file_path):
+        paths.add(file_path)
+    package_init = f"{module_path.as_posix()}/__init__.py"
+    if _is_snapshot_source_file(source_root, package_init):
+        paths.add(package_init)
+        paths.update(_candidate_source_paths_under(source_root, module_path))
     return paths
 
 
