@@ -233,6 +233,61 @@ def test_parse_variation_decision_allows_probability_load_hoist_claim() -> None:
     assert decision.candidate_transform == payload["candidate_transform"]
 
 
+def test_parse_variation_decision_allows_existing_q_reuse_context() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = (
+        "The current kernel already loads Q once per query tile and reuses those "
+        "Q fragments across key tiles."
+    )
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Retune kThreads from 64 to 128 in the MMA attention kernel and compile it."
+    )
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 128,
+    }
+    payload["expected_effect"] = (
+        "Higher thread count may improve block-level memory throughput while preserving "
+        "the current kernel structure."
+    )
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_128"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
+def test_parse_variation_decision_rejects_current_q_reuse_claim_without_q_load_change() -> None:
+    payload = decision_payload()
+    payload["hypothesis"] = (
+        "This transform loads Q once per query tile and reuses those Q fragments "
+        "across key tiles."
+    )
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Retune kThreads from 64 to 128 in the MMA attention kernel and compile it."
+    )
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 128,
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_threads_128"
+    )
+
+    with pytest.raises(ValueError, match="reduced or reused Q loads"):
+        parse_decision_text(json.dumps(payload))
+
+
 def test_parse_variation_decision_rejects_explicit_transform_mode_without_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"

@@ -1271,6 +1271,10 @@ def _planning_text_load_reduction_claims(planning_text: str) -> dict[str, str]:
     ] or [" ".join(normalized_text.split())]
     claims: dict[str, str] = {}
     for window in windows:
+        if _planning_window_is_historical_failure_context(
+            window
+        ) or _planning_window_describes_existing_state(window):
+            continue
         if not _window_claims_load_reduction(window):
             continue
         for operand, aliases in LOAD_REDUCTION_OPERAND_ALIASES.items():
@@ -1390,7 +1394,9 @@ def _planning_text_dataflow_claim(planning_text: str) -> str | None:
     if not windows:
         windows = [" ".join(normalized_text.split())]
     for window in windows:
-        if _planning_window_is_historical_failure_context(window):
+        if _planning_window_is_historical_failure_context(
+            window
+        ) or _planning_window_describes_existing_state(window):
             continue
         words = set(re.findall(r"[a-z_]+", window))
         if (
@@ -1785,6 +1791,21 @@ def _planning_window_is_historical_failure_context(text: str) -> bool:
             text,
         )
     )
+
+
+def _planning_window_describes_existing_state(text: str) -> bool:
+    existing_subject = (
+        r"(?:(?:current|existing|baseline)\s+"
+        r"(?:kernel|seed|implementation|state|dataflow)|"
+        r"(?:accepted|previous|prior)\s+"
+        r"(?:kernel|seed|candidate|implementation|state|dataflow))"
+    )
+    if re.search(rf"\b(?:the\s+)?{existing_subject}\b", text):
+        return True
+    proposal_terms = r"(?:candidate|change|edit|patch|proposal|proposed|transform)"
+    if re.search(rf"\b(?:this|the)\s+{proposal_terms}\b", text):
+        return False
+    return "already" in text
 
 
 def _planning_window_describes_incomplete_edit(text: str) -> bool:

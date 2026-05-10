@@ -1436,3 +1436,20 @@ source files.
   current accepted local state. Treat all isolated K shared staging variants as
   exhausted for this seed, and treat full V-fragment caching as negative unless
   a future transform reduces register pressure or changes the PV schedule.
+- A longer follow-up loop after the historical-failure-note fix found no new
+  accepted candidate, but it added useful negative evidence for work mapping.
+  A 32-thread variant that also rewrote output accumulator ownership compiled
+  with 72 registers, 1 barrier, 9920 bytes shared memory, and no spills, but
+  failed correctness on all target cases. A pure `kThreads=128` retune passed
+  all 8 target cases and scored `9.118922525821796` geomean TFLOPS versus the
+  accepted best `9.168741394385114`; a pure `kThreads=32` retune also passed
+  correctness but regressed harder to `8.357124079366539` geomean TFLOPS. The
+  current `kThreads=64` is therefore the local sweet spot for this seed; avoid
+  more isolated thread-count retunes unless another transform changes the
+  amount or distribution of block work. A `kQueryTilesPerBlock=2` work-mapping
+  transform reduced grid blocks and processed two query tiles sequentially per
+  block. It passed all 8 target cases but regressed to
+  `9.111694101686032` geomean TFLOPS. For this kernel, simply serializing
+  multiple query tiles inside one block does not create useful K/V reuse or
+  amortization; future multi-query-tile work needs a real shared K/V schedule or
+  cooperative split, not just a per-block loop around the existing computation.

@@ -310,6 +310,28 @@ reject a bad transform family, or explain a score/gate result.
   staging and V-register-cache attempts.
 - Retrieval query: `accepted probability_frag reuse kThreads 64 geomean 9.168741394385114 confirmation 9.254126656665425`.
 
+- Claim: around the current accepted MMA seed, isolated thread-count retunes do
+  not improve on `kThreads=64`: pure `kThreads=128` was correct but regressed to
+  `9.118922525821796` geomean TFLOPS, pure `kThreads=32` was correct but
+  regressed to `8.357124079366539`, and a 32-thread lane-index rewrite failed
+  correctness.
+- Evidence source: loop
+  `loop_after_historical_failure_fix_20260510T0628Z.json`.
+- Why useful: discourages repeated 32/128 thread-count retunes unless another
+  candidate changes the actual block work distribution or synchronization
+  structure.
+- Retrieval query: `kThreads 32 128 retune regression current best kThreads 64 geomean 9.168741394385114`.
+
+- Claim: simple `kQueryTilesPerBlock=2` serialization is correct but slower,
+  scoring `9.111694101686032` geomean TFLOPS versus best
+  `9.168741394385114`.
+- Evidence source: loop
+  `loop_after_historical_failure_fix_20260510T0628Z.json`.
+- Why useful: future multi-query-tile work should create real K/V reuse or a
+  cooperative schedule rather than only wrapping the current one-query-tile
+  computation in a per-block loop.
+- Retrieval query: `kQueryTilesPerBlock 2 multi query tiles per block regression geomean 9.111694101686032`.
+
 - Claim: `kThreads=64` is correct but slower, scoring geomean
   `7.587127963961811` TFLOPS versus best `7.777584666360881`.
 - Evidence source: rejected loop after semantic-alignment fix.
