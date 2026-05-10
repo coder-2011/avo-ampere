@@ -786,15 +786,26 @@ def _evolve_loop(args: argparse.Namespace) -> int:
     update_promoted_preflight_tracks(args.attempts_dir)
     for _ in range(args.max_steps):
         step = _run_evolve_step(args)
-        steps.append(step)
-        write_step_record(args.attempts_dir, step)
-        update_promoted_preflight_tracks(args.attempts_dir)
+        _record_loop_step(args, steps, step)
         if step.accepted:
             stopped_reason = "accepted"
             break
         if step.patch_cleanup_result is not None and not step.patch_cleanup_result.ok:
             stopped_reason = "cleanup_failed"
             break
+    if stopped_reason == "max_steps":
+        pending_score_step = _run_pending_compile_score_step(args)
+        if pending_score_step is not None:
+            _record_loop_step(args, steps, pending_score_step)
+            if pending_score_step.accepted:
+                stopped_reason = "accepted"
+            elif (
+                pending_score_step.patch_cleanup_result is not None
+                and not pending_score_step.patch_cleanup_result.ok
+            ):
+                stopped_reason = "cleanup_failed"
+            else:
+                stopped_reason = "max_steps_after_pending_score"
 
     payload = {
         "accepted": any(step.accepted for step in steps),
@@ -813,6 +824,16 @@ def _evolve_loop(args: argparse.Namespace) -> int:
     return 0 if payload["accepted"] else 2
 
 
+def _record_loop_step(
+    args: argparse.Namespace,
+    steps: list[EvolutionStep],
+    step: EvolutionStep,
+) -> None:
+    steps.append(step)
+    write_step_record(args.attempts_dir, step)
+    update_promoted_preflight_tracks(args.attempts_dir)
+
+
 def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
     try:
         lineage_summary, attempt_history, repo_context, knowledge = _planning_context(args)
@@ -827,6 +848,54 @@ def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
         validate_decision_against_attempt_history(decision, args.attempts_dir)
     except ValueError as exc:
         return planning_failure_step(exc)
+    attempt = run_decision_command(
+        decision,
+        cwd=args.cwd,
+        timeout_s=args.timeout_s,
+        env=os.environ.copy(),
+        promoted_preflight_classes=load_promoted_preflight_classes(args.attempts_dir),
+    )
+    repaired = _run_compile_repair_loop(
+        args,
+        initial_attempt=attempt,
+        lineage_summary=lineage_summary,
+        attempt_history=attempt_history,
+        repo_context=repo_context,
+        knowledge=knowledge,
+    )
+    if isinstance(repaired, EvolutionStep):
+        return repaired
+    attempt, repair_attempts, repair_cleanup_results = repaired
+    step = finalize_attempt(
+        args.lineage,
+        attempt,
+        source_root=args.cwd,
+        repair_attempts=tuple(repair_attempts),
+        repair_cleanup_results=tuple(repair_cleanup_results),
+    )
+    return cleanup_rejected_candidate_patch(step, cwd=args.cwd)
+
+
+def _run_pending_compile_score_step(args: argparse.Namespace) -> EvolutionStep | None:
+    pending_transform = pending_compile_only_transform(args.attempts_dir)
+    if pending_transform is None:
+        return None
+    score_command = _score_command_for_pending_transform({}, pending_transform)
+    if not score_command:
+        return None
+    decision = VariationDecision(
+        hypothesis="Score pending compile-only structured transform",
+        files_to_inspect=sorted(_pending_transform_paths(pending_transform)),
+        candidate_edit="Score the semantic structured transform that compiled successfully.",
+        expected_effect=(
+            "Resolve the compile-only candidate with correctness and throughput measurement."
+        ),
+        risk="The candidate may fail validation or regress throughput.",
+        next_command=score_command,
+        edit_mode="transform",
+        candidate_transform=pending_transform,
+    )
+    lineage_summary, attempt_history, repo_context, knowledge = _planning_context(args)
     attempt = run_decision_command(
         decision,
         cwd=args.cwd,
