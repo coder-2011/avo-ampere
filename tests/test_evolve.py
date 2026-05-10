@@ -1811,6 +1811,61 @@ def test_summarize_attempt_history_drops_compile_followup_after_repair_score(
     )
 
 
+def test_summarize_attempt_history_includes_repair_attempt_failures(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    repair_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_transform={
+                "op": "insert_after_once",
+                "path": "candidates/kernel.cu",
+                "anchor": "__syncthreads();",
+                "text": "int stage = 0;",
+            },
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=None,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail=(
+                "candidate patch rejected: candidate transform rejected: insert transform "
+                "expected exactly one anchor, found 5; matching start lines: 54, 90, 127"
+            ),
+        ),
+        patch_result=PatchResult(
+            ok=False,
+            patch_paths=[],
+            returncode=None,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=(
+                "candidate transform rejected: insert transform expected exactly one "
+                "anchor, found 5; matching start lines: 54, 90, 127"
+            ),
+        ),
+        started_at="2026-05-08T00:00:02+00:00",
+        completed_at="2026-05-08T00:00:03+00:00",
+    )
+    write_step_record(
+        attempts,
+        planning_failure_step(
+            ValueError("repair planner failed"),
+            repair_attempts=(repair_attempt,),
+        ),
+    )
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "repairs=1" in summary
+    assert "repair_details=" in summary
+    assert "class=structured_transform_preflight" in summary
+    assert "expected exactly one anchor" in summary
+    assert "matching start lines: 54, 90, 127" in summary
+
+
 def test_attempt_history_rejects_repeated_compile_only_transform(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     transform = {

@@ -1904,13 +1904,52 @@ def _summarize_step_payload(name: str, payload: dict[str, Any]) -> str:
     gate = _gate_status(gate_decision)
     score = _score_status(score_payload)
     failure_class = _step_failure_class(payload)
+    repair_details = _repair_attempts_status(repair_attempts)
     command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
     hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
     return (
         f"{name}: class={failure_class}; {status}; {patch}; {cleanup}; "
-        f"repairs={repair_count}; {gate}; {score}; "
+        f"repairs={repair_count}{repair_details}; {gate}; {score}; "
         f"command={command}; hypothesis={hypothesis}"
     )
+
+
+def _repair_attempts_status(repair_attempts: Any) -> str:
+    if not isinstance(repair_attempts, list) or not repair_attempts:
+        return ""
+    details = []
+    for repair_attempt in repair_attempts[-2:]:
+        if not isinstance(repair_attempt, dict):
+            continue
+        repair_payload = {"attempt": repair_attempt}
+        decision = (
+            repair_attempt.get("decision")
+            if isinstance(repair_attempt.get("decision"), dict)
+            else {}
+        )
+        command_result = (
+            repair_attempt.get("command_result")
+            if isinstance(repair_attempt.get("command_result"), dict)
+            else {}
+        )
+        patch_result = (
+            repair_attempt.get("patch_result")
+            if isinstance(repair_attempt.get("patch_result"), dict)
+            else None
+        )
+        score_payload = repair_attempt.get("score_payload")
+        details.append(
+            "repair("
+            f"class={_step_failure_class(repair_payload)}, "
+            f"{_command_status(command_result)}, "
+            f"{_patch_status(patch_result)}, "
+            f"{_score_status(score_payload)}, "
+            f"command={_shorten(str(decision.get('next_command') or '<missing command>'), 100)}"
+            ")"
+        )
+    if not details:
+        return ""
+    return "; repair_details=" + " | ".join(details)
 
 
 def _step_failure_class(payload: dict[str, Any]) -> str:
