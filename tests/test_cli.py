@@ -596,6 +596,45 @@ def test_evolve_once_cleans_up_nonaccepted_candidate_patch(
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
+def test_evolve_once_records_planner_provider_exception(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    step_json = tmp_path / "step.json"
+
+    def fake_request_variation_decision(**kwargs):
+        raise RuntimeError("provider unavailable")
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+
+    exit_code = _evolve_once(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            step_json=step_json,
+            env_file=None,
+            model="claude",
+            attempts_dir=None,
+            attempt_limit=5,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    persisted = json.loads(step_json.read_text(encoding="utf-8"))
+    assert exit_code == 2
+    assert persisted == payload
+    assert payload["attempt"]["decision"]["hypothesis"] == "agent planning failed validation"
+    assert payload["attempt"]["command_result"]["ok"] is False
+    assert "RuntimeError: provider unavailable" in (
+        payload["attempt"]["command_result"]["stderr_tail"]
+    )
+
+
 def test_evolve_once_repairs_candidate_compile_failure_before_finishing(
     tmp_path: Path,
     monkeypatch,
@@ -1069,6 +1108,75 @@ def test_repair_loop_does_not_autofill_pending_transform(
         result.attempt.command_result.stderr_tail
     )
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
+def test_repair_loop_records_planner_provider_exception(
+    tmp_path: Path,
+    monkeypatch,
+) -> None:
+    failed_attempt = VariationAttempt(
+        decision=VariationDecision(
+            hypothesis="introduce compile failure",
+            files_to_inspect=["candidates/seed.py"],
+            candidate_edit="change value in a way that fails compile",
+            expected_effect="exercise compile repair",
+            risk="mock compile failure",
+            next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch=dedent(
+                """\
+                diff --git a/candidates/seed.py b/candidates/seed.py
+                --- a/candidates/seed.py
+                +++ b/candidates/seed.py
+                @@ -1 +1 @@
+                -VALUE = 1
+                +VALUE = bad
+                """
+            ),
+        ),
+        command_result=CommandResult(
+            command=["python", "-m", "avo", "compile"],
+            returncode=1,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="attention_kernel.cu(4): error: identifier bad is undefined",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/seed.py"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+
+    def fake_request_variation_decision(**kwargs):
+        raise RuntimeError("provider unavailable during repair")
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.cleanup_rejected_candidate_patch", lambda step, *, cwd: step)
+
+    result = _run_compile_repair_loop(
+        SimpleNamespace(
+            cwd=tmp_path,
+            timeout_s=10,
+            attempts_dir=None,
+            compile_repair_attempts=1,
+            model="claude",
+        ),
+        initial_attempt=failed_attempt,
+        lineage_summary="{}",
+        attempt_history="",
+        repo_context="",
+        knowledge="Ampere only.",
+    )
+
+    assert isinstance(result, EvolutionStep)
+    assert result.repair_attempts == (failed_attempt,)
+    assert "RuntimeError: provider unavailable during repair" in (
+        result.attempt.command_result.stderr_tail
+    )
 
 
 def test_repair_loop_allows_correctness_repair_after_pending_transform_score(

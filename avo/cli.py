@@ -837,14 +837,17 @@ def _record_loop_step(
 def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
     try:
         lineage_summary, attempt_history, repo_context, knowledge = _planning_context(args)
-        decision = request_variation_decision(
-            lineage_summary=lineage_summary,
-            knowledge=knowledge,
-            attempt_history=attempt_history,
-            repo_context=repo_context,
-            model=args.model,
-            normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
-        )
+        try:
+            decision = request_variation_decision(
+                lineage_summary=lineage_summary,
+                knowledge=knowledge,
+                attempt_history=attempt_history,
+                repo_context=repo_context,
+                model=args.model,
+                normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
+            )
+        except Exception as exc:
+            return planning_failure_step(exc)
         validate_decision_against_attempt_history(decision, args.attempts_dir)
     except ValueError as exc:
         return planning_failure_step(exc)
@@ -976,6 +979,13 @@ def _run_compile_repair_loop(
                 model=args.model,
                 normalize_payload=None,
             )
+        except Exception as exc:
+            return planning_failure_step(
+                exc,
+                repair_attempts=tuple(repair_attempts),
+                repair_cleanup_results=tuple(repair_cleanup_results),
+            )
+        try:
             _validate_edit_repair_decision(repair_decision, current_attempt, repair_kind)
             validate_decision_against_attempt_history(
                 repair_decision,
