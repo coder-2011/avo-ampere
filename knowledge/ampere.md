@@ -1372,3 +1372,14 @@ source files.
   reinforces the current search rule: isolated K/V staging is not enough. Useful
   async work needs correct stage lifetimes, per-tile key offsets, consumed
   double-buffered dataflow, and overlap with the existing `q_frags[8]` path.
+- After fixing repair-attempt memory so stale compile-only transforms are not
+  treated as pending after an in-repair score, the next loop did not rescore the
+  known-bad K async transform. It first rejected a K double-buffer shared-memory
+  proposal before compile because the new staging buffers were not connected to
+  executable dataflow. It then compiled and scored a cooperative Q shared-memory
+  staging transform. The score passed all 8 full-target BF16 cases, but regressed
+  geomean to `7.645807821748137` TFLOPS versus the current best
+  `8.960753680686471`. This reinforces the accepted direction: preserve
+  `q_frags[8]` in registers. Do not retry Q shared staging as a standalone
+  optimization; the added 4096 bytes shared memory and barriers lose against
+  direct Q fragment reuse in the current seed.
