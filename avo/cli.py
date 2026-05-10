@@ -899,7 +899,7 @@ def _run_compile_repair_loop(
                 attempt_history=repair_history,
                 repo_context=repo_context,
                 model=args.model,
-                normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
+                normalize_payload=None,
             )
             _validate_edit_repair_decision(repair_decision, current_attempt, repair_kind)
             validate_decision_against_attempt_history(repair_decision, args.attempts_dir)
