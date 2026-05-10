@@ -1469,3 +1469,6 @@ source files.
   `kThreads=96` and the score-store `__syncwarp()` refinement. Continue to avoid
   plain synchronous K/KV shared staging; async K staging needs a correct stage
   lifecycle and initialized-data contract before it is worth scoring again.
+  A repeats-3/warmup-2 confirmation score on the accepted syncwarp candidate
+  passed all 8 target cases and measured `9.576586797806204` geomean TFLOPS,
+  further supporting the accepted synchronization refinement.
