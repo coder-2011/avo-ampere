@@ -1292,6 +1292,7 @@ def test_evolve_once_repairs_score_time_extension_build_failure_before_finishing
                         "correct": False,
                         "error": (
                             "RuntimeError: Error building extension 'runtime_demo': "
+                            "identifier __pipeline_memcpy_async is undefined; "
                             "ninja: build stopped: nvcc failed compiling attention_kernel.cu"
                         ),
                     }
@@ -1341,6 +1342,9 @@ def test_evolve_once_repairs_score_time_extension_build_failure_before_finishing
     assert "score_time_compile_failure" in seen_attempt_histories[1]
     assert "candidates/dynamic_extension/attention_kernel.cu" in seen_attempt_histories[1]
     assert "Error building extension" in seen_attempt_histories[1]
+    assert "repair the async-copy API/include/stage/dataflow issue" in (
+        seen_attempt_histories[1]
+    )
     assert "previous candidate edit compiled and ran" not in seen_attempt_histories[1]
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
 

@@ -1131,10 +1131,12 @@ def _edit_repair_attempt_history(
     elif repair_kind == "score-time-compile":
         score_error_summary = correctness_failure_summary_for_attempt(failed_attempt)
         candidate_sources = _score_candidate_source_files_summary(failed_attempt)
+        repair_guidance = _score_time_compile_repair_guidance(score_error_summary)
         request = (
             "Immediate score-time compile-repair request:\n"
             f"- repair_attempt={repair_index}\n"
             f"- failure_class={correctness_failure_class_for_attempt(failed_attempt)}\n"
+            f"{repair_guidance}"
             f"- failed_command={failed_attempt.decision.next_command}\n"
             f"- worktree_cleanup_before_repair={cleanup_status}\n"
             "- The previous candidate edit reached score, but the candidate "
@@ -1203,6 +1205,31 @@ def _edit_repair_attempt_history(
 def _compile_repair_guidance(failure_class: str) -> str:
     if failure_class != "async_copy_compile_error":
         return ""
+    return _async_copy_repair_guidance()
+
+
+def _score_time_compile_repair_guidance(score_error_summary: str) -> str:
+    if not _mentions_async_copy_api(score_error_summary):
+        return ""
+    return _async_copy_repair_guidance()
+
+
+def _mentions_async_copy_api(text: str) -> bool:
+    lowered = text.lower()
+    return any(
+        marker in lowered
+        for marker in (
+            "cp.async",
+            "__pipeline",
+            "cuda::memcpy_async",
+            "memcpy_async",
+            "async-copy",
+            "async copy",
+        )
+    )
+
+
+def _async_copy_repair_guidance() -> str:
     return (
         "- repair_guidance=repair the async-copy API/include/stage/dataflow issue; "
         "do not treat copy granularity alone as a hard rejection or return a "
