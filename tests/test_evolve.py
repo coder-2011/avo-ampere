@@ -1068,6 +1068,59 @@ def test_finalize_attempt_snapshots_static_extension_sources_outside_companion(
     ) == "// cuda kernel\n"
 
 
+def test_finalize_attempt_snapshots_declared_runtime_source_files(
+    tmp_path: Path,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    runtime_dir = candidate_dir / "runtime_extension"
+    runtime_dir.mkdir(parents=True)
+    seed = candidate_dir / "runtime_candidate.py"
+    seed.write_text("def attention(q, k, v, causal):\n    return q\n", encoding="utf-8")
+    kernel = runtime_dir / "generated_kernel.cu"
+    header = runtime_dir / "generated_kernel.cuh"
+    kernel.write_text("// generated cuda kernel\n", encoding="utf-8")
+    header.write_text("// generated cuda header\n", encoding="utf-8")
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/runtime_candidate.py"
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        score_payload={
+            "backend": "candidate",
+            "candidate_path": "candidates/runtime_candidate.py",
+            "candidate_source_files": [
+                kernel.as_posix(),
+                "candidates/runtime_extension/generated_kernel.cuh",
+            ],
+            "all_correct": True,
+            "geomean_tflops": 3.0,
+            "cases": [{}],
+        },
+    )
+
+    step = finalize_attempt(tmp_path / "lineage", attempt, source_root=tmp_path)
+
+    assert step.accepted
+    source_root = tmp_path / "lineage" / "sources" / "latest"
+    assert (source_root / "candidates" / "runtime_candidate.py").read_text(
+        encoding="utf-8"
+    ) == seed.read_text(encoding="utf-8")
+    assert (source_root / "candidates" / "runtime_extension" / "generated_kernel.cu").read_text(
+        encoding="utf-8"
+    ) == "// generated cuda kernel\n"
+    assert (source_root / "candidates" / "runtime_extension" / "generated_kernel.cuh").read_text(
+        encoding="utf-8"
+    ) == "// generated cuda header\n"
+
+
 def test_write_attempt_records_json(tmp_path: Path) -> None:
     attempt = run_decision_command(
         decision("avo worker-sleep --seconds 0"),

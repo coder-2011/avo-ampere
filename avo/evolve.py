@@ -1967,6 +1967,22 @@ def _scored_candidate_source_paths(
     candidate = PurePosixPath(candidate_path)
     for companion in _candidate_companion_directories(candidate):
         paths.update(_candidate_source_paths_under(source_root, companion))
+    paths.update(_declared_candidate_source_paths(source_root, score_payload))
+    return paths
+
+
+def _declared_candidate_source_paths(
+    source_root: Path,
+    score_payload: dict[str, Any],
+) -> set[str]:
+    declared = score_payload.get("candidate_source_files")
+    if not isinstance(declared, list):
+        return set()
+    paths: set[str] = set()
+    for raw_path in declared:
+        normalized = _candidate_path_from_score(source_root, raw_path)
+        if normalized is not None and _is_snapshot_source_file(source_root, normalized):
+            paths.add(normalized)
     return paths
 
 

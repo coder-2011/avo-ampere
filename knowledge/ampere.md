@@ -115,7 +115,10 @@ history.
   is not accepted, it attempts a checked reverse apply so rejected edits do not
   leak into later attempts. If a candidate step is accepted, the lineage commit
   stores snapshots of the scored candidate module and companion source directory
-  under `sources/latest/`; patched accepted steps also store the raw patch under
+  under `sources/latest/`; direct local imports, static extension source lists,
+  and candidate-declared runtime source manifests (`AVO_SOURCE_FILES` or
+  `__avo_source_files__`) are also captured when they normalize under
+  `candidates/`. Patched accepted steps also store the raw patch under
   `patches/latest.patch`.
 
 ## Search Space

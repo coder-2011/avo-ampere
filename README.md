@@ -331,8 +331,11 @@ candidate step is accepted, the lineage commit records `sources/latest/...`
 snapshots for the scored candidate module and companion source directory
 alongside `scores/latest.json`; direct local Python imports under `candidates/`
 and statically declared `torch.utils.cpp_extension.load(sources=[...])` files
-are included in that snapshot, and `sources/latest/manifest.json` records path,
-size, and hash metadata for audit. Accepted edited steps also record
+are included in that snapshot. Candidate modules can also expose
+`AVO_SOURCE_FILES` or `__avo_source_files__` as a path or iterable of paths for
+runtime-discovered CUDA/source files, such as dynamically assembled extension
+sources. `sources/latest/manifest.json` records path, size, and hash metadata
+for audit. Accepted edited steps also record
 `patches/latest.patch`.
 
 `evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the suite-aware lineage gate. Candidates compare against the best prior score with the same benchmark case signature; a new signature can establish its own lane when correctness passes and source artifacts are captured.
@@ -364,7 +367,7 @@ uv run python -m avo evolve-loop \
 - Optimizing the accepted seq32768 WMMA QK/PV seed beyond shape coverage toward FA2-competitive throughput.
 - Scaling the warp-row attention seed beyond tiny correctness smokes.
 - Longer-running autonomous supervision beyond the capped `evolve-loop`, including richer active intervention beyond the current attempt-memory signals, promoted checks, and provider-outage stop policy.
-- Deeper dependency capture for dynamic imports or extension sources discovered only by executing candidate code.
+- Automatic trace-based dependency capture for dynamic imports or extension sources that a candidate does not report through the explicit source-file manifest hook.
 - Performance evidence beating FlashAttention-2 on the target A6000 cases.
 - Longer lineage history with accepted candidates and a larger rejected-attempt search trajectory.
 

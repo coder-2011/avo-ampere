@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import importlib.util
 import math
+import os
 import platform
 import statistics
 import time
@@ -14,6 +15,7 @@ from typing import Any, Literal
 from .config import AMPERE_A6000, AttentionCase
 
 BackendName = Literal["torch-sdpa", "flash-attn", "candidate"]
+CANDIDATE_SOURCE_FILE_ATTRIBUTES = ("AVO_SOURCE_FILES", "__avo_source_files__")
 
 
 @dataclass(frozen=True)
@@ -111,8 +113,10 @@ def score_backend(
     elif backend == "candidate":
         if candidate is None:
             raise ValueError("candidate backend requires --candidate")
+        candidate_source_files: tuple[str, ...] = ()
         try:
             module = _load_candidate(candidate)
+            candidate_source_files = _candidate_declared_source_files(module, candidate)
         except Exception as exc:
             scores = [
                 _failed_candidate_score(case, f"{type(exc).__name__}: {exc}") for case in cases
@@ -142,6 +146,8 @@ def score_backend(
     )
     if backend == "candidate" and candidate is not None:
         summary["candidate_path"] = str(candidate)
+        if candidate_source_files:
+            summary["candidate_source_files"] = list(candidate_source_files)
     return summary
 
 
@@ -385,6 +391,43 @@ def _load_candidate(path: Path):
     if not callable(attention):
         raise ValueError("candidate module must define callable attention(q, k, v, causal)")
     return module
+
+
+def _candidate_declared_source_files(module: Any, candidate_path: Path) -> tuple[str, ...]:
+    paths: list[str] = []
+    for attribute in CANDIDATE_SOURCE_FILE_ATTRIBUTES:
+        raw_files = getattr(module, attribute, None)
+        if raw_files is None:
+            continue
+        for raw_file in _candidate_source_file_values(raw_files, attribute=attribute):
+            paths.append(_candidate_source_file_path(candidate_path, raw_file))
+    return tuple(dict.fromkeys(paths))
+
+
+def _candidate_source_file_values(
+    value: Any,
+    *,
+    attribute: str,
+) -> tuple[str | os.PathLike[str], ...]:
+    if isinstance(value, (str, os.PathLike)):
+        return (value,)
+    try:
+        values = tuple(value)
+    except TypeError as exc:
+        raise ValueError(f"{attribute} must be a path or iterable of paths") from exc
+    for item in values:
+        if not isinstance(item, (str, os.PathLike)):
+            raise ValueError(f"{attribute} entries must be paths")
+    return values
+
+
+def _candidate_source_file_path(candidate_path: Path, raw_path: str | os.PathLike[str]) -> str:
+    path = Path(os.fspath(raw_path))
+    if path.is_absolute():
+        return path.as_posix()
+    if path.as_posix().startswith("candidates/"):
+        return path.as_posix()
+    return (candidate_path.parent / path).as_posix()
 
 
 def _score_candidate(

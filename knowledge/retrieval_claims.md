@@ -32,6 +32,15 @@ reject a bad transform family, or explain a score/gate result.
   the gap to FA2.
 - Retrieval query: `FlashAttention-2 baseline comparison lineage acceptance threshold`.
 
+- Claim: accepted candidate lineage snapshots include the scored candidate,
+  local imports, static extension source lists, and runtime-declared source
+  manifests exposed as `AVO_SOURCE_FILES` or `__avo_source_files__`.
+- Evidence source: runtime score-summary and lineage source-snapshot
+  implementation.
+- Why useful: keeps dynamically assembled CUDA extension sources auditable when
+  the candidate reports them after module execution.
+- Retrieval query: `candidate runtime source manifest AVO_SOURCE_FILES __avo_source_files__ lineage snapshot`.
+
 ## FA2/CUTLASS Directional Cues
 
 - Claim: CUTLASS's Ampere FlashAttention v2 example uses 128x128 M/N tiles, 128

@@ -30,6 +30,29 @@ def test_candidate_backend_loads_attention_function(tmp_path: Path) -> None:
     assert summary["benchmark"]["target"]["sm"] == "sm_86"
 
 
+def test_candidate_backend_reports_declared_runtime_source_files(tmp_path: Path) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    candidate = candidate_dir / "candidate.py"
+    candidate.write_text(
+        "from pathlib import Path\n"
+        "AVO_SOURCE_FILES = [\n"
+        "    Path(__file__).parent / 'dynamic_kernel.cu',\n"
+        "    'candidates/shared_runtime.cuh',\n"
+        "]\n"
+        "def attention(q, k, v, causal):\n"
+        "    return q\n",
+        encoding="utf-8",
+    )
+
+    summary = score_backend("candidate", [], warmup=0, repeats=0, candidate=candidate)
+
+    assert summary["candidate_source_files"] == [
+        (candidate_dir / "dynamic_kernel.cu").as_posix(),
+        "candidates/shared_runtime.cuh",
+    ]
+
+
 def test_candidate_backend_rejects_missing_attention(tmp_path: Path) -> None:
     candidate = tmp_path / "candidate.py"
     candidate.write_text("VALUE = 1\n", encoding="utf-8")
