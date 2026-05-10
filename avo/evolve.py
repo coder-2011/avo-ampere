@@ -676,17 +676,17 @@ def update_promoted_preflight_tracks(
     payloads = [payload for _, payload in _load_step_payloads(directory)]
     recurring_classes = _recurring_unaccepted_failure_classes(payloads, threshold=threshold)
     promotable_classes = {
-        failure_class: count
+        failure_class: (count, track_names)
         for failure_class, count in recurring_classes.items()
         if failure_class in PROMOTABLE_FAILURE_CLASS_TRACKS
+        if (track_names := _concrete_promoted_preflight_track_names(failure_class))
     }
     if not promotable_classes:
         return state
     tracks = _state_tracks(state)
     updated_at = _utc_now()
-    for failure_class, count in sorted(promotable_classes.items()):
+    for failure_class, (count, track_names) in sorted(promotable_classes.items()):
         existing = tracks.get(failure_class)
-        track_names = promoted_preflight_track_names_for_classes(frozenset({failure_class}))
         entry = {
             "active": True,
             "failure_class": failure_class,
@@ -704,6 +704,10 @@ def update_promoted_preflight_tracks(
     state = {"version": 1, "tracks": tracks}
     _write_promoted_preflight_state(directory, state)
     return state
+
+
+def _concrete_promoted_preflight_track_names(failure_class: str) -> tuple[str, ...]:
+    return promoted_preflight_track_names_for_classes(frozenset({failure_class}))
 
 
 def validate_decision_against_attempt_history(
@@ -902,17 +906,32 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
             threshold=SUPERVISOR_REPEAT_THRESHOLD,
         )
         if repeated_class is not None:
-            message = (
-                f"{message} Failure class {repeated_class!r} also recurred and is "
-                "eligible for hard preflight promotion; choose a different transform "
-                "family."
-            )
+            if _concrete_promoted_preflight_track_names(repeated_class):
+                message = (
+                    f"{message} Failure class {repeated_class!r} also recurred and is "
+                    "eligible for hard preflight promotion; choose a different transform "
+                    "family."
+                )
+            else:
+                message = (
+                    f"{message} Failure class {repeated_class!r} also recurred, but no "
+                    "concrete hard preflight track exists for it; use the class feedback "
+                    "before repeating this transform family."
+                )
         return message
     repeated_class = _repeated_unaccepted_failure_class(
         payloads,
         threshold=SUPERVISOR_REPEAT_THRESHOLD,
     )
     if repeated_class is not None:
+        if not _concrete_promoted_preflight_track_names(repeated_class):
+            return (
+                "Supervisor signal: the last "
+                f"{SUPERVISOR_REPEAT_THRESHOLD} attempts share failure class "
+                f"{repeated_class!r}. No concrete hard preflight track exists for this "
+                "class; use the class feedback and choose a different structured "
+                "transform family before repeating it."
+            )
         return (
             "Supervisor signal: the last "
             f"{SUPERVISOR_REPEAT_THRESHOLD} attempts share failure class "
@@ -928,8 +947,8 @@ def _summarize_supervisor_signal(payloads: list[dict[str, Any]]) -> str:
         return (
             "Supervisor signal: recent unaccepted attempts include recurring failure "
             f"classes: {recurring}. The attempt-memory updater promotes eligible "
-            "classes to hard preflight tracks; choose a different structured transform "
-            "family before repeating them."
+            "classes with concrete checks to hard preflight tracks; choose a different "
+            "structured transform family before repeating them."
         )
     if _unaccepted_tail_count(payloads) >= SUPERVISOR_EXHAUSTION_THRESHOLD:
         return (

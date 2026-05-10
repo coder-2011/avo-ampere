@@ -1386,6 +1386,28 @@ def test_summarize_attempt_history_classifies_predicted_correctness_planning_fai
     assert "planning_feedback=ValueError: candidate_patch is described as known invalid" in summary
 
 
+def test_planning_feedback_class_is_not_promoted_without_concrete_preflight(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    for _ in range(3):
+        step = planning_failure_step(
+            ValueError(
+                "candidate_patch is described as known invalid by the decision itself; "
+                "planning risk class 'predicted_correctness_failure' matched "
+                "'incorrect results'"
+            )
+        )
+        write_step_record(attempts, step)
+
+    state = update_promoted_preflight_tracks(attempts)
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "planning_predicted_correctness_failure" not in state["tracks"]
+    assert "no concrete hard preflight track exists" in summary
+    assert "eligible for hard preflight promotion" not in summary
+
+
 def test_summarize_attempt_history_does_not_fingerprint_different_planning_errors(
     tmp_path: Path,
 ) -> None:
