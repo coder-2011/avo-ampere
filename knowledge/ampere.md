@@ -1336,3 +1336,26 @@ source files.
   current seed than isolated synchronous Q/K shared-memory staging or local
   chunk-loop unrolling. Future moves should preserve Q-in-register reuse while
   attacking K/V traffic, softmax/PV scheduling, or a broader FA2-like pipeline.
+- A fresh Exa/CUDA-source refresh after Q-fragment reuse found NVIDIA CUTLASS's
+  current Ampere FA2 CuTe example describing the same larger target structure:
+  128-bit `cp.async` GMEM-to-SMEM copies for Q/K/V, swizzled shared layouts,
+  Ampere tensor-core MMA, a register pipeline for SMEM-to-register movement, and
+  integrated online-softmax fusion. The Dao-AILab SM80 mainloop shows the same
+  Q-in-register idea inside a K/V pipeline: preprocess/load Q into registers
+  when `Q_in_regs` is active, advance K/V with `cp_async` fence/wait stages, run
+  QK, online softmax/rescale, and then PV. For the local seed, the next useful
+  semantic moves should preserve `q_frags[8]` and focus on K/V stage scheduling,
+  V/PV movement, or softmax/PV overlap. Do not throw away the accepted Q reuse
+  to retry isolated synchronous shared tiles.
+- A post-Q-reuse loop with the profile-unavailable context active did not repeat
+  the unsupported `avo profile` failure. It did try V-side staging. A
+  single-stage shared V tile compiled and passed all full-target BF16 correctness
+  cases, but regressed geomean to `4.606980002471371` TFLOPS versus current best
+  `8.960753680686471`; synchronous V staging is therefore not a useful
+  standalone follow-up. The same loop also compiled a V double-buffer
+  `cp.async` staging transform with 64 registers, 1 barrier, 18112 bytes shared
+  memory, and no spills, but stopped at `max_steps` before scoring it. The next
+  loop may score that exact pending transform if it remains valid, but should not
+  repeat single-stage synchronous V staging. One planning step still failed by
+  asking `avo score` for profiler-style metrics, so future prompts should keep
+  profiler evidence separate from score validation.
