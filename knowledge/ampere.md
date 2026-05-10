@@ -1383,3 +1383,12 @@ source files.
   `q_frags[8]` in registers. Do not retry Q shared staging as a standalone
   optimization; the added 4096 bytes shared memory and barriers lose against
   direct Q fragment reuse in the current seed.
+- A later loop with nested repair details visible still spent several steps on
+  cooperative K shared-memory staging. The simplest flat `k_tile[kTile *
+  kHeadDim]` version compiled, scored correctly on all 8 full-target BF16 cases,
+  and regressed to `4.40940675249885` TFLOPS versus the current best
+  `8.960753680686471`. Follow-up padded or transposed K shared-memory repairs
+  then failed correctness with non-finite outputs, CUDA unknown errors, or
+  tolerance failures. Treat standalone K shared staging as exhausted negative
+  evidence for this seed unless it is part of a broader FA2-like pipeline with
+  correct staged layout, overlap, and PV/softmax scheduling changes.
