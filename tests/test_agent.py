@@ -8,6 +8,7 @@ from avo.agent import (
     DECISION_TOOL_NAME,
     DEFAULT_AGENT_MODEL,
     DEFAULT_AGENT_REQUEST_TIMEOUT_S,
+    MAX_VARIATION_PROMPT_CHARS,
     VariationDecision,
     _agent_request_timeout_s,
     _decision_kwargs_with_feedback,
@@ -3734,6 +3735,38 @@ def test_decision_feedback_explains_missing_required_keys_error() -> None:
     assert "risk" in content
     assert "next_command" in content
     assert "Do not omit" in content
+
+
+def test_decision_feedback_retry_preserves_budget_and_latest_context() -> None:
+    pending_signal = (
+        'Exact pending candidate_transform JSON: {"op":"replace_once",'
+        '"path":"candidates/kernel.cu","find":"old","replace":"new"}'
+    )
+    kwargs = {
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "You are the AVO variation operator.\n"
+                    + ("old context\n" * 12_000)
+                    + pending_signal
+                ),
+            }
+        ]
+    }
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("candidate_transform or candidate_patch must be provided"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert len(content) <= MAX_VARIATION_PROMPT_CHARS
+    assert "You are the AVO variation operator" in content
+    assert "prompt middle compacted to preserve validation feedback" in content
+    assert pending_signal in content
+    assert "Validation error: candidate_transform or candidate_patch must be provided" in content
+    assert "Return one corrected decision." in content
 
 
 def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:

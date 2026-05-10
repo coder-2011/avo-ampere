@@ -988,15 +988,44 @@ def _decision_kwargs_with_feedback(
         return kwargs
     updated = dict(kwargs)
     messages = [dict(message) for message in kwargs["messages"]]
-    messages[-1]["content"] = (
-        f"{messages[-1]['content']}\n\n"
+    feedback = (
+        "\n\n"
         "The previous decision was invalid and was not executed. "
         f"Validation error: {last_error}. "
         f"{_validation_feedback_hint(last_error)}"
         "Return one corrected decision."
     )
+    messages[-1]["content"] = _append_prompt_feedback_with_budget(
+        str(messages[-1]["content"]),
+        feedback,
+        max_chars=MAX_VARIATION_PROMPT_CHARS,
+    )
     updated["messages"] = messages
     return updated
+
+
+def _append_prompt_feedback_with_budget(
+    prompt: str,
+    feedback: str,
+    *,
+    max_chars: int,
+) -> str:
+    content = f"{prompt}{feedback}"
+    if max_chars <= 0 or len(content) <= max_chars:
+        return content
+
+    marker = (
+        "\n[... prompt middle compacted to preserve validation feedback; "
+        f"original_chars={len(content)} ...]\n"
+    )
+    feedback_budget = min(len(feedback), max_chars // 2)
+    preserved_feedback = feedback[-feedback_budget:]
+    prompt_budget = max_chars - len(marker) - len(preserved_feedback)
+    if prompt_budget <= 0:
+        return f"{marker}{preserved_feedback}"[-max_chars:]
+    head_chars = max(0, prompt_budget // 3)
+    tail_chars = max(0, prompt_budget - head_chars)
+    return f"{prompt[:head_chars]}{marker}{prompt[-tail_chars:]}{preserved_feedback}"
 
 
 def _validation_feedback_hint(error: ValueError) -> str:
