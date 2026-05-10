@@ -263,6 +263,15 @@ reject a bad transform family, or explain a score/gate result.
   to raw CUDA diffs.
 - Retrieval query: `candidate_transform ambiguous anchor matching start lines larger unique anchor`.
 
+- Claim: batch `candidate_transform` payloads should use the native `steps`
+  array in Anthropic tool calls; `steps_json` is only a legacy fallback for old
+  records and plain-JSON fallback responses.
+- Evidence source: runtime strict-tool schema checkpoint after the parser already
+  supported native steps.
+- Why useful: prevents the planner from putting structured semantic edits inside
+  a JSON string when the tool interface can carry nested step objects directly.
+- Retrieval query: `candidate_transform batch native steps array steps_json legacy fallback`.
+
 ## CUDA Structural Constraints
 
 - Claim: future `cp.async` attempts should prefer aligned 16-byte groups and

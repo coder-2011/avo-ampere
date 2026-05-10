@@ -91,6 +91,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("ambiguous", "matching start line", "unique anchor"),
         ),
         (
+            "candidate_transform batch native steps array steps_json legacy fallback",
+            ("native `steps`", "steps_json", "legacy fallback"),
+        ),
+        (
             "synchronous Q shared memory staging regression geomean 6.722112165053056",
             ("q shared-memory staging", "6.722112165053056", "regressed"),
         ),
@@ -251,6 +255,21 @@ def test_retrieval_claim_manifest_is_indexed_from_ampere_entrypoint() -> None:
     assert "retrieval_claims.md" in context
     assert "Why useful" in context
     assert "kThreads=64" in context
+
+
+def test_ampere_knowledge_prefers_native_batch_steps() -> None:
+    context = build_knowledge_context(
+        Path("knowledge/ampere.md"),
+        query="candidate_transform batch native steps array steps_json legacy fallback",
+        max_chunks=8,
+        max_chars=16_000,
+    )
+
+    assert "native `steps` array" in context
+    assert "steps_json" in context
+    assert "legacy fallback" in context
+    assert "schema-complexity errors" not in context
+    assert "still advertises compact `steps_json`" not in context
 
 
 def test_general_cuda_grounding_is_indexed_from_ampere_entrypoint() -> None:

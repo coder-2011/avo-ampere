@@ -1045,10 +1045,12 @@ source files.
   payload. Fingerprints now include the planning failure class and truncated
   validation detail, so supervisor signals distinguish edit-channel mistakes,
   missing edit payloads, and repeated no-patch compile diagnostics.
-  CUDA shape graduation can require more than one tiny edit. `candidate_transform`
-  now supports `op=batch` with a compact `steps_json` provider payload that the
-  orchestrator parses into up to four tiny steps. Batch steps still use small
-  structural transforms, not raw CUDA diffs. Supported steps now include generic
+  CUDA shape graduation can require more than one small structural edit.
+  `candidate_transform` supports `op=batch`; the preferred Anthropic tool-call
+  shape is now a native `steps` array of up to eight primitive operations, while
+  `steps_json` remains a legacy fallback for older records and plain-JSON
+  fallback responses. Batch steps still use small structural transforms, not raw
+  CUDA diffs. Supported steps now include generic
   `add_int_to_python_set`, so wrapper cap updates such as adding `512` to
   `SMOKE_SEQUENCES` are represented as a structured Python-set edit instead of
   another raw hunk. Parser recovery also infers generic uppercase Python set
@@ -1058,9 +1060,11 @@ source files.
   "change/set/update" phrasing to natural constant-retune verbs such as
   "increase", "decrease", and "retune". It also accepts an `op=batch` object
   with a top-level default `path` and fills that path into steps that omit it.
-  The strict Anthropic tool schema still advertises compact `steps_json` for
-  batch transforms to avoid schema-complexity errors, but the parser can recover
-  the common default-path shorthand when it appears in a response.
+  Earlier provider-schema experiments used compact `steps_json` after a nested
+  schema failure; the current strict tool schema has been simplified and now
+  advertises native nested `steps`, but the parser keeps the old fallback. If a
+  future provider trace rejects the nested schema again, treat that as an
+  interface compatibility failure rather than a CUDA-search failure.
   Live loops after the batch interface repeatedly compiled the same seq512 MMA
   shape-graduation transform (`kMaxSeqLen=512` plus wrapper sequence cap `512`).
   The compile passed on sm86 with no spills, 40 registers, 1 barrier, and 9920
