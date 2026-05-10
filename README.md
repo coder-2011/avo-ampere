@@ -275,7 +275,10 @@ wrapper uses the same CUDA-root and link-shim logic for extension builds.
 
 The FA2 baseline remains a comparison lane, not the candidate acceptance threshold. Candidate
 lineage commits are accepted against prior candidate scores with the same benchmark signature so
-the search can preserve incremental progress before it reaches FA2 throughput.
+the search can preserve incremental progress before it reaches FA2 throughput. Lineage summaries
+include a derived `baseline_comparisons` section whenever a candidate lane and FlashAttention-2
+baseline lane share the same benchmark signature; this records the candidate/FA2 ratio and the
+remaining TFLOPS gap without changing the acceptance gate.
 
 ## Agent workflow
 

@@ -324,6 +324,12 @@ def test_lineage_summary_keeps_baseline_and_candidate_lanes_for_same_signature(t
     lanes = summary["benchmark_lanes"]
     assert [lane["geomean_tflops"] for lane in lanes] == [25.0, 5.0]
     assert [lane.get("role") for lane in lanes] == ["baseline", None]
+    comparison = summary["baseline_comparisons"][0]
+    assert comparison["candidate_geomean_tflops"] == 5.0
+    assert comparison["baseline_geomean_tflops"] == 25.0
+    assert comparison["candidate_vs_baseline"] == 0.2
+    assert comparison["baseline_vs_candidate"] == 5.0
+    assert comparison["gap_tflops"] == -20.0
 
 
 def score_payload(

@@ -209,6 +209,7 @@ def lineage_score_summary(path: Path, *, max_lanes: int = 8) -> str:
             }
             for lane in lanes[:max_lanes]
         ],
+        "baseline_comparisons": _baseline_comparisons(lanes),
     }
     return json.dumps(payload, indent=2, sort_keys=True)
 
@@ -303,6 +304,50 @@ def _score_payload_brief(payload: dict[str, Any]) -> dict[str, Any]:
 
 def _score_lane_kind(payload: dict[str, Any]) -> str:
     return "baseline" if _is_baseline_payload(payload) else "candidate"
+
+
+def _baseline_comparisons(lanes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    baseline_by_signature = {
+        _benchmark_signature(lane["payload"]): lane
+        for lane in lanes
+        if _is_baseline_payload(lane["payload"])
+    }
+    comparisons: list[dict[str, Any]] = []
+    for lane in lanes:
+        payload = lane["payload"]
+        if _is_baseline_payload(payload):
+            continue
+        baseline = baseline_by_signature.get(_benchmark_signature(payload))
+        if baseline is None:
+            continue
+        comparison = _baseline_comparison(lane, baseline)
+        if comparison is not None:
+            comparisons.append(comparison)
+    return comparisons
+
+
+def _baseline_comparison(
+    candidate_lane: dict[str, Any],
+    baseline_lane: dict[str, Any],
+) -> dict[str, Any] | None:
+    candidate = candidate_lane["payload"]
+    baseline = baseline_lane["payload"]
+    candidate_geomean = _score_geomean(candidate)
+    baseline_geomean = _score_geomean(baseline)
+    if candidate_geomean <= 0.0 or baseline_geomean <= 0.0:
+        return None
+    return {
+        "case_signature_hash": _benchmark_signature_hash(candidate),
+        "candidate_backend": candidate.get("backend"),
+        "candidate_commit": candidate_lane["commit"],
+        "candidate_geomean_tflops": candidate_geomean,
+        "baseline_backend": baseline.get("backend"),
+        "baseline_commit": baseline_lane["commit"],
+        "baseline_geomean_tflops": baseline_geomean,
+        "candidate_vs_baseline": candidate_geomean / baseline_geomean,
+        "baseline_vs_candidate": baseline_geomean / candidate_geomean,
+        "gap_tflops": candidate_geomean - baseline_geomean,
+    }
 
 
 def _is_baseline_payload(payload: dict[str, Any]) -> bool:

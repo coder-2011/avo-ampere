@@ -103,6 +103,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("flashattention-2", "baseline", "lineage acceptance threshold"),
         ),
         (
+            "lineage baseline_comparisons candidate_vs_baseline FA2 gap_tflops",
+            ("baseline_comparisons", "candidate-vs-baseline", "gap"),
+        ),
+        (
             "candidate runtime source manifest AVO_SOURCE_FILES __avo_source_files__ "
             "lineage snapshot",
             ("AVO_SOURCE_FILES", "__avo_source_files__", "lineage snapshots"),

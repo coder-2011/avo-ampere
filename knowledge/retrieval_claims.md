@@ -32,6 +32,14 @@ reject a bad transform family, or explain a score/gate result.
   the gap to FA2.
 - Retrieval query: `FlashAttention-2 baseline comparison lineage acceptance threshold`.
 
+- Claim: lineage summaries include `baseline_comparisons` when candidate and
+  FlashAttention-2 lanes share a benchmark signature, reporting the
+  candidate-vs-baseline ratio, baseline-vs-candidate ratio, and TFLOPS gap.
+- Evidence source: runtime lineage summary implementation.
+- Why useful: gives the planner an explicit FA2 gap target without making FA2
+  the candidate acceptance threshold.
+- Retrieval query: `lineage baseline_comparisons candidate_vs_baseline FA2 gap_tflops`.
+
 - Claim: accepted candidate lineage snapshots include the scored candidate,
   local imports, static extension source lists, and runtime-declared source
   manifests exposed as `AVO_SOURCE_FILES` or `__avo_source_files__`.
