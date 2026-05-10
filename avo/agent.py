@@ -663,12 +663,27 @@ def build_repo_context(root: Path) -> str:
             *(_relative_files(root, "candidates", suffix=".cpp")),
         ]
     )
+    profile_available = not PROFILER_UNSUPPORTED_RUNTIME_MARKER.exists()
+    profile_command_context = (
+        "avo profile --backend candidate --candidate CANDIDATE.py ..."
+        if profile_available
+        else "avo profile is unavailable in this runtime"
+    )
+    profile_usage_context = (
+        "Use avo profile only for bounded Nsight Compute diagnostics on candidate kernels "
+        "when profiler evidence such as occupancy, scheduler behavior, or memory workload "
+        "would change the next transform choice. Profiling may report unavailable if the "
+        "current driver/container blocks CUPTI or performance counters."
+        if profile_available
+        else "Do not choose avo profile in this runtime; Nsight/CUPTI profiling is "
+        "unavailable under the current Thunder-backed execution environment. Use score "
+        "for correctness, timing, and TFLOPS, or compile a candidate_transform."
+    )
     lines = [
         "Use only files that exist in this repository.",
         "Do not propose upstream FlashAttention csrc paths unless they are present locally.",
         "Available bounded commands: avo env; avo compile --source SOURCE.cu --out-dir DIR; "
-        "avo score --backend BACKEND ...; "
-        "avo profile --backend candidate --candidate CANDIDATE.py ...",
+        f"avo score --backend BACKEND ...; {profile_command_context}",
         "Use avo env only for CUDA/build environment diagnostics, not source-file inspection.",
         "The current CUDA/build environment is already recorded as stable "
         "(torch CUDA 13.0, nvcc CUDA 13.0, RTX A6000 sm_86, Anthropic key present); "
@@ -676,10 +691,7 @@ def build_repo_context(root: Path) -> str:
         "build/environment failure gives a concrete reason.",
         "Use avo compile only for CUDA build/compilation diagnostics or to build-check a "
         "candidate_transform/candidate_patch, not source-file inspection.",
-        "Use avo profile only for bounded Nsight Compute diagnostics on candidate kernels "
-        "when profiler evidence such as occupancy, scheduler behavior, or memory workload "
-        "would change the next transform choice. Profiling may report unavailable if the "
-        "current driver/container blocks CUPTI or performance counters.",
+        profile_usage_context,
         "Target workload is realistic long-sequence BF16 attention on sm_86: seq_lens "
         "4096/8192/16384/32768, total_tokens around 32768, num_heads around 16, "
         "head_dim 128, and both causal modes. Small candidate shapes are smoke fences, "

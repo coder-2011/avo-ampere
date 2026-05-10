@@ -3086,6 +3086,18 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "csrc/flash_attn" not in context
 
 
+def test_build_repo_context_marks_profile_unavailable(monkeypatch, tmp_path) -> None:
+    marker = tmp_path / "libthunder.so"
+    marker.write_text("", encoding="utf-8")
+    monkeypatch.setattr("avo.agent.PROFILER_UNSUPPORTED_RUNTIME_MARKER", marker)
+
+    context = build_repo_context(Path.cwd())
+
+    assert "avo profile is unavailable in this runtime" in context
+    assert "Do not choose avo profile in this runtime" in context
+    assert "Thunder-backed execution environment" in context
+
+
 def test_build_repo_context_falls_back_to_tiled_candidate(tmp_path: Path) -> None:
     candidates = tmp_path / "candidates"
     cuda_source = candidates / "cuda_tiled_attention"
