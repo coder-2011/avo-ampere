@@ -1364,6 +1364,26 @@ def test_summarize_attempt_history_classifies_transform_semantic_mismatch(
     summary = summarize_attempt_history(attempts, limit=5)
 
     assert "class=planning_transform_semantic_mismatch" in summary
+    assert "planning_feedback=ValueError: candidate_transform semantic mismatch" in summary
+
+
+def test_summarize_attempt_history_classifies_predicted_correctness_planning_failure(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    step = planning_failure_step(
+        ValueError(
+            "candidate_patch is described as known invalid by the decision itself; "
+            "planning risk class 'predicted_correctness_failure' matched "
+            "'out of bounds key accesses will produce incorrect results'"
+        )
+    )
+    write_step_record(attempts, step)
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=planning_predicted_correctness_failure" in summary
+    assert "planning_feedback=ValueError: candidate_patch is described as known invalid" in summary
 
 
 def test_summarize_attempt_history_does_not_fingerprint_different_planning_errors(

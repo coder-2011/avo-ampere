@@ -49,6 +49,7 @@ PROMOTABLE_FAILURE_CLASS_TRACKS = {
     "planning_support_only_transform": "semantic_transform_contract",
     "planning_transform_semantic_mismatch": "semantic_transform_contract",
     "planning_transform_preflight": "transform_materialization",
+    "planning_predicted_correctness_failure": "planning_risk_contract",
     "planning_validation": "planning_validation",
     "raw_diff_preflight": "edit_channel_integrity",
     "structured_transform_preflight": "transform_materialization",
@@ -2120,6 +2121,7 @@ def _summarize_step_payload(
     failure_class = "stale_accepted" if stale_accepted else _step_failure_class(payload)
     transform_family = _step_transform_family(payload)
     repair_details = _repair_attempts_status(repair_attempts)
+    planning = _planning_failure_status(payload)
     command = _shorten(str(decision.get("next_command") or "<missing command>"), 180)
     hypothesis = _shorten(str(decision.get("hypothesis") or "<missing hypothesis>"), 180)
     lineage_note = _stale_accepted_status(
@@ -2129,7 +2131,7 @@ def _summarize_step_payload(
     return (
         f"{name}: class={failure_class}; family={transform_family}; {status}; {patch}; {cleanup}; "
         f"repairs={repair_count}{repair_details}; {gate}{lineage_note}; {score}; "
-        f"command={command}; hypothesis={hypothesis}"
+        f"command={command}; hypothesis={hypothesis}{planning}"
     )
 
 
@@ -2207,6 +2209,13 @@ def _repair_attempts_status(repair_attempts: Any) -> str:
     return "; repair_details=" + " | ".join(details)
 
 
+def _planning_failure_status(payload: dict[str, Any]) -> str:
+    detail = _planning_failure_detail(payload)
+    if not detail:
+        return ""
+    return f"; planning_feedback={_shorten(detail, 260)}"
+
+
 def _step_failure_class(payload: dict[str, Any]) -> str:
     if _step_payload_accepted(payload):
         return "accepted"
@@ -2267,6 +2276,8 @@ def _classify_planning_failure(detail: str) -> str:
         return "planning_missing_pending_transform"
     if "candidate_transform semantic mismatch" in detail:
         return "planning_transform_semantic_mismatch"
+    if "predicted_correctness_failure" in detail:
+        return "planning_predicted_correctness_failure"
     if "support-only" in detail:
         return "planning_support_only_transform"
     if "candidate_transform or candidate_patch" in detail:
