@@ -320,11 +320,13 @@ uv run python -m avo apply-patch candidate.patch
 
 Anthropic decisions now choose one edit mode. `no_edit` runs only bounded
 diagnostics. `transform` carries a structured `candidate_transform` such as
-`replace_once`, `insert_before_once`, `insert_after_once`, `set_constexpr_int`,
-or a coherent `batch` with a native `steps` array; this is the preferred path
-for CUDA kernel evolution. `steps_json` remains a legacy fallback for older
-records and plain-JSON responses, but the Anthropic tool schema exposes
-structured batch steps directly.
+`replace_once`, `replace_block_once`, `insert_before_once`,
+`insert_after_once`, `set_constexpr_int`, or a coherent `batch` with a native
+`steps` array; this is the preferred path for CUDA kernel evolution.
+`replace_block_once` is for coherent loop/body/helper replacement when the
+semantic move is larger than a one-line expression swap. `steps_json` remains a
+legacy fallback for older records and plain-JSON responses, but the Anthropic
+tool schema exposes structured batch steps directly.
 `legacy_patch` remains available for raw candidate diffs but raw `.cu`/`.cuh`
 kernel edits are rejected there so kernel evolution stays reviewable and
 recoverable through structured semantic moves. When `evolve-once` applies an

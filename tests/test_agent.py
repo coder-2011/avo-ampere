@@ -77,6 +77,28 @@ def test_parse_variation_decision_accepts_structured_transform() -> None:
     assert decision.edit_mode == "transform"
 
 
+def test_parse_variation_decision_accepts_block_transform() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = "Replace one coherent helper body with a guarded body."
+    payload["candidate_transform"] = {
+        "op": "replace_block_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": "__device__ int helper() {\n  return 1;\n}\n",
+        "replace": "__device__ int helper() {\n  return 2;\n}\n",
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_block"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_patch == ""
+    assert decision.candidate_transform == payload["candidate_transform"]
+    assert decision.edit_mode == "transform"
+
+
 def test_parse_variation_decision_normalizer_attaches_pending_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"
@@ -3414,6 +3436,9 @@ def test_decision_tool_uses_strict_schema() -> None:
         "properties"
     ]["op"]["enum"]
     assert "replace_once" in tool["input_schema"]["properties"]["candidate_transform"][
+        "properties"
+    ]["op"]["enum"]
+    assert "replace_block_once" in tool["input_schema"]["properties"]["candidate_transform"][
         "properties"
     ]["op"]["enum"]
     transform_properties = tool["input_schema"]["properties"]["candidate_transform"][

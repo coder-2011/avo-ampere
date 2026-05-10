@@ -1714,11 +1714,12 @@ def _candidate_transform_steps(transform: dict[str, Any]) -> list[dict[str, Any]
 
 def _apply_candidate_transform_step(step: dict[str, Any], content: str) -> str:
     op = str(step["op"])
-    if op == "replace_once":
+    if op in {"replace_once", "replace_block_once"}:
         return _transform_replace_once(
             content,
             find=str(step["find"]),
             replacement=str(step["replace"]),
+            op=op,
         )
     if op == "insert_before_once":
         return _transform_insert_once(
@@ -1762,12 +1763,18 @@ def _normalize_transform_path(raw_path: Any) -> str:
     return normalized
 
 
-def _transform_replace_once(content: str, *, find: str, replacement: str) -> str:
+def _transform_replace_once(
+    content: str,
+    *,
+    find: str,
+    replacement: str,
+    op: str = "replace_once",
+) -> str:
     count = content.count(find)
     if count != 1:
         raise ValueError(
             _transform_match_error(
-                "replace_once",
+                op,
                 "match",
                 count=count,
                 content=content,

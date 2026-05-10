@@ -998,8 +998,10 @@ source files.
   checkpoints. CUDA edits should prefer `candidate_transform`, a single
   structured operation materialized by the orchestrator, rather than raw LLM
   unified diffs. Raw diffs remain a legacy fallback for edits that cannot be
-  expressed as `replace_once`, `insert_before_once`, `insert_after_once`, or
-  `set_constexpr_int`. Attempt history now records generalized failure classes
+  expressed as `replace_once`, `replace_block_once`, `insert_before_once`,
+  `insert_after_once`, or `set_constexpr_int`. Use `replace_block_once` when the
+  semantic move is a coherent loop/body/helper replacement rather than a tiny
+  expression swap. Attempt history now records generalized failure classes
   such as raw-diff preflight, unsupported WMMA shape, CUDA syntax error, stale
   or undefined symbol, correctness failure, and throughput regression. Repeated
   classes should be promoted to hard preflight tracks or cause a transform-family

@@ -587,6 +587,48 @@ def test_run_decision_command_materializes_transform_before_command(tmp_path: Pa
     assert seed.read_text(encoding="utf-8") == "VALUE = 2\n"
 
 
+def test_run_decision_command_materializes_block_transform_before_command(
+    tmp_path: Path,
+) -> None:
+    seed = tmp_path / "candidates" / "seed.py"
+    seed.parent.mkdir(parents=True)
+    seed.write_text(
+        "def helper():\n"
+        "    value = 1\n"
+        "    return value\n",
+        encoding="utf-8",
+    )
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(Path.cwd())
+
+    attempt = run_decision_command(
+        decision(
+            "avo worker-sleep --seconds 0",
+            candidate_transform={
+                "op": "replace_block_once",
+                "path": "candidates/seed.py",
+                "find": "def helper():\n    value = 1\n    return value\n",
+                "replace": "def helper():\n    value = 2\n    return value\n",
+            },
+        ),
+        cwd=tmp_path,
+        timeout_s=10,
+        env=env,
+        allowed_subcommands=frozenset({"worker-sleep"}),
+    )
+
+    assert attempt.patch_result is not None
+    assert attempt.patch_result.ok
+    assert attempt.command_result.ok
+    assert attempt.materialized_patch is not None
+    assert "value = 2" in attempt.materialized_patch
+    assert seed.read_text(encoding="utf-8") == (
+        "def helper():\n"
+        "    value = 2\n"
+        "    return value\n"
+    )
+
+
 def test_run_decision_command_preflights_materialized_cuda_transform(tmp_path: Path) -> None:
     kernel = tmp_path / "candidates" / "kernel.cu"
     kernel.parent.mkdir(parents=True)
