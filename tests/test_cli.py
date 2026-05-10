@@ -1191,6 +1191,78 @@ def test_pending_transform_payload_normalizer_attaches_transform_to_score(
     assert placeholder_patch_payload["candidate_transform"] == transform
 
 
+def test_pending_transform_payload_normalizer_rewrites_repeated_mma_compile_to_score(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": "constexpr int kThreads = 96;",
+        "replace": "constexpr int kThreads = 128;",
+    }
+    compile_decision = VariationDecision(
+        hypothesis="compile transform",
+        files_to_inspect=["candidates/cuda_mma_attention/attention_kernel.cu"],
+        candidate_edit="Retune kThreads.",
+        expected_effect="compile checks the edit",
+        risk="mock compile",
+        next_command=(
+            "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+            "--out-dir build/kernel"
+        ),
+        edit_mode="transform",
+        candidate_transform=transform,
+    )
+    compile_attempt = VariationAttempt(
+        decision=compile_decision,
+        command_result=CommandResult(
+            command=["python", "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/cuda_mma_attention/attention_kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+    write_step_record(attempts, EvolutionStep(attempt=compile_attempt, gate_decision=None))
+
+    normalize = _pending_transform_payload_normalizer(attempts)
+
+    assert normalize is not None
+    payload = normalize(
+        {
+            "hypothesis": "compile transform again",
+            "files_to_inspect": ["candidates/cuda_mma_attention/attention_kernel.cu"],
+            "candidate_edit": "Retune kThreads.",
+            "candidate_patch": "",
+            "candidate_transform": transform,
+            "edit_mode": "transform",
+            "expected_effect": "compile checks the edit",
+            "risk": "mock compile",
+            "next_command": (
+                "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+                "--out-dir build/kernel"
+            ),
+        }
+    )
+
+    assert payload["candidate_transform"] == transform
+    assert payload["candidate_patch"] == ""
+    assert payload["edit_mode"] == "transform"
+    assert payload["next_command"].startswith("avo score --backend candidate")
+    assert "--candidate candidates/cuda_mma_attention_seed.py" in payload["next_command"]
+    assert "--seq-lens 4096,8192,16384,32768" in payload["next_command"]
+
+
 def test_evolve_once_snapshots_accepted_candidate_patch(
     tmp_path: Path,
     monkeypatch,

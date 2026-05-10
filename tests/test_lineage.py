@@ -28,6 +28,34 @@ def test_gate_rejects_regression() -> None:
     assert "regressed" in decision.reason
 
 
+def test_gate_rejects_low_margin_one_shot_score() -> None:
+    best = score_payload(seq_len=128, geomean=100.0, repeats=3, warmup=2)
+    candidate = score_payload(seq_len=128, geomean=100.4, repeats=1, warmup=1)
+
+    decision = decide_gate(candidate, 100.0, best_payload=best)
+
+    assert not decision.accepted
+    assert "one-shot timing noise" in decision.reason
+
+
+def test_gate_accepts_large_one_shot_score_improvement() -> None:
+    best = score_payload(seq_len=128, geomean=100.0, repeats=3, warmup=2)
+    candidate = score_payload(seq_len=128, geomean=100.6, repeats=1, warmup=1)
+
+    decision = decide_gate(candidate, 100.0, best_payload=best)
+
+    assert decision.accepted
+
+
+def test_gate_accepts_confirmed_low_margin_score() -> None:
+    best = score_payload(seq_len=128, geomean=100.0, repeats=3, warmup=2)
+    candidate = score_payload(seq_len=128, geomean=100.4, repeats=3, warmup=2)
+
+    decision = decide_gate(candidate, 100.0, best_payload=best)
+
+    assert decision.accepted
+
+
 def test_gate_rejects_empty_cases() -> None:
     decision = decide_gate({"all_correct": True, "geomean_tflops": 1.0, "cases": []}, 0.0)
 
@@ -283,8 +311,14 @@ def test_lineage_summary_keeps_baseline_and_candidate_lanes_for_same_signature(t
     assert [lane.get("role") for lane in lanes] == ["baseline", None]
 
 
-def score_payload(*, seq_len: int, geomean: float) -> dict:
-    return {
+def score_payload(
+    *,
+    seq_len: int,
+    geomean: float,
+    repeats: int | None = None,
+    warmup: int | None = None,
+) -> dict:
+    payload = {
         "backend": "candidate",
         "all_correct": True,
         "geomean_tflops": geomean,
@@ -303,3 +337,11 @@ def score_payload(*, seq_len: int, geomean: float) -> dict:
             }
         ],
     }
+    if repeats is not None or warmup is not None:
+        payload["benchmark"] = {
+            "settings": {
+                "repeats": 0 if repeats is None else repeats,
+                "warmup": 0 if warmup is None else warmup,
+            }
+        }
+    return payload

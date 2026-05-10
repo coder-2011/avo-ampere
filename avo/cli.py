@@ -1066,6 +1066,15 @@ def _pending_transform_payload_normalizer(attempts_dir: Path | None):
         candidate_patch = str(payload.get("candidate_patch") or "")
         if _payload_candidate_patch_has_diff(candidate_patch):
             return payload
+        if _payload_repeats_pending_transform_compile(payload, pending_transform):
+            score_command = _score_command_for_pending_transform(payload, pending_transform)
+            if score_command:
+                updated = dict(payload)
+                updated["edit_mode"] = "transform"
+                updated["candidate_patch"] = ""
+                updated["candidate_transform"] = pending_transform
+                updated["next_command"] = score_command
+                return updated
         edit_mode = str(payload.get("edit_mode") or "")
         if edit_mode not in {"", "transform", "no_edit"}:
             return payload
@@ -1078,6 +1087,88 @@ def _pending_transform_payload_normalizer(attempts_dir: Path | None):
         return updated
 
     return normalize
+
+
+def _payload_repeats_pending_transform_compile(
+    payload: dict[str, Any],
+    pending_transform: dict[str, Any],
+) -> bool:
+    if _payload_subcommand(payload) != "compile":
+        return False
+    transform = payload.get("candidate_transform")
+    return isinstance(transform, dict) and transform == pending_transform
+
+
+def _score_command_for_pending_transform(
+    payload: dict[str, Any],
+    pending_transform: dict[str, Any],
+) -> str:
+    paths = _pending_transform_paths(pending_transform)
+    source = _payload_option_value(payload, "--source")
+    if source:
+        paths.add(source)
+    if paths & {
+        "candidates/cuda_mma_attention/attention_kernel.cu",
+        "candidates/cuda_mma_attention_seed.py",
+    }:
+        return (
+            "avo score --backend candidate "
+            "--candidate candidates/cuda_mma_attention_seed.py "
+            "--seq-lens 4096,8192,16384,32768 --total-tokens 32768 "
+            "--num-heads 16 --head-dim 128 --dtype bf16 --causal both "
+            "--repeats 1 --warmup 1 --timeout-s 300"
+        )
+    if paths & {
+        "candidates/cuda_warp_rows_attention/attention_kernel.cu",
+        "candidates/cuda_warp_rows_attention_seed.py",
+    }:
+        return (
+            "avo score --backend candidate "
+            "--candidate candidates/cuda_warp_rows_attention_seed.py "
+            "--seq-lens 4096,8192,16384,32768 --total-tokens 32768 "
+            "--num-heads 16 --head-dim 128 --dtype bf16 --causal both "
+            "--repeats 1 --warmup 1 --timeout-s 300"
+        )
+    if paths & {
+        "candidates/cuda_tiled_attention/attention_kernel.cu",
+        "candidates/cuda_tiled_attention_seed.py",
+    }:
+        return (
+            "avo score --backend candidate "
+            "--candidate candidates/cuda_tiled_attention_seed.py "
+            "--seq-lens 4096,8192,16384,32768 --total-tokens 32768 "
+            "--num-heads 16 --head-dim 128 --dtype bf16 --causal both "
+            "--repeats 1 --warmup 1 --timeout-s 300"
+        )
+    return ""
+
+
+def _pending_transform_paths(transform: dict[str, Any]) -> set[str]:
+    steps = transform.get("steps") if transform.get("op") == "batch" else [transform]
+    if not isinstance(steps, list):
+        return set()
+    paths: set[str] = set()
+    for step in steps:
+        if not isinstance(step, dict):
+            continue
+        path = step.get("path")
+        if isinstance(path, str):
+            paths.add(path)
+    return paths
+
+
+def _payload_option_value(payload: dict[str, Any], option: str) -> str:
+    try:
+        parts = shlex.split(str(payload.get("next_command") or ""))
+    except ValueError:
+        return ""
+    prefix = f"{option}="
+    for index, part in enumerate(parts):
+        if part == option and index + 1 < len(parts):
+            return parts[index + 1]
+        if part.startswith(prefix):
+            return part[len(prefix) :]
+    return ""
 
 
 def _payload_candidate_patch_has_diff(candidate_patch: str) -> bool:

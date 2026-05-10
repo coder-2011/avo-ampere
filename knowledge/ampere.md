@@ -1487,3 +1487,17 @@ source files.
   confirmed at `9.576586797806204`. Preserve the syncwarp-present kernel. Treat
   near-tie synchronization edits as requiring confirmation or a margin above
   measurement noise before committing.
+- The loop now has a hard acceptance-confidence check for one-shot timing
+  scores. A candidate scored with `repeats<=1` and `warmup<=1` must improve the
+  current same-signature best by at least `0.5%`; otherwise the gate rejects it
+  and asks for a `repeats>=3`/`warmup>=2` confirmation or a larger margin. The
+  exact noisy syncwarp-removal score that previously slipped through is now
+  rejected against the corrected local lineage best with reason
+  `candidate improvement is within one-shot timing noise`. The local ignored
+  `lineage/` repo was reverted back to the syncwarp-present score
+  `9.507832270603132`, so planner context no longer treats the rejected
+  syncwarp removal as current best. Planner command recovery was also tightened:
+  when a decision repeats an exact pending successful compile-only transform for
+  a known seed family, the payload normalizer rewrites it into the corresponding
+  target `avo score` command; when CUPTI/Nsight is unavailable, the variation
+  prompt no longer lists `profile` as an allowed command.

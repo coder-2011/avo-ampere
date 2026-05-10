@@ -3422,6 +3422,24 @@ def test_build_variation_prompt_includes_repo_context() -> None:
     assert "candidates/cuda_identity_seed.py" in prompt
 
 
+def test_build_variation_prompt_excludes_profile_when_unavailable(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    marker = tmp_path / "libthunder.so"
+    marker.write_text("", encoding="utf-8")
+    monkeypatch.setattr("avo.agent.PROFILER_UNSUPPORTED_RUNTIME_MARKER", marker)
+
+    prompt = build_variation_prompt(
+        knowledge="Ampere only.",
+        lineage_summary="No accepted candidates yet.",
+    )
+
+    assert "uses only one of: env, compile, score" in prompt
+    assert "uses only one of: env, compile, profile, score" not in prompt
+    assert "candidate profile is unavailable in this runtime" in prompt
+
+
 def test_build_variation_prompt_includes_attempt_history() -> None:
     prompt = build_variation_prompt(
         knowledge="Ampere only.",
@@ -3708,6 +3726,19 @@ def test_decision_feedback_explains_score_profiler_metric_error() -> None:
     assert "candidate_transform" in content
     assert "avo profile" in content
     assert "tensor-core utilization" in content
+
+
+def test_decision_feedback_explains_unavailable_profile_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("next_command profile is unavailable in this runtime"),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Do not choose avo profile in this runtime" in content
+    assert "Use avo score for correctness" in content
 
 
 def test_decision_feedback_explains_unpatched_mma_score_error() -> None:

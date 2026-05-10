@@ -390,3 +390,13 @@ reject a bad transform family, or explain a score/gate result.
   restored syncwarp state scored `9.544394274937641` under the same settings
   and had previously confirmed at `9.576586797806204`.
 - Retrieval query: `remove __syncwarp after wmma store noisy acceptance confirmed slower geomean 9.537755900752106 restored 9.544394274937641`.
+
+- Claim: one-shot candidate scores now need either a `0.5%` same-signature
+  improvement margin or stronger confirmation settings before lineage accepts
+  them.
+- Evidence source: Checkpoint 5.23 implementation and regression check against
+  `loop_after_family_classifier_fix_20260510T1118Z.json`.
+- Why useful: prevents measurement-noise acceptances like the removed-syncwarp
+  candidate while preserving the ability to test small semantic moves with
+  `repeats>=3`/`warmup>=2` confirmation.
+- Retrieval query: `one-shot timing noise gate repeats 1 warmup 1 require 0.5 percent improvement confirmation repeats 3 warmup 2`.

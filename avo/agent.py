@@ -591,6 +591,22 @@ def build_variation_prompt(
     attempt_history: str = "",
     repo_context: str = "",
 ) -> str:
+    profile_available = not PROFILER_UNSUPPORTED_RUNTIME_MARKER.exists()
+    bounded_command_list = (
+        "env, compile, profile, score" if profile_available else "env, compile, score"
+    )
+    no_edit_command_text = (
+        "a bounded score, profile, compile, or environment diagnostic"
+        if profile_available
+        else "a bounded score, compile, or environment diagnostic"
+    )
+    profile_flag_text = (
+        "candidate profile uses the same score-shape flags and wraps the worker in "
+        "Nsight Compute. "
+        if profile_available
+        else "candidate profile is unavailable in this runtime; use score for "
+        "correctness, timing, and TFLOPS. "
+    )
     context_section = f"\n\nLocal repo context:\n{repo_context}" if repo_context.strip() else ""
     attempt_section = (
         "\n\nRecent attempt history:\n"
@@ -634,18 +650,18 @@ def build_variation_prompt(
         ".cu/.cuh kernel sources directly. No-edit mode: set edit_mode=\"no_edit\", "
         "candidate_patch is exactly the empty string \"\", candidate_edit starts with "
         "\"No edit; \", and next_command is only "
-        "a bounded score, profile, compile, or environment diagnostic for existing files. "
+        f"{no_edit_command_text} for existing files. "
         "Do not include markdown fences or commentary in candidate_patch. "
         "Do not describe extending, updating, "
         "modifying, fixing, or implementing code unless candidate_transform or candidate_patch "
         "contains that change.\n"
         "Return exactly one decision. The next_command must be a single bounded command that "
-        "starts with 'avo' and uses only one of: env, compile, profile, score. "
+        f"starts with 'avo' and uses only one of: {bounded_command_list}. "
         "Always include the candidate_transform field; use null outside transform mode. "
         "Use valid CLI flags: "
         "compile requires --source SOURCE.cu and --out-dir DIR; candidate score requires "
-        "--backend candidate and --candidate; candidate profile uses the same score-shape "
-        "flags and wraps the worker in Nsight Compute. Use env only for CUDA/build environment "
+        f"--backend candidate and --candidate; {profile_flag_text}Use env only for "
+        "CUDA/build environment "
         "diagnostics, not for source-file inspection. Use compile only for CUDA build/"
         "compilation diagnostics or to build-check a candidate_transform/candidate_patch, "
         "not for source-file inspection. Do not use shell pipes, redirection, command "
@@ -995,6 +1011,12 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "candidate_transform, or use avo profile for a bounded Nsight Compute diagnostic "
             "on a candidate kernel. Do not ask score for bandwidth, occupancy, scheduler, "
             "instruction-mix, roofline, or tensor-core utilization evidence. "
+        )
+    if "profile is unavailable" in message:
+        return (
+            "Do not choose avo profile in this runtime. Use avo score for correctness, "
+            "timing, and TFLOPS validation, or propose a candidate_transform with a "
+            "compile/score validation path. "
         )
     if "scalar BF16 __pipeline_memcpy_async" in message:
         return (

@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
 from typing import Any
 
+ONE_SHOT_MIN_RELATIVE_IMPROVEMENT = 0.005
+CONFIRMATION_REPEATS = 3
+CONFIRMATION_WARMUP = 2
+
 
 @dataclass(frozen=True)
 class GateDecision:
@@ -107,6 +111,23 @@ def decide_gate(
         return GateDecision(
             False,
             "candidate regressed geomean throughput",
+            candidate_geomean,
+            best_geomean,
+        )
+    if (
+        best_payload is not None
+        and best_geomean > 0.0
+        and _is_one_shot_score(candidate)
+        and candidate_geomean < best_geomean * (1.0 + ONE_SHOT_MIN_RELATIVE_IMPROVEMENT)
+    ):
+        return GateDecision(
+            False,
+            (
+                "candidate improvement is within one-shot timing noise; rerun with "
+                f"repeats>={CONFIRMATION_REPEATS}/warmup>={CONFIRMATION_WARMUP} "
+                "or improve geomean by at least "
+                f"{ONE_SHOT_MIN_RELATIVE_IMPROVEMENT:.1%}"
+            ),
             candidate_geomean,
             best_geomean,
         )
@@ -322,6 +343,18 @@ def _score_geomean(payload: dict[str, Any] | None) -> float:
     if payload is None:
         return 0.0
     return float(payload.get("geomean_tflops") or 0.0)
+
+
+def _is_one_shot_score(payload: dict[str, Any]) -> bool:
+    settings = payload.get("benchmark", {}).get("settings")
+    if not isinstance(settings, dict):
+        return False
+    try:
+        repeats = int(settings.get("repeats", 0))
+        warmup = int(settings.get("warmup", 0))
+    except (TypeError, ValueError):
+        return False
+    return repeats <= 1 and warmup <= 1
 
 
 def _benchmark_signature(payload: dict[str, Any]) -> tuple[str, ...]:
