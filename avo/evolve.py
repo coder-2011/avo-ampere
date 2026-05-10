@@ -1175,34 +1175,52 @@ def _has_scored_unaccepted_transform(
 ) -> bool:
     transform_identity = _transform_identity(transform)
     for payload in reversed(payloads):
-        attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
-        decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
-        previous_transform = decision.get("candidate_transform")
-        if not isinstance(previous_transform, dict):
-            continue
-        if _transform_identity(previous_transform) != transform_identity:
+        if not _payload_has_score_for_transform(payload, transform_identity):
             continue
         if _step_payload_accepted(payload):
             return False
-        if not _payload_has_score_payload(payload):
-            continue
         if _step_failure_class(payload) == "score_environment_error":
             continue
         return True
     return False
 
 
+def _payload_has_score_for_transform(payload: dict[str, Any], transform_identity: str) -> bool:
+    attempt = payload.get("attempt") if isinstance(payload.get("attempt"), dict) else {}
+    if _attempt_has_score_for_transform(attempt, transform_identity):
+        return True
+    repair_attempts = payload.get("repair_attempts")
+    if not isinstance(repair_attempts, list):
+        return False
+    return any(
+        isinstance(attempt, dict)
+        and _attempt_has_score_for_transform(attempt, transform_identity)
+        for attempt in repair_attempts
+    )
+
+
+def _attempt_has_score_for_transform(attempt: dict[str, Any], transform_identity: str) -> bool:
+    if not isinstance(attempt.get("score_payload"), dict):
+        return False
+    decision = attempt.get("decision") if isinstance(attempt.get("decision"), dict) else {}
+    previous_transform = decision.get("candidate_transform")
+    return (
+        isinstance(previous_transform, dict)
+        and _transform_identity(previous_transform) == transform_identity
+    )
+
+
 def _pending_compile_only_transform(payloads: list[dict[str, Any]]) -> dict[str, Any] | None:
     invalidated_identities: set[str] = set()
     for payload in reversed(payloads):
-        if _payload_has_score_payload(payload):
-            return None
         rejected_identity = _preflight_rejected_transform_identity(payload)
         if rejected_identity is not None:
             invalidated_identities.add(rejected_identity)
             continue
         transform = _successful_compile_only_transform(payload)
         if transform is None:
+            if _payload_has_score_payload(payload):
+                return None
             continue
         if _transform_identity(transform) in invalidated_identities:
             continue

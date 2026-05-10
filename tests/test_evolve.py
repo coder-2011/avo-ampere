@@ -2251,6 +2251,85 @@ def test_pending_compile_transform_uses_payload_timestamps_not_filename_order(
     assert pending_compile_only_transform(attempts) == transform
 
 
+def test_pending_compile_transform_survives_older_repair_score_in_same_step(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    transform = {
+        "op": "replace_once",
+        "path": "candidates/kernel.cu",
+        "find": "wmma::load_matrix_sync(v_frag, old_ptr, stride);",
+        "replace": "wmma::load_matrix_sync(v_frag, new_ptr, stride);",
+    }
+    old_repair_score = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 512",
+            candidate_transform={
+                "op": "replace_once",
+                "path": "candidates/kernel.cu",
+                "find": "__syncthreads();",
+                "replace": "__syncwarp();",
+            },
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={
+            "all_correct": False,
+            "geomean_tflops": 0.0,
+            "cases": [{"correct": False}],
+        },
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    compile_attempt = VariationAttempt(
+        decision=decision(
+            "avo compile --source candidates/kernel.cu --out-dir build/kernel",
+            candidate_patch="diff --git a/candidates/kernel.cu b/candidates/kernel.cu\n",
+            candidate_transform=transform,
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:01:00+00:00",
+        completed_at="2026-05-08T00:01:01+00:00",
+    )
+    write_step_record(
+        attempts,
+        EvolutionStep(
+            attempt=compile_attempt,
+            gate_decision=None,
+            repair_attempts=(old_repair_score,),
+        ),
+    )
+
+    assert pending_compile_only_transform(attempts) == transform
+
+    validate_decision_against_attempt_history(
+        decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 512",
+            candidate_transform=transform,
+        ),
+        attempts,
+    )
+
+
 def test_attempt_history_rejects_repeated_scored_unaccepted_transform(
     tmp_path: Path,
 ) -> None:
