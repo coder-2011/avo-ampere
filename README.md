@@ -365,6 +365,8 @@ uv run python -m avo evolve-loop \
 
 `evolve-loop` requires `--attempts-dir` so cross-step memory is always available. It stops when a step is accepted, when rejected-patch cleanup fails, when a planner provider/API outage is recorded, or when `--max-steps` is exhausted. Command failures and gate rejections are recorded, summarized into the next prompt, and allowed to continue until one of those stop conditions is reached. Provider outages stop the loop after the recorded step because repeating them cannot improve CUDA search. Attempt summaries also append a supervisor signal when the recent history shows repeated unaccepted command/edit fingerprints, recurring failure classes in the unaccepted tail, or five unaccepted attempts in a row; recurring promotable classes are written to `preflight_tracks.json` and loaded before materialized transform/patch preflight.
 
+When an applied edit fails compile, transform materialization, or correctness, the loop can make a bounded immediate repair request before finalizing the step. The failed edit is reverted first, the repair prompt includes the current compiler/correctness/materialization error plus earlier failed repair payloads from that episode, and an unchanged replay of any failed episode payload is rejected before execution.
+
 ## What is still missing
 
 - Optimizing the accepted seq32768 WMMA QK/PV seed beyond shape coverage toward FA2-competitive throughput.

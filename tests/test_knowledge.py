@@ -91,6 +91,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             ("ambiguous", "matching start line", "unique anchor"),
         ),
         (
+            "compile repair episode failed edit payload replay rejected",
+            ("repair", "failed edit payload", "execution"),
+        ),
+        (
             "candidate_transform batch native steps array steps_json legacy fallback",
             ("native `steps`", "steps_json", "legacy fallback"),
         ),

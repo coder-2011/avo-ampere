@@ -104,6 +104,12 @@ history.
   repeated unaccepted command/edit fingerprints or five unaccepted attempts in a
   row; treat that as a prompt to change strategy, not as permission to expand the
   command allowlist or bypass the gate.
+- Immediate compile, transform-materialization, and correctness repair requests
+  revert the failed edit before asking for a revised executable edit. The repair
+  prompt includes earlier failed repair payloads from the same episode, and the
+  runtime rejects unchanged replays of any failed episode payload before
+  execution. Repair should therefore make a revised coherent semantic move, not
+  cycle among prior failed patches.
 - Candidate source patching now has a bounded manual substrate:
   `avo apply-patch PATCH --dry-run` accepts only ordinary unified diffs under
   `candidates/`, rejects path traversal, symlink-mode patches, binary patches,

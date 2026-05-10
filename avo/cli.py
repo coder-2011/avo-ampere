@@ -967,9 +967,11 @@ def _run_compile_repair_loop(
                     repair_cleanup_results=tuple(repair_cleanup_results),
                 )
         repair_attempts.append(current_attempt)
+        failed_episode_attempts = tuple(repair_attempts)
         repair_history = _edit_repair_attempt_history(
             attempt_history,
             failed_attempt=current_attempt,
+            failed_episode_attempts=failed_episode_attempts,
             cleanup_result=cleanup_step.patch_cleanup_result,
             repair_index=repair_index,
             repair_kind=repair_kind,
@@ -990,12 +992,18 @@ def _run_compile_repair_loop(
                 repair_cleanup_results=tuple(repair_cleanup_results),
             )
         try:
-            _validate_edit_repair_decision(repair_decision, current_attempt, repair_kind)
+            _validate_edit_repair_decision(
+                repair_decision,
+                current_attempt,
+                repair_kind,
+                failed_episode_attempts=failed_episode_attempts,
+            )
             validate_decision_against_attempt_history(
                 repair_decision,
                 args.attempts_dir,
-                extra_payloads=(
-                    EvolutionStep(attempt=current_attempt, gate_decision=None).as_dict(),
+                extra_payloads=tuple(
+                    EvolutionStep(attempt=attempt, gate_decision=None).as_dict()
+                    for attempt in failed_episode_attempts
                 ),
             )
         except ValueError as exc:
@@ -1029,6 +1037,7 @@ def _edit_repair_attempt_history(
     attempt_history: str,
     *,
     failed_attempt: VariationAttempt,
+    failed_episode_attempts: tuple[VariationAttempt, ...],
     cleanup_result: Any,
     repair_index: int,
     repair_kind: str,
@@ -1098,6 +1107,7 @@ def _edit_repair_attempt_history(
         )
     sections = [
         attempt_history.strip(),
+        _previous_repair_attempts_summary(failed_episode_attempts),
         request,
     ]
     return "\n\n".join(section for section in sections if section)
@@ -1107,6 +1117,8 @@ def _validate_edit_repair_decision(
     repair_decision: VariationDecision,
     failed_attempt: VariationAttempt,
     repair_kind: str,
+    *,
+    failed_episode_attempts: tuple[VariationAttempt, ...] = (),
 ) -> None:
     if repair_decision.candidate_transform is None and not repair_decision.candidate_patch.strip():
         raise ValueError(
@@ -1128,6 +1140,15 @@ def _validate_edit_repair_decision(
             f"{repair_kind} repair decision repeats the failed edit payload unchanged; "
             "revise the structured transform or patch to address the failure"
         )
+    for earlier_attempt in failed_episode_attempts:
+        if earlier_attempt is failed_attempt:
+            continue
+        if _same_edit_payload(repair_decision, earlier_attempt.decision):
+            raise ValueError(
+                f"{repair_kind} repair decision repeats an earlier failed edit payload "
+                "from this repair episode; choose a revised semantic repair or a "
+                "different coherent transform family"
+            )
 
 
 def _same_edit_payload(left: VariationDecision, right: VariationDecision) -> bool:
@@ -1135,6 +1156,25 @@ def _same_edit_payload(left: VariationDecision, right: VariationDecision) -> boo
         left.candidate_transform == right.candidate_transform
         and left.candidate_patch.strip() == right.candidate_patch.strip()
     )
+
+
+def _previous_repair_attempts_summary(
+    failed_episode_attempts: tuple[VariationAttempt, ...],
+) -> str:
+    previous_attempts = failed_episode_attempts[:-1]
+    if not previous_attempts:
+        return ""
+    lines = [
+        "Earlier failed edit payloads in this repair episode; do not repeat these unchanged:"
+    ]
+    start_index = max(1, len(previous_attempts) - 2)
+    for index, attempt in enumerate(previous_attempts[-3:], start=start_index):
+        step = EvolutionStep(attempt=attempt, gate_decision=None)
+        lines.append(
+            f"- failed_attempt={index}; class={failure_class_for_step(step)}; "
+            f"payload={_attempt_edit_payload_summary(attempt)}"
+        )
+    return "\n".join(lines)
 
 
 def _attempt_edit_payload_summary(attempt: VariationAttempt) -> str:

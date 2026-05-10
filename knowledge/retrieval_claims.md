@@ -280,6 +280,15 @@ reject a bad transform family, or explain a score/gate result.
   to raw CUDA diffs.
 - Retrieval query: `candidate_transform ambiguous anchor matching start lines larger unique anchor`.
 
+- Claim: immediate compile, transform-materialization, and correctness repair
+  requests include earlier failed edit payloads from the same repair episode,
+  and unchanged replays of any failed episode payload are rejected before
+  execution.
+- Evidence source: runtime compile-repair loop validation.
+- Why useful: lets the agent repair its own CUDA errors without cycling among
+  already-failed structured transforms or patches.
+- Retrieval query: `compile repair episode failed edit payload replay rejected`.
+
 - Claim: batch `candidate_transform` payloads should use the native `steps`
   array in Anthropic tool calls; `steps_json` is only a legacy fallback for old
   records and plain-JSON fallback responses.

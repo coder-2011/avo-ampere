@@ -739,6 +739,123 @@ def test_evolve_once_repairs_candidate_compile_failure_before_finishing(
     assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
 
 
+def test_evolve_once_rejects_repair_that_repeats_earlier_failed_payload(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    candidate_dir = tmp_path / "candidates"
+    candidate_dir.mkdir()
+    seed = candidate_dir / "seed.py"
+    seed.write_text("VALUE = 1\n", encoding="utf-8")
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+
+    first_decision = VariationDecision(
+        hypothesis="introduce compile failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="change value in a way that fails compile",
+        expected_effect="exercise compile repair",
+        risk="mock compile failure",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = bad
+            """
+        ),
+    )
+    first_repair = VariationDecision(
+        hypothesis="try different compile repair",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="try a different invalid value",
+        expected_effect="exercise second repair request",
+        risk="mock compile failure",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=dedent(
+            """\
+            diff --git a/candidates/seed.py b/candidates/seed.py
+            --- a/candidates/seed.py
+            +++ b/candidates/seed.py
+            @@ -1 +1 @@
+            -VALUE = 1
+            +VALUE = worse
+            """
+        ),
+    )
+    repeated_original = VariationDecision(
+        hypothesis="repeat original compile failure",
+        files_to_inspect=["candidates/seed.py"],
+        candidate_edit="accidentally repeat the original failed edit",
+        expected_effect="should be rejected before execution",
+        risk="mock repeated repair",
+        next_command="avo compile --source candidates/kernel.cu --out-dir build/kernel",
+        candidate_patch=first_decision.candidate_patch,
+    )
+    decisions = [first_decision, first_repair, repeated_original]
+    seen_attempt_histories: list[str] = []
+    executed_hypotheses: list[str] = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        executed_hypotheses.append(decision.hypothesis)
+        patch_result = apply_candidate_patch(decision.candidate_patch, cwd=cwd)
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "compile"],
+                returncode=1,
+                timed_out=False,
+                stdout_tail="",
+                stderr_tail=(
+                    "attention_kernel.cu(4): error: identifier bad is undefined"
+                ),
+            ),
+            started_at="2026-05-08T00:00:00+00:00",
+            completed_at="2026-05-08T00:00:01+00:00",
+            patch_result=patch_result,
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    exit_code = _evolve_once(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            step_json=None,
+            env_file=None,
+            model="claude",
+            attempts_dir=None,
+            attempt_limit=5,
+            compile_repair_attempts=2,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert executed_hypotheses == [
+        "introduce compile failure",
+        "try different compile repair",
+    ]
+    assert "Earlier failed edit payloads in this repair episode" in seen_attempt_histories[2]
+    assert "VALUE = bad" in seen_attempt_histories[2]
+    assert "repeats an earlier failed edit payload" in payload["attempt"][
+        "command_result"
+    ]["stderr_tail"]
+    assert len(payload["repair_attempts"]) == 2
+    assert seed.read_text(encoding="utf-8") == "VALUE = 1\n"
+
+
 def test_evolve_once_repairs_transform_materialization_failure_before_finishing(
     tmp_path: Path,
     monkeypatch,
