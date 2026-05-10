@@ -164,6 +164,65 @@ def test_materialize_candidate_transform_generates_batch_patch(tmp_path: Path) -
     assert "+VALUES = {1, 2}" in patch
 
 
+def test_materialize_candidate_transform_skips_noop_batch_step(
+    tmp_path: Path,
+) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text(
+        "constexpr int kTile = 16;\n__shared__ float row_max[kTile];\n",
+        encoding="utf-8",
+    )
+
+    patch = materialize_candidate_transform(
+        {
+            "op": "batch",
+            "steps": [
+                {
+                    "op": "replace_once",
+                    "path": "candidates/kernel.cu",
+                    "find": "constexpr int kTile = 16;",
+                    "replace": "constexpr int kTile = 32;",
+                },
+                {
+                    "op": "replace_once",
+                    "path": "candidates/kernel.cu",
+                    "find": "__shared__ float row_max[kTile];",
+                    "replace": "__shared__ float row_max[kTile];",
+                },
+            ],
+        },
+        cwd=tmp_path,
+    )
+
+    assert "+constexpr int kTile = 32;" in patch
+    assert "-constexpr int kTile = 16;" in patch
+
+
+def test_materialize_candidate_transform_rejects_all_noop_batch(
+    tmp_path: Path,
+) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text("__shared__ float row_max[kTile];\n", encoding="utf-8")
+
+    with pytest.raises(ValueError, match="transform produced no source change"):
+        materialize_candidate_transform(
+            {
+                "op": "batch",
+                "steps": [
+                    {
+                        "op": "replace_once",
+                        "path": "candidates/kernel.cu",
+                        "find": "__shared__ float row_max[kTile];",
+                        "replace": "__shared__ float row_max[kTile];",
+                    },
+                ],
+            },
+            cwd=tmp_path,
+        )
+
+
 def test_materialize_candidate_transform_inserts_after_anchor_on_new_line(
     tmp_path: Path,
 ) -> None:

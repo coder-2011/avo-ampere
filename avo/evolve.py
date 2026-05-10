@@ -1641,7 +1641,9 @@ def _preflight_materialized_candidate_patch(
 def materialize_candidate_transform(transform: dict[str, Any], *, cwd: Path) -> str:
     old_by_path: dict[str, str] = {}
     new_by_path: dict[str, str] = {}
-    for step in _candidate_transform_steps(transform):
+    steps = _candidate_transform_steps(transform)
+    is_batch = transform.get("op") == "batch"
+    for step in steps:
         relative_path = _normalize_transform_path(step["path"])
         if relative_path not in old_by_path:
             source = cwd / relative_path
@@ -1652,6 +1654,8 @@ def materialize_candidate_transform(transform: dict[str, Any], *, cwd: Path) -> 
         current = new_by_path[relative_path]
         updated = _apply_candidate_transform_step(step, current)
         if current == updated:
+            if is_batch:
+                continue
             raise ValueError(f"transform step produced no source change: {relative_path}")
         new_by_path[relative_path] = updated
     changed_paths = [
