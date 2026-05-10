@@ -1210,9 +1210,21 @@ def _validate_candidate_transform_matches_semantic_claim(
     candidate_transform: dict[str, Any] | None,
     planning_text: str,
 ) -> None:
-    if candidate_transform is None or not _candidate_transform_is_contract_only(
-        candidate_transform
-    ):
+    if candidate_transform is None:
+        return
+    load_reduction_mismatch = _candidate_transform_load_reduction_mismatch(
+        candidate_transform,
+        planning_text,
+    )
+    if load_reduction_mismatch is not None:
+        operand, claim = load_reduction_mismatch
+        raise ValueError(
+            "candidate_transform semantic mismatch: planning text claims reduced or "
+            f"reused {operand} loads, but the structured transform does not reduce that "
+            "operand's load sites or move them out of the repeated loop. "
+            f"Matched claim: {claim!r}"
+        )
+    if not _candidate_transform_is_contract_only(candidate_transform):
         return
     claim = _planning_text_dataflow_claim(planning_text)
     if claim is None:
@@ -1225,14 +1237,143 @@ def _validate_candidate_transform_matches_semantic_claim(
     )
 
 
-def _candidate_transform_is_contract_only(transform: dict[str, Any]) -> bool:
+LOAD_REDUCTION_OPERAND_ALIASES: dict[str, tuple[str, ...]] = {
+    "Q": ("q", "q tile", "q fragment", "q fragments", "q_frags"),
+    "K": ("k", "k tile", "k fragment"),
+    "V": ("v", "v tile", "v fragment"),
+    "probability": (
+        "probability",
+        "probabilities",
+        "probability tile",
+        "probability fragment",
+        "probability_frag",
+    ),
+}
+
+
+def _candidate_transform_load_reduction_mismatch(
+    transform: dict[str, Any],
+    planning_text: str,
+) -> tuple[str, str] | None:
+    for operand, claim in _planning_text_load_reduction_claims(planning_text).items():
+        if _candidate_transform_supports_load_reduction_claim(transform, operand):
+            continue
+        return operand, claim
+    return None
+
+
+def _planning_text_load_reduction_claims(planning_text: str) -> dict[str, str]:
+    normalized_text = planning_text.lower().replace("-", " ")
+    windows = [
+        " ".join(window.split())
+        for window in re.split(r"(?<=[.;!?])\s+|\n+", normalized_text)
+        if window.strip()
+    ] or [" ".join(normalized_text.split())]
+    claims: dict[str, str] = {}
+    for window in windows:
+        if not _window_claims_load_reduction(window):
+            continue
+        for operand, aliases in LOAD_REDUCTION_OPERAND_ALIASES.items():
+            if not any(_contains_operand_alias(window, alias) for alias in aliases):
+                continue
+            claims.setdefault(operand, _validation_excerpt(window))
+    return claims
+
+
+def _window_claims_load_reduction(window: str) -> bool:
+    load_terms = r"(?:loads?|traffic|memory traffic|global memory|global loads?)"
+    reduction_terms = (
+        r"(?:reduce|reduces|reduced|reducing|eliminate|eliminates|avoid|avoids|"
+        r"reuse|reuses|reused|hoist|hoists|hoisted)"
+    )
+    return bool(
+        re.search(rf"\b{reduction_terms}\b.{0,80}\b{load_terms}\b", window)
+        or re.search(rf"\b{load_terms}\b.{0,80}\b{reduction_terms}\b", window)
+        or re.search(r"\bload(?:s|ing)?\b.{0,80}\bonce\b", window)
+    )
+
+
+def _contains_operand_alias(text: str, alias: str) -> bool:
+    return bool(re.search(rf"(?<![A-Za-z0-9_]){re.escape(alias)}(?![A-Za-z0-9_])", text))
+
+
+def _candidate_transform_supports_load_reduction_claim(
+    transform: dict[str, Any],
+    operand: str,
+) -> bool:
+    for step in _candidate_transform_steps(transform):
+        if str(step.get("op") or "") != "replace_once":
+            continue
+        before = str(step.get("find") or "")
+        after = str(step.get("replace") or "")
+        before_count = _operand_load_site_count(before, operand)
+        after_count = _operand_load_site_count(after, operand)
+        if before_count > 0 and after_count < before_count:
+            return True
+        if before_count > 0 and after_count == before_count and _moves_operand_load_out_of_loop(
+            before,
+            after,
+            operand,
+        ):
+            return True
+    return False
+
+
+def _candidate_transform_steps(transform: dict[str, Any]) -> list[dict[str, Any]]:
     steps = transform.get("steps") if transform.get("op") == "batch" else [transform]
     if not isinstance(steps, list):
+        return []
+    return [step for step in steps if isinstance(step, dict)]
+
+
+def _operand_load_site_count(text: str, operand: str) -> int:
+    compact = re.sub(r"\s+", "", text)
+    if operand == "probability":
+        return compact.count("load_matrix_sync(probability_frag,")
+    lower_operand = operand.lower()
+    return len(
+        re.findall(
+            rf"load_matrix_sync\({re.escape(lower_operand)}(?:_frag|_frags)?(?:\[[^\]]+\])?,",
+            compact,
+        )
+    )
+
+
+def _moves_operand_load_out_of_loop(before: str, after: str, operand: str) -> bool:
+    before_load = _first_operand_load_index(before, operand)
+    after_load = _first_operand_load_index(after, operand)
+    if before_load is None or after_load is None:
         return False
+    return _has_loop_before_index(before, before_load) and not _has_loop_before_index(
+        after,
+        after_load,
+    )
+
+
+def _first_operand_load_index(text: str, operand: str) -> int | None:
+    compact = re.sub(r"\s+", "", text)
+    if operand == "probability":
+        needle = "load_matrix_sync(probability_frag,"
+        index = compact.find(needle)
+        return index if index >= 0 else None
+    lower_operand = operand.lower()
+    match = re.search(
+        rf"load_matrix_sync\({re.escape(lower_operand)}(?:_frag|_frags)?(?:\[[^\]]+\])?,",
+        compact,
+    )
+    return match.start() if match else None
+
+
+def _has_loop_before_index(text: str, index: int) -> bool:
+    compact = re.sub(r"\s+", "", text)
+    return "for(" in compact[:index]
+
+
+def _candidate_transform_is_contract_only(transform: dict[str, Any]) -> bool:
     non_support_ops = [
         str(step.get("op") or "")
-        for step in steps
-        if isinstance(step, dict) and str(step.get("op") or "") not in SUPPORT_ONLY_TRANSFORM_OPS
+        for step in _candidate_transform_steps(transform)
+        if str(step.get("op") or "") not in SUPPORT_ONLY_TRANSFORM_OPS
     ]
     return bool(non_support_ops) and all(
         op in CONTRACT_ONLY_TRANSFORM_OPS for op in non_support_ops

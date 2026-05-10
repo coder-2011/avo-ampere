@@ -139,6 +139,100 @@ def test_parse_variation_decision_rejects_constant_proxy_for_dataflow_claim() ->
         parse_decision_text(json.dumps(payload))
 
 
+PV_CHUNK_LOOP_BEFORE = """    if (threadIdx.x < warpSize) {
+      for (int chunk = 0; chunk < 8; ++chunk) {
+        wmma::fragment<wmma::matrix_a,
+                       kTile,
+                       16,
+                       kTile,
+                       __nv_bfloat16,
+                       wmma::row_major>
+            probability_frag;
+        wmma::fragment<wmma::matrix_b,
+                       kTile,
+                       16,
+                       kTile,
+                       __nv_bfloat16,
+                       wmma::row_major>
+            v_frag;
+        const int chunk_offset = chunk * 16;
+        wmma::load_matrix_sync(probability_frag, probabilities, kTile);
+        wmma::load_matrix_sync(v_frag, v + base + key_start * kHeadDim + chunk_offset, kHeadDim);
+        wmma::mma_sync(output_frag, probability_frag, v_frag, output_frag);
+      }
+    }"""
+
+
+PV_PROBABILITY_HOIST_AFTER = """    if (threadIdx.x < warpSize) {
+      wmma::fragment<wmma::matrix_a,
+                     kTile,
+                     16,
+                     kTile,
+                     __nv_bfloat16,
+                     wmma::row_major>
+          probability_frag;
+      wmma::load_matrix_sync(probability_frag, probabilities, kTile);
+
+      for (int chunk = 0; chunk < 8; ++chunk) {
+        wmma::fragment<wmma::matrix_b,
+                       kTile,
+                       16,
+                       kTile,
+                       __nv_bfloat16,
+                       wmma::row_major>
+            v_frag;
+        const int chunk_offset = chunk * 16;
+        wmma::load_matrix_sync(v_frag, v + base + key_start * kHeadDim + chunk_offset, kHeadDim);
+        wmma::mma_sync(output_frag, probability_frag, v_frag, output_frag);
+      }
+    }"""
+
+
+def test_parse_variation_decision_rejects_claimed_v_reuse_without_v_load_change() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Load each V tile once per key tile and reduce V global memory traffic by "
+        "reusing V across the output chunks."
+    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": PV_CHUNK_LOOP_BEFORE,
+        "replace": PV_PROBABILITY_HOIST_AFTER,
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_v_reuse_mismatch"
+    )
+
+    with pytest.raises(ValueError, match="reduced or reused V loads"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_probability_load_hoist_claim() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Hoist the probability_frag load so probabilities load once per key tile instead "
+        "of once per output chunk."
+    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": PV_CHUNK_LOOP_BEFORE,
+        "replace": PV_PROBABILITY_HOIST_AFTER,
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_probability_hoist"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
 def test_parse_variation_decision_rejects_explicit_transform_mode_without_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"
