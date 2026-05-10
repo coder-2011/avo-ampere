@@ -79,6 +79,92 @@ def test_candidate_backend_reports_runtime_imported_candidate_sources(
     assert summary["candidate_source_files"] == ["candidates/runtime_trace_helper.py"]
 
 
+def test_candidate_backend_reports_runtime_torch_extension_sources(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch.utils.cpp_extension as cpp_extension
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    candidate_dir = tmp_path / "candidates"
+    extension_dir = candidate_dir / "dynamic_extension"
+    extension_dir.mkdir(parents=True)
+    candidate = candidate_dir / "candidate.py"
+    (extension_dir / "attention.cpp").write_text("// cpp binding\n", encoding="utf-8")
+    (extension_dir / "attention_kernel.cu").write_text("// cuda kernel\n", encoding="utf-8")
+    candidate.write_text(
+        "from pathlib import Path\n"
+        "from torch.utils.cpp_extension import load\n"
+        "EXTENSION_DIR = Path(__file__).resolve().parent / 'dynamic_extension'\n"
+        "extension = load(\n"
+        "    'runtime_demo',\n"
+        "    [EXTENSION_DIR / 'attention.cpp', EXTENSION_DIR / 'attention_kernel.cu'],\n"
+        ")\n"
+        "def attention(q, k, v, causal):\n"
+        "    return q\n",
+        encoding="utf-8",
+    )
+
+    def fake_load(*args, **kwargs):
+        return object()
+
+    monkeypatch.setattr(cpp_extension, "load", fake_load)
+
+    summary = score_backend("candidate", [], warmup=0, repeats=0, candidate=candidate)
+
+    assert summary["candidate_source_files"] == [
+        "candidates/dynamic_extension/attention.cpp",
+        "candidates/dynamic_extension/attention_kernel.cu",
+    ]
+
+
+def test_candidate_backend_keeps_runtime_torch_extension_sources_on_load_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import torch.utils.cpp_extension as cpp_extension
+
+    monkeypatch.syspath_prepend(str(tmp_path))
+    candidate_dir = tmp_path / "candidates"
+    extension_dir = candidate_dir / "dynamic_extension"
+    extension_dir.mkdir(parents=True)
+    candidate = candidate_dir / "candidate.py"
+    (extension_dir / "attention.cpp").write_text("// cpp binding\n", encoding="utf-8")
+    (extension_dir / "attention_kernel.cu").write_text("// cuda kernel\n", encoding="utf-8")
+    candidate.write_text(
+        "from pathlib import Path\n"
+        "from torch.utils.cpp_extension import load\n"
+        "EXTENSION_DIR = Path(__file__).resolve().parent / 'dynamic_extension'\n"
+        "extension = load(\n"
+        "    'runtime_demo',\n"
+        "    [EXTENSION_DIR / 'attention.cpp', EXTENSION_DIR / 'attention_kernel.cu'],\n"
+        ")\n"
+        "def attention(q, k, v, causal):\n"
+        "    return q\n",
+        encoding="utf-8",
+    )
+
+    def fake_load(*_args, **_kwargs):
+        raise RuntimeError("mock extension compile failed")
+
+    monkeypatch.setattr(cpp_extension, "load", fake_load)
+
+    summary = score_backend(
+        "candidate",
+        [AttentionCase(seq_len=4096, causal=False)],
+        warmup=0,
+        repeats=0,
+        candidate=candidate,
+    )
+
+    assert summary["all_correct"] is False
+    assert "mock extension compile failed" in summary["cases"][0]["error"]
+    assert summary["candidate_source_files"] == [
+        "candidates/dynamic_extension/attention.cpp",
+        "candidates/dynamic_extension/attention_kernel.cu",
+    ]
+
+
 def test_candidate_backend_rejects_missing_attention(tmp_path: Path) -> None:
     candidate = tmp_path / "candidate.py"
     candidate.write_text("VALUE = 1\n", encoding="utf-8")

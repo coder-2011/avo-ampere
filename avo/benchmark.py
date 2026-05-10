@@ -117,32 +117,35 @@ def score_backend(
         if candidate is None:
             raise ValueError("candidate backend requires --candidate")
         candidate_source_files: tuple[str, ...] = ()
+        extension_sources = _CandidateExtensionSourceCapture(candidate)
         try:
-            module = _load_candidate(candidate)
-            candidate_source_files = _candidate_declared_source_files(module, candidate)
+            with extension_sources:
+                module = _load_candidate(candidate)
+                candidate_source_files = _candidate_declared_source_files(module, candidate)
+                scores = [
+                    _score_candidate(
+                        module,
+                        candidate,
+                        case,
+                        warmup=warmup,
+                        repeats=repeats,
+                        trials=trials,
+                        seed=seed,
+                    )
+                    for case in cases
+                ]
+                candidate_source_files = _dedupe_source_files(
+                    (
+                        *candidate_source_files,
+                        *extension_sources.source_files(),
+                        *_candidate_runtime_imported_source_files(candidate),
+                    )
+                )
         except Exception as exc:
+            candidate_source_files = extension_sources.source_files()
             scores = [
                 _failed_candidate_score(case, f"{type(exc).__name__}: {exc}") for case in cases
             ]
-        else:
-            scores = [
-                _score_candidate(
-                    module,
-                    candidate,
-                    case,
-                    warmup=warmup,
-                    repeats=repeats,
-                    trials=trials,
-                    seed=seed,
-                )
-                for case in cases
-            ]
-            candidate_source_files = _dedupe_source_files(
-                (
-                    *candidate_source_files,
-                    *_candidate_runtime_imported_source_files(candidate),
-                )
-            )
     else:
         raise ValueError(f"unsupported backend: {backend}")
     summary = score_summary(backend, scores)
@@ -437,6 +440,77 @@ def _candidate_source_file_path(candidate_path: Path, raw_path: str | os.PathLik
     if path.as_posix().startswith("candidates/"):
         return path.as_posix()
     return (candidate_path.parent / path).as_posix()
+
+
+class _CandidateExtensionSourceCapture:
+    def __init__(self, candidate_path: Path) -> None:
+        self._candidate_path = candidate_path
+        self._sources: list[str] = []
+        self._cpp_extension: Any = None
+        self._original_load: Any = None
+
+    def __enter__(self) -> _CandidateExtensionSourceCapture:
+        try:
+            import torch.utils.cpp_extension as cpp_extension
+        except Exception:
+            return self
+        original_load = getattr(cpp_extension, "load", None)
+        if not callable(original_load):
+            return self
+        self._cpp_extension = cpp_extension
+        self._original_load = original_load
+
+        def load_wrapper(*args: Any, **kwargs: Any) -> Any:
+            self._record_load_sources(args, kwargs)
+            return original_load(*args, **kwargs)
+
+        cpp_extension.load = load_wrapper
+        return self
+
+    def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        if self._cpp_extension is not None and self._original_load is not None:
+            self._cpp_extension.load = self._original_load
+
+    def source_files(self) -> tuple[str, ...]:
+        return _dedupe_source_files(self._sources)
+
+    def _record_load_sources(self, args: tuple[Any, ...], kwargs: dict[str, Any]) -> None:
+        source_value = kwargs.get("sources")
+        if source_value is None and len(args) >= 2:
+            source_value = args[1]
+        for raw_source in _candidate_extension_source_values(source_value):
+            normalized = _candidate_extension_source_path(self._candidate_path, raw_source)
+            if normalized is not None:
+                self._sources.append(normalized)
+
+
+def _candidate_extension_source_values(value: Any) -> tuple[str | os.PathLike[str], ...]:
+    if value is None:
+        return ()
+    if isinstance(value, (str, os.PathLike)):
+        return (value,)
+    try:
+        values = tuple(value)
+    except TypeError:
+        return ()
+    return tuple(item for item in values if isinstance(item, (str, os.PathLike)))
+
+
+def _candidate_extension_source_path(
+    candidate_path: Path,
+    raw_path: str | os.PathLike[str],
+) -> str | None:
+    source_root = _candidate_source_root(candidate_path)
+    if source_root is None:
+        return None
+    path = Path(os.fspath(raw_path))
+    if path.is_absolute():
+        source_path = path
+    elif path.as_posix().startswith("candidates/"):
+        source_path = source_root / path
+    else:
+        source_path = candidate_path.parent / path
+    return _candidate_runtime_source_path(source_root, source_path)
 
 
 def _candidate_runtime_imported_source_files(candidate_path: Path) -> tuple[str, ...]:

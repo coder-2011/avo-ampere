@@ -125,11 +125,13 @@ history.
   stores snapshots of the scored candidate module and companion source directory
   under `sources/latest/`; direct local imports, static extension source lists,
   Python modules dynamically imported from the same `candidates/` tree, and
-  candidate-declared runtime source manifests (`AVO_SOURCE_FILES` or
-  `__avo_source_files__`) are also captured when they normalize under
-  `candidates/`. Dynamic Python import tracing reads loaded module `__file__`
-  paths only; dynamically assembled extension source lists should still be
-  reported through `AVO_SOURCE_FILES` or a static `sources=[...]` expression.
+  runtime-observed `torch.utils.cpp_extension.load(sources=[...])` calls are
+  also captured when they normalize under `candidates/`. Candidate-declared
+  runtime source manifests (`AVO_SOURCE_FILES` or `__avo_source_files__`) remain
+  available for generated sources that are not visible through imports or
+  extension load calls. Dynamic Python import tracing reads loaded module
+  `__file__` paths only, and runtime extension capture records the `sources`
+  argument without tracing arbitrary filesystem writes.
   Patched accepted steps also store the raw patch under `patches/latest.patch`.
 
 ## Search Space
