@@ -1315,7 +1315,7 @@ def _candidate_transform_load_reduction_mismatch(
     planning_text: str,
 ) -> tuple[str, str] | None:
     for operand, claim in _planning_text_load_reduction_claims(planning_text).items():
-        if _candidate_transform_supports_load_reduction_claim(transform, operand):
+        if _candidate_transform_supports_load_reduction_claim(transform, operand, claim):
             continue
         return operand, claim
     return None
@@ -1347,11 +1347,12 @@ def _window_claims_load_reduction(window: str) -> bool:
     load_terms = r"(?:loads?|traffic|memory traffic|global memory|global loads?)"
     reduction_terms = (
         r"(?:reduce|reduces|reduced|reducing|eliminate|eliminates|avoid|avoids|"
-        r"reuse|reuses|reused|hoist|hoists|hoisted)"
+        r"reuse|reuses|reused|hoist|hoists|hoisted|remove|removes|removed|"
+        r"removing|move|moves|moved|moving|relocate|relocates|relocated|relocating)"
     )
     return bool(
-        re.search(rf"\b{reduction_terms}\b.{0,80}\b{load_terms}\b", window)
-        or re.search(rf"\b{load_terms}\b.{0,80}\b{reduction_terms}\b", window)
+        re.search(rf"\b{reduction_terms}\b.{{0,80}}\b{load_terms}\b", window)
+        or re.search(rf"\b{load_terms}\b.{{0,80}}\b{reduction_terms}\b", window)
         or re.search(r"\bload(?:s|ing)?\b.{0,80}\bonce\b", window)
     )
 
@@ -1363,7 +1364,9 @@ def _contains_operand_alias(text: str, alias: str) -> bool:
 def _candidate_transform_supports_load_reduction_claim(
     transform: dict[str, Any],
     operand: str,
+    claim: str,
 ) -> bool:
+    named_loop_vars = _claimed_loop_vars(claim)
     for step in _candidate_transform_steps(transform):
         if str(step.get("op") or "") != "replace_once":
             continue
@@ -1373,12 +1376,13 @@ def _candidate_transform_supports_load_reduction_claim(
         after_count = _operand_load_site_count(after, operand)
         if before_count > 0 and after_count < before_count:
             return True
-        if before_count > 0 and after_count == before_count and _moves_operand_load_out_of_loop(
-            before,
-            after,
-            operand,
-        ):
-            return True
+        if before_count > 0 and after_count == before_count:
+            if named_loop_vars:
+                if _moves_operand_load_out_of_named_loop(before, after, operand, named_loop_vars):
+                    return True
+                continue
+            if _moves_operand_load_out_of_loop(before, after, operand):
+                return True
     return False
 
 
@@ -1413,6 +1417,23 @@ def _moves_operand_load_out_of_loop(before: str, after: str, operand: str) -> bo
     )
 
 
+def _moves_operand_load_out_of_named_loop(
+    before: str,
+    after: str,
+    operand: str,
+    loop_vars: frozenset[str],
+) -> bool:
+    before_load = _first_operand_load_index(before, operand)
+    after_load = _first_operand_load_index(after, operand)
+    if before_load is None or after_load is None:
+        return False
+    return any(
+        _has_loop_var_before_index(before, before_load, loop_var)
+        and not _has_loop_var_before_index(after, after_load, loop_var)
+        for loop_var in loop_vars
+    )
+
+
 def _first_operand_load_index(text: str, operand: str) -> int | None:
     compact = re.sub(r"\s+", "", text)
     if operand == "probability":
@@ -1430,6 +1451,27 @@ def _first_operand_load_index(text: str, operand: str) -> int | None:
 def _has_loop_before_index(text: str, index: int) -> bool:
     compact = re.sub(r"\s+", "", text)
     return "for(" in compact[:index]
+
+
+def _has_loop_var_before_index(text: str, index: int, loop_var: str) -> bool:
+    prefix = text[:index]
+    return bool(
+        re.search(
+            rf"\bfor\s*\([^)]*\b{re.escape(loop_var)}\b",
+            prefix,
+        )
+    )
+
+
+def _claimed_loop_vars(claim: str) -> frozenset[str]:
+    loop_vars: set[str] = set()
+    for match in re.finditer(
+        r"\b(?:outside|out of|inside|before|after)\s+the\s+"
+        r"(?P<loop_var>[A-Za-z_][A-Za-z0-9_]*)\s+loop\b",
+        claim.lower().replace("-", " "),
+    ):
+        loop_vars.add(match.group("loop_var"))
+    return frozenset(loop_vars)
 
 
 def _candidate_transform_is_contract_only(transform: dict[str, Any]) -> bool:

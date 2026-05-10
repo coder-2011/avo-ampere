@@ -191,6 +191,72 @@ PV_PROBABILITY_HOIST_AFTER = """    if (threadIdx.x < warpSize) {
     }"""
 
 
+Q_LOAD_INSIDE_KEY_LOOP_BEFORE = """  for (int key_start = 0; key_start < seq_len;
+       key_start += kTile) {
+    if (threadIdx.x < warpSize) {
+      for (int chunk = 0; chunk < 8; ++chunk) {
+        const int chunk_offset = chunk * 16;
+        wmma::load_matrix_sync(q_frags[chunk],
+                               q + base + query_start * kHeadDim + chunk_offset,
+                               kHeadDim);
+      }
+    }
+  }"""
+
+
+Q_LOAD_HOISTED_OUT_OF_KEY_LOOP_AFTER = """  if (threadIdx.x < warpSize) {
+    for (int chunk = 0; chunk < 8; ++chunk) {
+      const int chunk_offset = chunk * 16;
+      wmma::load_matrix_sync(q_frags[chunk],
+                             q + base + query_start * kHeadDim + chunk_offset,
+                             kHeadDim);
+    }
+  }
+
+  for (int key_start = 0; key_start < seq_len;
+       key_start += kTile) {
+  }"""
+
+
+Q_ALREADY_HOISTED_BEFORE = """  wmma::fragment<wmma::matrix_a,
+                 kTile,
+                 kTile,
+                 16,
+                 __nv_bfloat16,
+                 wmma::row_major>
+      q_frags[8];
+  if (threadIdx.x < warpSize) {
+    for (int chunk = 0; chunk < 8; ++chunk) {
+      const int chunk_offset = chunk * 16;
+      wmma::load_matrix_sync(q_frags[chunk],
+                             q + base + query_start * kHeadDim + chunk_offset,
+                             kHeadDim);
+    }
+  }
+
+  for (int key_start = 0; key_start < seq_len; key_start += kTile) {"""
+
+
+Q_ALREADY_HOISTED_WITH_SYNC_AFTER = """  wmma::fragment<wmma::matrix_a,
+                 kTile,
+                 kTile,
+                 16,
+                 __nv_bfloat16,
+                 wmma::row_major>
+      q_frags[8];
+  if (threadIdx.x < warpSize) {
+    for (int chunk = 0; chunk < 8; ++chunk) {
+      const int chunk_offset = chunk * 16;
+      wmma::load_matrix_sync(q_frags[chunk],
+                             q + base + query_start * kHeadDim + chunk_offset,
+                             kHeadDim);
+    }
+  }
+  __syncthreads();
+
+  for (int key_start = 0; key_start < seq_len; key_start += kTile) {"""
+
+
 def test_parse_variation_decision_rejects_claimed_v_reuse_without_v_load_change() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"
@@ -234,6 +300,51 @@ def test_parse_variation_decision_allows_probability_load_hoist_claim() -> None:
     decision = parse_decision_text(json.dumps(payload))
 
     assert decision.candidate_transform == payload["candidate_transform"]
+
+
+def test_parse_variation_decision_allows_q_load_hoist_out_of_named_loop() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Move Q fragment loads outside the key_start loop so each query tile can reuse "
+        "Q fragments across key tiles."
+    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": Q_LOAD_INSIDE_KEY_LOOP_BEFORE,
+        "replace": Q_LOAD_HOISTED_OUT_OF_KEY_LOOP_AFTER,
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_q_hoist"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
+def test_parse_variation_decision_rejects_q_hoist_claim_when_only_sync_is_added() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Hoist Q fragment loads outside the key_start loop to reduce redundant global "
+        "Q loads and reuse Q fragments across key tiles."
+    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": Q_ALREADY_HOISTED_BEFORE,
+        "replace": Q_ALREADY_HOISTED_WITH_SYNC_AFTER,
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_q_sync_only"
+    )
+
+    with pytest.raises(ValueError, match="reduced or reused Q loads"):
+        parse_decision_text(json.dumps(payload))
 
 
 def test_parse_variation_decision_allows_existing_q_reuse_context() -> None:
