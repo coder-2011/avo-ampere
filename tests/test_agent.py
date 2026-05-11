@@ -15,6 +15,7 @@ from avo.agent import (
     _agent_request_timeout_s,
     _decision_kwargs_with_feedback,
     _openrouter_decision_kwargs,
+    _openrouter_message_text,
     _request_decision_response,
     _request_openrouter_decision_response,
     _request_valid_decision,
@@ -4292,6 +4293,11 @@ def test_openrouter_response_falls_back_to_json_object_on_schema_rejection(
     assert calls[0]["response_format"]["type"] == "json_schema"
     assert calls[1]["response_format"] == {"type": "json_object"}
     assert parse_decision_response(response).hypothesis == decision_payload()["hypothesis"]
+
+
+def test_openrouter_message_text_surfaces_error_payload() -> None:
+    with pytest.raises(OpenRouterAPIError, match="schema was rejected"):
+        _openrouter_message_text({"error": {"code": 400, "message": "schema was rejected"}})
 
 
 def test_request_variation_decision_uses_openrouter_provider(

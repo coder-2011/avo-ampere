@@ -1183,7 +1183,24 @@ def _openrouter_chat_completion(
         raise OpenRouterAPIError(None, "OpenRouter returned malformed JSON") from exc
     if not isinstance(payload, dict):
         raise OpenRouterAPIError(None, "OpenRouter response JSON must be an object")
+    if error := _openrouter_response_error(payload):
+        raise error
     return payload
+
+
+def _openrouter_response_error(payload: dict[str, Any]) -> OpenRouterAPIError | None:
+    error = payload.get("error")
+    if not isinstance(error, dict):
+        return None
+    raw_code = error.get("code")
+    status_code = raw_code if isinstance(raw_code, int) else None
+    message = error.get("message")
+    if not isinstance(message, str) or not message.strip():
+        message = json.dumps(error, sort_keys=True)
+    return OpenRouterAPIError(
+        status_code,
+        f"OpenRouter API error: {_validation_excerpt(message, max_length=500)}",
+    )
 
 
 def _provider_error_message(body: str) -> str:
@@ -1200,6 +1217,8 @@ def _provider_error_message(body: str) -> str:
 
 
 def _openrouter_message_text(payload: dict[str, Any]) -> str:
+    if error := _openrouter_response_error(payload):
+        raise error
     choices = payload.get("choices")
     if not isinstance(choices, list) or not choices:
         raise ValueError("OpenRouter response missing choices")
