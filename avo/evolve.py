@@ -1840,6 +1840,13 @@ def _apply_candidate_transform_step(step: dict[str, Any], content: str) -> str:
             replacement=str(step["replace"]),
             op=op,
         )
+    if op == "replace_between_once":
+        return _transform_replace_between_once(
+            content,
+            find_start=str(step["find_start"]),
+            find_end=str(step["find_end"]),
+            replacement=str(step["replace"]),
+        )
     if op == "insert_before_once":
         return _transform_insert_once(
             content,
@@ -1901,6 +1908,43 @@ def _transform_replace_once(
             )
         )
     return content.replace(find, replacement, 1)
+
+
+def _transform_replace_between_once(
+    content: str,
+    *,
+    find_start: str,
+    find_end: str,
+    replacement: str,
+) -> str:
+    start_count = content.count(find_start)
+    if start_count != 1:
+        raise ValueError(
+            _transform_match_error(
+                "replace_between_once",
+                "start anchor",
+                count=start_count,
+                content=content,
+                needle=find_start,
+            )
+        )
+    end_count = content.count(find_end)
+    if end_count != 1:
+        raise ValueError(
+            _transform_match_error(
+                "replace_between_once",
+                "end anchor",
+                count=end_count,
+                content=content,
+                needle=find_end,
+            )
+        )
+    start = content.index(find_start)
+    end = content.index(find_end)
+    if end < start:
+        raise ValueError("replace_between_once end anchor appears before start anchor")
+    end += len(find_end)
+    return f"{content[:start]}{replacement}{content[end:]}"
 
 
 def _transform_insert_once(content: str, *, anchor: str, text: str, before: bool) -> str:

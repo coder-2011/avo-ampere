@@ -115,6 +115,7 @@ STRUCTURED_TRANSFORM_STEP_OPS = frozenset(
         "add_include",
         "add_int_to_python_set",
         "replace_block_once",
+        "replace_between_once",
         "replace_once",
         "insert_before_once",
         "insert_after_once",
@@ -277,9 +278,24 @@ TRANSFORM_STEP_SCHEMA: dict[str, Any] = {
             "type": "string",
             "description": "Exact text to replace for replace_once or replace_block_once.",
         },
+        "find_start": {
+            "type": "string",
+            "description": (
+                "Unique start anchor for replace_between_once; replacement includes this anchor."
+            ),
+        },
+        "find_end": {
+            "type": "string",
+            "description": (
+                "Unique end anchor for replace_between_once; replacement includes this anchor."
+            ),
+        },
         "replace": {
             "type": "string",
-            "description": "Replacement text for replace_once or replace_block_once.",
+            "description": (
+                "Replacement text for replace_once, replace_block_once, or "
+                "replace_between_once."
+            ),
         },
         "anchor": {
             "type": "string",
@@ -883,7 +899,7 @@ def _render_variation_prompt_text(
         "edit_mode=\"transform\", provide candidate_transform as one scoped coherent "
         "semantic transformation or an ordered semantic batch under candidates/, and set "
         "candidate_patch to exactly the empty string \"\". "
-        "Supported ops are add_include, replace_once, replace_block_once, "
+        "Supported ops are add_include, replace_once, replace_block_once, replace_between_once, "
         "insert_before_once, insert_after_once, set_constexpr_int, and "
         "add_int_to_python_set; use op=batch with steps as a native array of "
         "materialization steps when one coherent "
@@ -1074,9 +1090,11 @@ def build_repo_context(root: Path) -> str:
         "not the optimization objective.",
         "Preferred edit channel: candidate_transform, one scoped coherent semantic "
         "transformation or a scoped semantic batch under candidates/. Supported step ops: "
-        "add_include, replace_once, replace_block_once, insert_before_once, "
-        "insert_after_once, set_constexpr_int, and add_int_to_python_set. "
-        "Use replace_block_once for coherent loop/body/helper replacements; use "
+        "add_include, replace_once, replace_block_once, replace_between_once, "
+        "insert_before_once, insert_after_once, set_constexpr_int, and add_int_to_python_set. "
+        "Use replace_block_once for coherent loop/body/helper replacements when the exact "
+        "current block is compact; use replace_between_once with unique start/end anchors "
+        "for a larger coherent block; use "
         "replace_once for single-line or small expression swaps. Use op=batch with a "
         "native steps array when wrapper and kernel caps must change together. Legacy "
         "candidate_patch raw diffs are allowed only for non-CUDA candidate files; "
@@ -1528,8 +1546,8 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "Do not use raw candidate_patch for .cu or .cuh files. Express the CUDA edit "
             "as candidate_transform: one operation, or op=batch when coordinated "
             "wrapper/kernel changes are required. Each step must be representable by "
-            "add_include, replace_once, replace_block_once, insert_before_once, "
-            "insert_after_once, set_constexpr_int, or add_int_to_python_set. "
+            "add_include, replace_once, replace_block_once, replace_between_once, "
+            "insert_before_once, insert_after_once, set_constexpr_int, or add_int_to_python_set. "
             "Primitive steps must compose "
             "into a coherent semantic move; add_include is support-only and cannot stand "
             "alone. "
@@ -1966,7 +1984,10 @@ def _candidate_transform_supports_load_reduction_claim(
 ) -> bool:
     named_loop_vars = _claimed_loop_vars(claim)
     for step in _candidate_transform_steps(transform):
-        if str(step.get("op") or "") not in {"replace_once", "replace_block_once"}:
+        step_op = str(step.get("op") or "")
+        if step_op == "replace_between_once":
+            return True
+        if step_op not in {"replace_once", "replace_block_once"}:
             continue
         before = str(step.get("find") or "")
         after = str(step.get("replace") or "")
@@ -2125,6 +2146,10 @@ def _validate_candidate_transform_step(value: Any, *, label: str = "operation") 
         )
     if op in {"replace_once", "replace_block_once"}:
         _require_transform_string(value, "find")
+        _require_transform_string(value, "replace")
+    elif op == "replace_between_once":
+        _require_transform_string(value, "find_start")
+        _require_transform_string(value, "find_end")
         _require_transform_string(value, "replace")
     elif op in {"insert_before_once", "insert_after_once"}:
         _require_transform_string(value, "anchor")
@@ -4136,7 +4161,7 @@ def _candidate_transform_python_set_values(
         ):
             found_set_transform = True
             values.add(int(step["value"]))
-        elif step.get("op") in {"replace_once", "replace_block_once"}:
+        elif step.get("op") in {"replace_once", "replace_block_once", "replace_between_once"}:
             replacement = str(step.get("replace") or "")
             parsed = _python_int_set_values_from_assignment(replacement, name=name)
             if parsed is not None:

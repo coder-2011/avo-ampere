@@ -133,6 +133,35 @@ def test_materialize_candidate_transform_generates_candidate_patch(tmp_path: Pat
     assert "+VALUE = 2" in patch
 
 
+def test_materialize_candidate_transform_replaces_between_anchors(tmp_path: Path) -> None:
+    kernel = tmp_path / "candidates" / "kernel.cu"
+    kernel.parent.mkdir(parents=True)
+    kernel.write_text(
+        "void kernel() {\n"
+        "  // begin pv\n"
+        "  old_line();\n"
+        "  old_line_2();\n"
+        "  // end pv\n"
+        "}\n",
+        encoding="utf-8",
+    )
+
+    patch = materialize_candidate_transform(
+        {
+            "op": "replace_between_once",
+            "path": "candidates/kernel.cu",
+            "find_start": "  // begin pv",
+            "find_end": "  // end pv",
+            "replace": "  // begin pv\n  new_line();\n  // end pv",
+        },
+        cwd=tmp_path,
+    )
+
+    assert "-  old_line();" in patch
+    assert "-  old_line_2();" in patch
+    assert "+  new_line();" in patch
+
+
 def test_materialize_candidate_transform_generates_batch_patch(tmp_path: Path) -> None:
     seed = write_seed_candidate(tmp_path)
     seed.write_text("VALUES = {1}\n", encoding="utf-8")
