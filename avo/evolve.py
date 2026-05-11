@@ -533,6 +533,23 @@ def attempt_has_repairable_correctness_failure(attempt: VariationAttempt) -> boo
     return has_edit_payload
 
 
+def attempt_has_repairable_worker_crash(attempt: VariationAttempt) -> bool:
+    if attempt.patch_result is None or not attempt.patch_result.ok:
+        return False
+    if attempt.command_result.timed_out or attempt.command_result.ok:
+        return False
+    has_edit_payload = (
+        attempt.decision.candidate_transform is not None
+        or bool((attempt.materialized_patch or attempt.decision.candidate_patch).strip())
+    )
+    if not has_edit_payload:
+        return False
+    return _looks_like_worker_crash(
+        attempt.command_result.returncode,
+        _command_result_text(attempt.command_result).lower(),
+    )
+
+
 def compile_failure_class_for_attempt(attempt: VariationAttempt) -> str:
     return _classify_compile_failure(_command_result_text(attempt.command_result).lower())
 

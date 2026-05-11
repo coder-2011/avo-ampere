@@ -17,6 +17,7 @@ from avo.evolve import (
     apply_candidate_patch,
     attempt_has_repairable_compile_failure,
     attempt_has_repairable_correctness_failure,
+    attempt_has_repairable_worker_crash,
     cleanup_rejected_candidate_patch,
     command_from_decision,
     correctness_failure_class_for_attempt,
@@ -1394,6 +1395,57 @@ def test_summarize_attempt_history_classifies_worker_crash(tmp_path: Path) -> No
 
     assert "class=worker_crash" in summary
     assert "command returncode=139" in summary
+
+
+def test_worker_crash_with_edit_is_repairable() -> None:
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/crashy.py",
+            candidate_transform={
+                "op": "replace_once",
+                "path": "candidates/kernel.cu",
+                "find": "old",
+                "replace": "new",
+            },
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=139,
+            timed_out=False,
+            stdout_tail='{"ok": false, "payload": null}',
+            stderr_tail="",
+        ),
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+            rejected_reason=None,
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+
+    assert attempt_has_repairable_worker_crash(attempt)
+
+
+def test_worker_crash_without_edit_is_not_repairable() -> None:
+    attempt = VariationAttempt(
+        decision=decision("avo score --backend candidate --candidate candidates/crashy.py"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=139,
+            timed_out=False,
+            stdout_tail='{"ok": false, "payload": null}',
+            stderr_tail="",
+        ),
+        patch_result=None,
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+
+    assert not attempt_has_repairable_worker_crash(attempt)
 
 
 def test_summarize_attempt_history_ignores_loop_and_score_json(tmp_path: Path) -> None:

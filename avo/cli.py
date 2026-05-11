@@ -39,6 +39,7 @@ from .evolve import (
     attempt_has_repairable_compile_failure,
     attempt_has_repairable_correctness_failure,
     attempt_has_repairable_transform_materialization_failure,
+    attempt_has_repairable_worker_crash,
     cleanup_rejected_candidate_patch,
     compile_failure_class_for_attempt,
     correctness_failure_class_for_attempt,
@@ -1107,6 +1108,8 @@ def _repair_kind_for_attempt(attempt: VariationAttempt) -> str | None:
         return "compile"
     if attempt_has_repairable_transform_materialization_failure(attempt):
         return "structured-transform-materialization"
+    if attempt_has_repairable_worker_crash(attempt):
+        return "worker-crash"
     if attempt_has_repairable_correctness_failure(attempt):
         if correctness_failure_class_for_attempt(attempt) == "score_time_compile_failure":
             return "score-time-compile"
@@ -1215,6 +1218,28 @@ def _edit_repair_attempt_history(
             "baseline code.\n"
             f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
             f"- score_error_summary:\n{score_error_summary or '<empty>'}"
+        )
+    elif repair_kind == "worker-crash":
+        request = (
+            "Immediate worker-crash repair request:\n"
+            f"- repair_attempt={repair_index}\n"
+            "- failure_class=worker_crash\n"
+            f"- failed_command={failed_attempt.decision.next_command}\n"
+            f"- worker_returncode={failed_attempt.command_result.returncode}\n"
+            f"- worktree_cleanup_before_repair={cleanup_status}\n"
+            "- The previous candidate edit was applied, but the isolated worker process "
+            "exited abruptly before it could produce a normal score or compile diagnostic. "
+            "The failed edit has been reverted before this repair request. Return a revised "
+            "executable edit against the current source, not a no-edit retry. Use "
+            "candidate_transform when repairing CUDA sources, keep candidate_patch empty in "
+            "transform mode, and make the smallest coherent semantic repair that addresses "
+            "likely invalid memory access, synchronization, bounds, initialization, launch "
+            "contract, or extension import/dataflow. If the crash evidence is too thin, "
+            "choose a different coherent transform family instead of replaying the crashed "
+            "payload.\n"
+            f"- failed_edit_payload={_attempt_edit_payload_summary(failed_attempt)}\n"
+            f"- worker_stderr_tail:\n{failed_attempt.command_result.stderr_tail or '<empty>'}\n"
+            f"- worker_stdout_tail:\n{failed_attempt.command_result.stdout_tail or '<empty>'}"
         )
     else:
         patch_result = failed_attempt.patch_result
