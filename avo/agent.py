@@ -446,6 +446,10 @@ class VariationDecision:
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> VariationDecision:
         normalized_payload = {"candidate_patch": "", "candidate_transform": None, **payload}
+        if "candidate_edit" not in normalized_payload:
+            normalized_payload["candidate_edit"] = _default_candidate_edit(normalized_payload)
+        if "hypothesis" not in normalized_payload:
+            normalized_payload["hypothesis"] = _default_hypothesis(normalized_payload)
         if "files_to_inspect" not in normalized_payload:
             normalized_payload["files_to_inspect"] = _default_files_to_inspect(
                 normalized_payload
@@ -551,6 +555,46 @@ def _default_files_to_inspect(payload: dict[str, Any]) -> list[str]:
     if isinstance(candidate_transform, dict):
         paths.update(_raw_candidate_transform_paths(candidate_transform))
     return sorted(paths)
+
+
+def _default_candidate_edit(payload: dict[str, Any]) -> str:
+    if _payload_has_edit(payload):
+        return "Apply the proposed source transform."
+    command = payload.get("next_command")
+    if isinstance(command, str) and command.strip():
+        return f"No edit; run {command.strip()}."
+    return "No edit; run a bounded diagnostic."
+
+
+def _default_hypothesis(payload: dict[str, Any]) -> str:
+    candidate_edit = payload.get("candidate_edit")
+    if isinstance(candidate_edit, str) and candidate_edit.strip():
+        return _short_default_text(candidate_edit)
+    command = payload.get("next_command")
+    if isinstance(command, str) and command.strip():
+        subcommand = _payload_subcommand_name(command)
+        if subcommand:
+            return f"Run a bounded {subcommand} step to inform the next AVO transform."
+    if _payload_has_edit(payload):
+        return "Validate a proposed source transformation."
+    return "Evaluate the next bounded AVO step."
+
+
+def _short_default_text(text: str, *, max_chars: int = 180) -> str:
+    compact = " ".join(text.split())
+    if len(compact) <= max_chars:
+        return compact
+    return f"{compact[: max_chars - 3].rstrip()}..."
+
+
+def _payload_subcommand_name(command: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return ""
+    if len(parts) >= 2 and parts[0] == "avo":
+        return parts[1]
+    return ""
 
 
 def _raw_candidate_transform_paths(transform: dict[str, Any]) -> set[str]:

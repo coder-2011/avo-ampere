@@ -89,6 +89,31 @@ def test_parse_variation_decision_defaults_missing_nonsemantic_metadata() -> Non
     assert "structural preflight" in decision.risk
 
 
+def test_parse_variation_decision_defaults_missing_descriptive_fields() -> None:
+    payload = {
+        "candidate_patch": "",
+        "edit_mode": "transform",
+        "candidate_transform": {
+            "op": "set_constexpr_int",
+            "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+            "name": "kTile",
+            "value": 16,
+        },
+        "next_command": (
+            "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+            "--out-dir build/mma_transform"
+        ),
+    }
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.hypothesis == "Apply the proposed source transform."
+    assert decision.candidate_edit == "Apply the proposed source transform."
+    assert decision.files_to_inspect == [
+        "candidates/cuda_mma_attention/attention_kernel.cu"
+    ]
+
+
 def test_parse_variation_decision_accepts_structured_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"
