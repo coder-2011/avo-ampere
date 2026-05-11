@@ -1,9 +1,12 @@
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import re
 import shlex
+import signal
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -1167,13 +1170,19 @@ def _openrouter_chat_completion(
         method="POST",
     )
     try:
-        with urllib.request.urlopen(request, timeout=timeout_s) as response:
-            body = response.read().decode("utf-8")
+        with _openrouter_total_deadline(timeout_s):
+            with urllib.request.urlopen(request, timeout=timeout_s) as response:
+                body = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
         raise OpenRouterAPIError(
             exc.code,
             f"OpenRouter HTTP {exc.code}: {_provider_error_message(body)}",
+        ) from exc
+    except TimeoutError as exc:
+        raise OpenRouterAPIError(
+            408,
+            f"OpenRouter request timed out after {timeout_s:g}s",
         ) from exc
     except urllib.error.URLError as exc:
         raise OpenRouterAPIError(None, f"OpenRouter connection error: {exc.reason}") from exc
@@ -1186,6 +1195,33 @@ def _openrouter_chat_completion(
     if error := _openrouter_response_error(payload):
         raise error
     return payload
+
+
+@contextlib.contextmanager
+def _openrouter_total_deadline(timeout_s: float) -> Any:
+    if (
+        timeout_s <= 0.0
+        or threading.current_thread() is not threading.main_thread()
+        or not hasattr(signal, "SIGALRM")
+    ):
+        yield
+        return
+    old_timer = signal.getitimer(signal.ITIMER_REAL)
+    if old_timer != (0.0, 0.0):
+        yield
+        return
+    old_handler = signal.getsignal(signal.SIGALRM)
+
+    def _raise_timeout(signum: int, frame: Any) -> None:
+        raise TimeoutError(f"OpenRouter request exceeded {timeout_s:g}s")
+
+    signal.signal(signal.SIGALRM, _raise_timeout)
+    signal.setitimer(signal.ITIMER_REAL, timeout_s)
+    try:
+        yield
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0.0)
+        signal.signal(signal.SIGALRM, old_handler)
 
 
 def _openrouter_response_error(payload: dict[str, Any]) -> OpenRouterAPIError | None:

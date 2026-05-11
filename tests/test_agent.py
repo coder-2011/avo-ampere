@@ -14,6 +14,7 @@ from avo.agent import (
     VariationDecision,
     _agent_request_timeout_s,
     _decision_kwargs_with_feedback,
+    _openrouter_chat_completion,
     _openrouter_decision_kwargs,
     _openrouter_message_text,
     _request_decision_response,
@@ -4298,6 +4299,33 @@ def test_openrouter_response_falls_back_to_json_object_on_schema_rejection(
 def test_openrouter_message_text_surfaces_error_payload() -> None:
     with pytest.raises(OpenRouterAPIError, match="schema was rejected"):
         _openrouter_message_text({"error": {"code": 400, "message": "schema was rejected"}})
+
+
+def test_openrouter_chat_completion_maps_body_read_timeout(monkeypatch) -> None:
+    class FakeResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc, traceback):
+            return False
+
+        def read(self):
+            raise TimeoutError("body read timed out")
+
+    def fake_urlopen(request, timeout):
+        assert timeout == 30.0
+        return FakeResponse()
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+    with pytest.raises(OpenRouterAPIError, match="timed out after 30s") as exc_info:
+        _openrouter_chat_completion(
+            {"model": DEFAULT_OPENROUTER_AGENT_MODEL, "messages": []},
+            api_key="secret",
+            timeout_s=30.0,
+        )
+
+    assert exc_info.value.status_code == 408
 
 
 def test_request_variation_decision_uses_openrouter_provider(
