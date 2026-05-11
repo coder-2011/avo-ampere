@@ -224,6 +224,36 @@ def test_parse_variation_decision_normalizes_target_path_alias() -> None:
     }
 
 
+def test_parse_variation_decision_normalizes_replacement_alias() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["files_to_inspect"] = ["candidates/cuda_mma_attention/attention_kernel.cu"]
+    payload["candidate_edit"] = "Replace one coherent PV loop block with anchor bounds."
+    payload["candidate_transform"] = {
+        "op": "replace_between_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find_start": "    // begin pv",
+        "find_end": "    // end pv",
+        "replacement": "    // begin pv\n    replacement();\n    // end pv",
+    }
+    payload["expected_effect"] = "compile checks the replacement block"
+    payload["risk"] = "anchor mismatch or compile failure"
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_transform"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "replace_between_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find_start": "    // begin pv",
+        "find_end": "    // end pv",
+        "replace": "    // begin pv\n    replacement();\n    // end pv",
+    }
+
+
 def test_parse_variation_decision_accepts_replace_between_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"

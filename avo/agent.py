@@ -641,6 +641,9 @@ def _normalize_candidate_transform_aliases(transform: dict[str, Any]) -> dict[st
     target_path = updated.pop("target_path", None)
     if "path" not in updated and isinstance(target_path, str):
         updated["path"] = target_path
+    replacement = updated.pop("replacement", None)
+    if "replace" not in updated and isinstance(replacement, str):
+        updated["replace"] = replacement
     steps = updated.get("steps")
     if isinstance(steps, list):
         updated["steps"] = [
