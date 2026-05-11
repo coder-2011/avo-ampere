@@ -1374,6 +1374,28 @@ def test_summarize_attempt_history_marks_reverted_acceptance_stale(tmp_path: Pat
     assert "reverted or noisy historical acceptances" in summary
 
 
+def test_summarize_attempt_history_classifies_worker_crash(tmp_path: Path) -> None:
+    attempts = tmp_path / "attempts"
+    attempt = VariationAttempt(
+        decision=decision("avo score --backend candidate --candidate candidates/crashy.py"),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=139,
+            timed_out=False,
+            stdout_tail='{"ok": false, "payload": null}',
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=worker_crash" in summary
+    assert "command returncode=139" in summary
+
+
 def test_summarize_attempt_history_ignores_loop_and_score_json(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     attempt = VariationAttempt(
@@ -3115,6 +3137,37 @@ def test_async_copy_compile_errors_are_not_promoted_to_hard_preflight(
     assert state.get("tracks") == {}
     assert load_promoted_preflight_classes(attempts) == frozenset()
     assert "share failure class 'async_copy_compile_error'" in summary
+    assert "No concrete hard preflight track exists" in summary
+    assert "eligible for hard preflight promotion" not in summary
+
+
+def test_worker_crashes_are_not_promoted_to_hard_preflight(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    for index in range(3):
+        attempt = VariationAttempt(
+            decision=decision(
+                f"avo score --backend candidate --candidate candidates/crashy_{index}.py"
+            ),
+            command_result=CommandResult(
+                command=[sys.executable, "-m", "avo", "score"],
+                returncode=139,
+                timed_out=False,
+                stdout_tail='{"ok": false, "payload": null}',
+                stderr_tail="",
+            ),
+            started_at=f"2026-05-08T00:00:0{index}+00:00",
+            completed_at=f"2026-05-08T00:00:0{index + 1}+00:00",
+        )
+        write_step_record(attempts, EvolutionStep(attempt=attempt, gate_decision=None))
+
+    state = update_promoted_preflight_tracks(attempts)
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert state.get("tracks") == {}
+    assert load_promoted_preflight_classes(attempts) == frozenset()
+    assert "share failure class 'worker_crash'" in summary
     assert "No concrete hard preflight track exists" in summary
     assert "eligible for hard preflight promotion" not in summary
 

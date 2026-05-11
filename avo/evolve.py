@@ -2733,6 +2733,8 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
         if '"error": "profiler_permission"' in detail or "err_nvgpuctrperm" in detail:
             return "profiler_permission"
     if returncode not in (0, None):
+        if _looks_like_worker_crash(returncode, detail):
+            return "worker_crash"
         if _command_or_detail_looks_like_compile_failure(next_command, command_text, detail):
             return _classify_compile_failure(detail)
         if "correctness" in detail or "max_abs_error" in detail:
@@ -2772,6 +2774,25 @@ def _classify_planning_failure(detail: str) -> str:
     if "candidate_transform" in detail:
         return "planning_transform_preflight"
     return "planning_validation"
+
+
+def _looks_like_worker_crash(returncode: object, detail: str) -> bool:
+    if isinstance(returncode, int):
+        if returncode < 0:
+            return True
+        if returncode in {128 + 6, 128 + 9, 128 + 11}:
+            return True
+    return any(
+        marker in detail
+        for marker in (
+            "segmentation fault",
+            "segfault",
+            "sigabrt",
+            "sigkill",
+            "sigsegv",
+            "core dumped",
+        )
+    )
 
 
 def _is_planner_provider_error(detail: str) -> bool:
