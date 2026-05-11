@@ -196,6 +196,34 @@ def test_parse_variation_decision_infers_batch_path_from_compile_source() -> Non
     }
 
 
+def test_parse_variation_decision_normalizes_target_path_alias() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["files_to_inspect"] = ["candidates/cuda_mma_attention/attention_kernel.cu"]
+    payload["candidate_edit"] = "Retune kTile through a structured transform."
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "target_path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kTile",
+        "value": 16,
+    }
+    payload["expected_effect"] = "compile checks the edit"
+    payload["risk"] = "mock compile"
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_transform"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kTile",
+        "value": 16,
+    }
+
+
 def test_parse_variation_decision_accepts_replace_between_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"

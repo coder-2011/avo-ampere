@@ -502,6 +502,9 @@ class VariationDecision:
                 files_to_inspect=files,
             )
         if isinstance(raw_candidate_transform, dict):
+            raw_candidate_transform = _normalize_candidate_transform_aliases(
+                raw_candidate_transform
+            )
             raw_candidate_transform = _candidate_transform_with_default_path(
                 raw_candidate_transform,
                 files,
@@ -630,6 +633,20 @@ def _candidate_transform_with_default_path(
         return transform
     updated = dict(transform)
     updated["path"] = candidates[0]
+    return updated
+
+
+def _normalize_candidate_transform_aliases(transform: dict[str, Any]) -> dict[str, Any]:
+    updated = dict(transform)
+    target_path = updated.pop("target_path", None)
+    if "path" not in updated and isinstance(target_path, str):
+        updated["path"] = target_path
+    steps = updated.get("steps")
+    if isinstance(steps, list):
+        updated["steps"] = [
+            _normalize_candidate_transform_aliases(step) if isinstance(step, dict) else step
+            for step in steps
+        ]
     return updated
 
 
