@@ -91,6 +91,24 @@ def test_agent_status_command_prints_json_without_secret(
     assert "test-secret" not in output
 
 
+def test_lineage_summary_command_prints_json(monkeypatch, capsys) -> None:
+    monkeypatch.setattr(
+        "avo.cli._lineage_summary",
+        lambda path: json.dumps(
+            {
+                "latest": {"geomean_tflops": 9.0},
+                "baseline_comparisons": [{"candidate_vs_baseline": 0.1}],
+            }
+        ),
+    )
+
+    assert main(["lineage-summary", "lineage"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["latest"]["geomean_tflops"] == 9.0
+    assert payload["baseline_comparisons"][0]["candidate_vs_baseline"] == 0.1
+
+
 def test_baseline_build_env_targets_flash_attn_ampere(monkeypatch) -> None:
     monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: None)
     env = {"FLASH_ATTN_CUDA_ARCHS": "90;100", "OTHER": "keep-me", "PATH": "/bin"}

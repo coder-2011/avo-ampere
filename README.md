@@ -280,6 +280,12 @@ include a derived `baseline_comparisons` section whenever a candidate lane and F
 baseline lane share the same benchmark signature; this records the candidate/FA2 ratio and the
 remaining TFLOPS gap without changing the acceptance gate.
 
+Print the current lineage audit summary:
+
+```bash
+uv run python -m avo lineage-summary ./lineage
+```
+
 ## Agent workflow
 
 The agent wrapper uses the Anthropic API and expects `ANTHROPIC_API_KEY` in the environment.

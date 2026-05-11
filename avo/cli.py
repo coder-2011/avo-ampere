@@ -127,6 +127,9 @@ def main(argv: list[str] | None = None) -> int:
     init_parser = subparsers.add_parser("init-lineage")
     init_parser.add_argument("path", type=Path)
 
+    summary_parser = subparsers.add_parser("lineage-summary")
+    summary_parser.add_argument("path", type=Path)
+
     baseline_parser = subparsers.add_parser("seed-baseline")
     baseline_parser.add_argument("path", type=Path)
     add_score_args(baseline_parser)
@@ -214,6 +217,9 @@ def main(argv: list[str] | None = None) -> int:
         return 0
     if args.command == "init-lineage":
         init_lineage_repo(args.path)
+        return 0
+    if args.command == "lineage-summary":
+        print(_lineage_summary(args.path))
         return 0
     if args.command == "seed-baseline":
         return _seed_baseline(args)
