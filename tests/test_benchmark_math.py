@@ -87,5 +87,11 @@ def test_benchmark_metadata_records_settings_and_target() -> None:
     }
     assert metadata["target"]["sm"] == "sm_86"
     assert metadata["target"]["nvcc_gencode"] == "-gencode=arch=compute_86,code=sm_86"
+    assert metadata["flop_accounting"] == {
+        "name": "flash_attention_forward_compatible",
+        "formula": "4 * batch_size * num_heads * seq_len**2 * head_dim // (2 if causal else 1)",
+        "scope": "forward QK and PV matmul FLOPs only; excludes softmax, masking, and projections",
+        "causal_convention": "half_dense",
+    }
     assert "measured_at" in metadata
     assert "environment" in metadata

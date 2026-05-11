@@ -19,6 +19,12 @@ BackendName = Literal["torch-sdpa", "flash-attn", "candidate"]
 CANDIDATE_SOURCE_FILE_ATTRIBUTES = ("AVO_SOURCE_FILES", "__avo_source_files__")
 CANDIDATE_RUNTIME_SOURCE_SUFFIXES = frozenset({".py", ".cpp", ".cu", ".cuh", ".h", ".hpp"})
 SKIPPED_RUNTIME_SOURCE_PARTS = frozenset({"__pycache__"})
+FLOP_ACCOUNTING = {
+    "name": "flash_attention_forward_compatible",
+    "formula": "4 * batch_size * num_heads * seq_len**2 * head_dim // (2 if causal else 1)",
+    "scope": "forward QK and PV matmul FLOPs only; excludes softmax, masking, and projections",
+    "causal_convention": "half_dense",
+}
 
 
 @dataclass(frozen=True)
@@ -193,6 +199,7 @@ def benchmark_metadata(
             "sm": AMPERE_A6000.sm,
             "nvcc_gencode": AMPERE_A6000.nvcc_gencode,
         },
+        "flop_accounting": dict(FLOP_ACCOUNTING),
         "environment": _benchmark_environment(),
     }
 

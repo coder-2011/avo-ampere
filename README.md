@@ -11,7 +11,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Baseline: FlashAttention-2. FlashAttention-4 is intentionally excluded because its Blackwell path uses primitives that are not available on Ampere.
 - Candidate support: Python candidate modules plus CUDA-extension attention candidates, including a BF16 WMMA QK/PV seed accepted through the seq32768 lane.
 - Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, a local searchable knowledge-corpus retriever, structured candidate transforms for CUDA edits, and a candidate-only patch application substrate.
-- Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, and environment metadata in JSON.
+- Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, FLOP-accounting convention, and environment metadata in JSON.
 - Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage, classify failure classes, and persist recurring classes as active hard preflight tracks in `preflight_tracks.json`, including the concrete structural checks activated by each promoted class.
 - Research state: the autonomous loop has accepted benchmark lanes across the full target shape set through seq32768. The open result is still optimizing that seed toward beating FlashAttention-2 on the target suite.
 
@@ -219,8 +219,12 @@ For noisier comparisons, add `--trials 5` or higher. Each case record will inclu
 the raw timing samples, min, median, mean, and coefficient of variation; the
 reported `milliseconds` and `tflops` use the median sample. Each score summary
 also includes a `benchmark` block with warmup/repeat/trial settings, seed,
-A6000/sm86 target metadata, Python/PyTorch/CUDA versions, and visible GPU
-properties so accepted lineage commits can be audited later.
+A6000/sm86 target metadata, Python/PyTorch/CUDA versions, visible GPU
+properties, and FLOP-accounting metadata so accepted lineage commits can be
+audited later. TFLOPS use the FlashAttention-compatible forward convention:
+`4 * batch_size * num_heads * seq_len**2 * head_dim`, divided by 2 for causal
+cases, covering the QK and PV matmul FLOPs but not softmax, masking, or
+projection overhead.
 
 Run a bounded profiler diagnostic on a candidate when profiler evidence would
 change the next transform choice:
