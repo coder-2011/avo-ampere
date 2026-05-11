@@ -276,12 +276,14 @@ limits, library paths, and the local `libcudart.so` link shim. The `cuda` extra 
 nvcc, CRT, NVVM, and CCCL header wheels needed for Torch `cu130` extension builds; the candidate
 wrapper uses the same CUDA-root and link-shim logic for extension builds.
 
-The FA2 baseline remains a comparison lane, not the candidate acceptance threshold. Candidate
-lineage commits are accepted against prior candidate scores with the same benchmark signature so
-the search can preserve incremental progress before it reaches FA2 throughput. Lineage summaries
-include a derived `baseline_comparisons` section whenever a candidate lane and FlashAttention-2
-baseline lane share the same benchmark signature; this records the candidate/FA2 ratio and the
-remaining TFLOPS gap without changing the acceptance gate.
+The FA2 baseline remains a comparison lane, not the candidate acceptance threshold. Once a baseline
+is seeded, candidate lineage commits must use the same benchmark case signature as that baseline,
+so smoke-only scores can inform repair but do not become new progress lanes. Candidate commits are
+then accepted against prior candidate scores with that same signature, allowing incremental progress
+before the candidate reaches FA2 throughput. Lineage summaries include a derived
+`baseline_comparisons` section whenever a candidate lane and FlashAttention-2 baseline lane share
+the same benchmark signature; this records the candidate/FA2 ratio and the remaining TFLOPS gap
+without changing the acceptance threshold.
 
 Print the current lineage audit summary:
 
@@ -360,7 +362,7 @@ such as dynamically assembled extension sources. `sources/latest/manifest.json`
 records path, size, and hash metadata for audit. Accepted edited steps also record
 `patches/latest.patch`.
 
-`evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the suite-aware lineage gate. Candidates compare against the best prior score with the same benchmark case signature; a new signature can establish its own lane when correctness passes and source artifacts are captured.
+`evolve-once` runs one validated agent decision, records the step, and commits only score payloads that pass the suite-aware lineage gate. Candidates compare against the best prior score with the same benchmark case signature. Before a baseline is seeded, a new signature can establish its own lane when correctness passes and source artifacts are captured; after the FA2 baseline exists, candidate commits must match the baseline target signature.
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
 Planner prompts also have a final character budget over dynamic sections: bulky
 repo context, knowledge, lineage, and attempt history are compacted before the

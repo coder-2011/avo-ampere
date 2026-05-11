@@ -146,6 +146,23 @@ def commit_score(
     init_lineage_repo(path)
     best_payload = best_score_payload_for_signature(path, candidate)
     best = _score_geomean(best_payload)
+    baseline_payload = _baseline_score_payload(path)
+    candidate_signature = _benchmark_signature(candidate)
+    baseline_signature = (
+        _benchmark_signature(baseline_payload) if baseline_payload is not None else ()
+    )
+    if (
+        candidate.get("all_correct")
+        and candidate_signature
+        and baseline_signature
+        and candidate_signature != baseline_signature
+    ):
+        return GateDecision(
+            False,
+            "candidate benchmark cases differ from FlashAttention baseline target suite",
+            _score_geomean(candidate),
+            best,
+        )
     decision = decide_gate(candidate, best, best_payload=best_payload)
     if not decision.accepted:
         return decision
@@ -286,6 +303,13 @@ def best_score_payload_for_signature(
             best_payload = payload
             best_geomean = geomean
     return best_payload
+
+
+def _baseline_score_payload(path: Path) -> dict[str, Any] | None:
+    payload = _read_score_payload(path / "scores" / "baseline.json")
+    if payload is None or not _is_baseline_payload(payload):
+        return None
+    return payload
 
 
 def _score_payload_brief(payload: dict[str, Any]) -> dict[str, Any]:

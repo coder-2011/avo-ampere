@@ -2761,6 +2761,8 @@ def _step_failure_class(payload: dict[str, Any]) -> str:
         return _classify_score_failure(score_payload)
     if isinstance(gate_decision, dict) and gate_decision.get("accepted") is False:
         reason = str(gate_decision.get("reason") or "").lower()
+        if "benchmark cases differ" in reason or "baseline target suite" in reason:
+            return "benchmark_signature_mismatch"
         if "correct" in reason or "error" in reason:
             return "correctness_failed"
         return "throughput_regression"

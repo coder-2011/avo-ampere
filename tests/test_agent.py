@@ -3482,6 +3482,7 @@ def test_build_repo_context_lists_local_candidates() -> None:
     assert "Target workload is realistic long-sequence BF16 attention" in context
     assert "Unpatched seed caps are safety fences, not search targets" in context
     assert "real optimization steps should move toward the target workload" in context
+    assert "Smoke-only scores may still provide repair or correctness feedback" in context
     assert "Use avo env only for CUDA/build environment diagnostics" in context
     assert "Use avo compile only for CUDA build/compilation diagnostics" in context
     assert "Use avo score only for correctness validation, timing samples, and TFLOPS" in context

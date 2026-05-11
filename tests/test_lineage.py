@@ -293,6 +293,23 @@ def test_baseline_does_not_block_candidate_lineage_progress(tmp_path) -> None:
     ] == 25.0
 
 
+def test_baseline_rejects_candidate_with_different_benchmark_signature(tmp_path) -> None:
+    repo = tmp_path / "lineage"
+    init_lineage_repo(repo)
+    baseline = score_payload(seq_len=128, geomean=25.0)
+    baseline["backend"] = "flash-attn"
+    seed_baseline(repo, baseline, force=True)
+    head_before = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+
+    decision = commit_score(repo, score_payload(seq_len=256, geomean=5.0))
+
+    head_after = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=repo, text=True)
+    assert not decision.accepted
+    assert "baseline target suite" in decision.reason
+    assert head_after == head_before
+    assert best_score_payload_for_signature(repo, score_payload(seq_len=256, geomean=5.0)) is None
+
+
 def test_candidate_regression_rejects_against_prior_candidate_not_baseline(tmp_path) -> None:
     repo = tmp_path / "lineage"
     init_lineage_repo(repo)

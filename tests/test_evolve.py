@@ -1448,6 +1448,67 @@ def test_worker_crash_without_edit_is_not_repairable() -> None:
     assert not attempt_has_repairable_worker_crash(attempt)
 
 
+def test_summarize_attempt_history_classifies_benchmark_signature_mismatch(
+    tmp_path: Path,
+) -> None:
+    attempts = tmp_path / "attempts"
+    attempt = VariationAttempt(
+        decision=decision(
+            "avo score --backend candidate --candidate candidates/seed.py --seq-lens 256",
+            candidate_transform={
+                "op": "set_constexpr_int",
+                "path": "candidates/kernel.cu",
+                "name": "kThreads",
+                "value": 80,
+            },
+        ),
+        command_result=CommandResult(
+            command=[sys.executable, "-m", "avo", "score"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        score_payload={
+            "all_correct": True,
+            "geomean_tflops": 1.0,
+            "cases": [
+                {
+                    "case": {
+                        "causal": False,
+                        "dtype": "bf16",
+                        "head_dim": 128,
+                        "num_heads": 4,
+                        "seq_len": 256,
+                        "total_tokens": 1024,
+                    },
+                    "correct": True,
+                    "tflops": 1.0,
+                }
+            ],
+        },
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+    )
+    write_step_record(
+        attempts,
+        EvolutionStep(
+            attempt=attempt,
+            gate_decision=GateDecision(
+                accepted=False,
+                reason="candidate benchmark cases differ from FlashAttention baseline target suite",
+                candidate_geomean=1.0,
+                best_geomean=0.0,
+            ),
+        ),
+    )
+
+    summary = summarize_attempt_history(attempts, limit=5)
+
+    assert "class=benchmark_signature_mismatch" in summary
+    assert "baseline target suite" in summary
+
+
 def test_summarize_attempt_history_ignores_loop_and_score_json(tmp_path: Path) -> None:
     attempts = tmp_path / "attempts"
     attempt = VariationAttempt(

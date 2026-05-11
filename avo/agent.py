@@ -919,6 +919,9 @@ def build_repo_context(root: Path) -> str:
         "Unpatched seed caps are safety fences, not search targets. Use exact small-shape "
         "caps only to avoid invalid no-edit scores; real optimization steps should move "
         "toward the target workload or explain a targeted compile diagnostic.",
+        "Once the FlashAttention-2 baseline is seeded, lineage commits must match that "
+        "baseline target case signature. Smoke-only scores may still provide repair or "
+        "correctness feedback, but they are not accepted as evolutionary progress.",
         "Structural CUDA preflight tracks are class-oriented hard checks: edit-channel "
         "integrity, transform path/materialization, wrapper/kernel shape-contract "
         "consistency, WMMA contract validity, async pipeline stage lifecycle, "
