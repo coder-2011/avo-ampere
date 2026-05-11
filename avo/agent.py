@@ -446,6 +446,16 @@ class VariationDecision:
     @classmethod
     def from_mapping(cls, payload: dict[str, Any]) -> VariationDecision:
         normalized_payload = {"candidate_patch": "", "candidate_transform": None, **payload}
+        if "files_to_inspect" not in normalized_payload:
+            normalized_payload["files_to_inspect"] = _default_files_to_inspect(
+                normalized_payload
+            )
+        if "expected_effect" not in normalized_payload:
+            normalized_payload["expected_effect"] = _default_expected_effect(
+                normalized_payload
+            )
+        if "risk" not in normalized_payload:
+            normalized_payload["risk"] = _default_risk(normalized_payload)
         edit_mode_explicit = "edit_mode" in normalized_payload
         missing = [key for key in DECISION_SCHEMA["required"] if key not in normalized_payload]
         missing_without_edit_mode = [key for key in missing if key != "edit_mode"]
@@ -530,6 +540,68 @@ class VariationDecision:
             "next_command": self.next_command,
             "candidate_transform": self.candidate_transform,
         }
+
+
+def _default_files_to_inspect(payload: dict[str, Any]) -> list[str]:
+    paths: set[str] = set()
+    candidate_patch = payload.get("candidate_patch")
+    if isinstance(candidate_patch, str):
+        paths.update(_candidate_patch_changed_paths(candidate_patch))
+    candidate_transform = payload.get("candidate_transform")
+    if isinstance(candidate_transform, dict):
+        paths.update(_raw_candidate_transform_paths(candidate_transform))
+    return sorted(paths)
+
+
+def _raw_candidate_transform_paths(transform: dict[str, Any]) -> set[str]:
+    raw_steps: Any
+    if transform.get("op") == "batch":
+        raw_steps = transform.get("steps")
+        if not isinstance(raw_steps, list):
+            raw_steps_json = transform.get("steps_json")
+            if isinstance(raw_steps_json, str):
+                try:
+                    raw_steps = json.loads(raw_steps_json)
+                except json.JSONDecodeError:
+                    raw_steps = []
+            else:
+                raw_steps = []
+        if not isinstance(raw_steps, list):
+            return set()
+        paths = {
+            str(step["path"])
+            for step in raw_steps
+            if isinstance(step, dict) and isinstance(step.get("path"), str)
+        }
+        batch_path = transform.get("path")
+        if isinstance(batch_path, str):
+            paths.add(batch_path)
+        return paths
+    path = transform.get("path")
+    return {path} if isinstance(path, str) else set()
+
+
+def _default_expected_effect(payload: dict[str, Any]) -> str:
+    if _payload_has_edit(payload):
+        return "Validate the proposed source change with the selected next_command."
+    return "Run the bounded diagnostic and use its result to choose the next transform."
+
+
+def _default_risk(payload: dict[str, Any]) -> str:
+    if _payload_has_edit(payload):
+        return (
+            "Unknown source-change risk; rely on structural preflight, compile, "
+            "correctness, and throughput gates."
+        )
+    return "No source change; the diagnostic may be redundant or inconclusive."
+
+
+def _payload_has_edit(payload: dict[str, Any]) -> bool:
+    candidate_patch = payload.get("candidate_patch")
+    candidate_transform = payload.get("candidate_transform")
+    return bool(isinstance(candidate_patch, str) and candidate_patch.strip()) or isinstance(
+        candidate_transform, dict
+    )
 
 
 def load_env_file(path: Path) -> None:
@@ -3390,7 +3462,11 @@ def _validate_subcommand_arguments(
         if out_dir is not None:
             _validate_command_path(out_dir, "--out-dir", allowed_roots=("build/",))
     elif subcommand == "score":
-        _validate_score_command_context(planning_text)
+        _validate_score_command_context(
+            planning_text,
+            candidate_patch=candidate_patch,
+            candidate_transform=candidate_transform,
+        )
         backend = _single_option_value(parts, "--backend")
         if backend is None:
             raise ValueError("next_command score requires --backend")
@@ -3528,7 +3604,14 @@ def _validate_compile_source_not_recorded_baseline(
     )
 
 
-def _validate_score_command_context(planning_text: str) -> None:
+def _validate_score_command_context(
+    planning_text: str,
+    *,
+    candidate_patch: str,
+    candidate_transform: dict[str, Any] | None,
+) -> None:
+    if _candidate_edit_present(candidate_patch, candidate_transform):
+        return
     text = " ".join(planning_text.lower().replace("-", " ").split())
     if not text:
         return

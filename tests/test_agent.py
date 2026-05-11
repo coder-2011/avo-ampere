@@ -62,6 +62,33 @@ def test_parse_variation_decision_defaults_missing_candidate_patch() -> None:
     assert decision.candidate_patch == ""
 
 
+def test_parse_variation_decision_defaults_missing_nonsemantic_metadata() -> None:
+    payload = {
+        "hypothesis": "retune the existing MMA tile contract",
+        "candidate_edit": "Retune kTile through a structured transform.",
+        "candidate_patch": "",
+        "edit_mode": "transform",
+        "candidate_transform": {
+            "op": "set_constexpr_int",
+            "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+            "name": "kTile",
+            "value": 16,
+        },
+        "next_command": (
+            "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+            "--out-dir build/mma_transform"
+        ),
+    }
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.files_to_inspect == [
+        "candidates/cuda_mma_attention/attention_kernel.cu"
+    ]
+    assert decision.expected_effect.startswith("Validate the proposed source change")
+    assert "structural preflight" in decision.risk
+
+
 def test_parse_variation_decision_accepts_structured_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"
@@ -1606,6 +1633,34 @@ def test_parse_variation_decision_rejects_score_claiming_profiler_metrics() -> N
 
     with pytest.raises(ValueError, match="score cannot collect profiler metrics"):
         parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_transform_score_with_profiler_wording() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["files_to_inspect"] = ["candidates/cuda_mma_attention/attention_kernel.cu"]
+    payload["candidate_edit"] = "Retune kThreads through a structured transform."
+    payload["candidate_transform"] = {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kThreads",
+        "value": 96,
+    }
+    payload["expected_effect"] = (
+        "The score validates correctness and TFLOPS; occupancy language is only "
+        "hypothesis context, not a claimed score metric."
+    )
+    payload["risk"] = "Compile or TFLOPS may regress."
+    payload["next_command"] = (
+        "avo score --backend candidate "
+        "--candidate candidates/cuda_mma_attention_seed.py "
+        "--seq-lens 4096,8192,16384,32768 "
+        "--total-tokens 32768 --num-heads 16 --head-dim 128"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command.startswith("avo score --backend candidate")
 
 
 def test_parse_variation_decision_allows_profile_diagnostic(
