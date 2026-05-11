@@ -326,10 +326,12 @@ def test_parse_variation_decision_normalizer_attaches_pending_transform() -> Non
     payload = decision_payload()
     payload["edit_mode"] = "transform"
     payload["candidate_edit"] = "Score the previously compiled transform."
-    payload["next_command"] = "avo score --backend candidate --candidate candidates/demo.py"
+    payload["next_command"] = (
+        "avo score --backend candidate --candidate candidates/cuda_identity_seed.py"
+    )
     transform = {
         "op": "replace_once",
-        "path": "candidates/demo.py",
+        "path": "candidates/cuda_identity_seed.py",
         "find": "VALUE = 1",
         "replace": "VALUE = 2",
     }
@@ -1627,6 +1629,54 @@ def test_parse_variation_decision_rejects_candidate_score_without_candidate() ->
 
     with pytest.raises(ValueError, match="candidate score requires --candidate"):
         parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_missing_candidate_score_path() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = "No edit; score a baseline candidate diagnostic."
+    payload["candidate_transform"] = None
+    payload["next_command"] = "avo score --backend candidate --candidate candidates/baseline.py"
+
+    with pytest.raises(ValueError, match="existing candidate file"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_rejects_missing_candidate_profile_path() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = "No edit; profile a candidate kernel for scheduler diagnostics."
+    payload["candidate_transform"] = None
+    payload["next_command"] = (
+        "avo profile --backend candidate --candidate candidates/missing_profile_seed.py "
+        "--kernel-name regex:.*kernel.*"
+    )
+
+    with pytest.raises(ValueError, match="existing candidate file"):
+        parse_decision_text(json.dumps(payload))
+
+
+def test_parse_variation_decision_allows_candidate_path_added_by_patch() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "legacy_patch"
+    payload["candidate_edit"] = "Add a Python candidate wrapper and score it."
+    payload["files_to_inspect"] = ["candidates/new_wrapper_seed.py"]
+    payload["candidate_patch"] = (
+        "diff --git a/candidates/new_wrapper_seed.py b/candidates/new_wrapper_seed.py\n"
+        "new file mode 100644\n"
+        "--- /dev/null\n"
+        "+++ b/candidates/new_wrapper_seed.py\n"
+        "@@ -0,0 +1,2 @@\n"
+        "+from candidates.cuda_mma_attention_seed import attention\n"
+        "+__all__ = ['attention']\n"
+    )
+    payload["next_command"] = (
+        "avo score --backend candidate --candidate candidates/new_wrapper_seed.py"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.next_command == payload["next_command"]
 
 
 def test_parse_variation_decision_rejects_unpatched_warp_rows_score_outside_cap() -> None:
@@ -4250,6 +4300,23 @@ def test_decision_feedback_explains_recorded_no_patch_compile_error() -> None:
     assert "include candidate_transform" in content
     assert "set_constexpr_int" in content
     assert "do not score or compile the unmodified seed again" in content
+
+
+def test_decision_feedback_explains_missing_candidate_path_error() -> None:
+    kwargs = {"messages": [{"role": "user", "content": "Base prompt."}]}
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError(
+            "next_command --candidate must reference an existing candidate file "
+            "or one added by candidate_patch: candidates/baseline.py"
+        ),
+    )
+
+    content = updated["messages"][0]["content"]
+    assert "Use an existing candidate wrapper under candidates/" in content
+    assert "candidates/cuda_mma_attention_seed.py" in content
+    assert "Do not invent placeholder paths" in content
 
 
 def test_decision_feedback_explains_score_profiler_metric_error() -> None:

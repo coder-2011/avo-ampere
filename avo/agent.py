@@ -1732,6 +1732,14 @@ def _validation_feedback_hint(error: ValueError) -> str:
             "If you are following up a successful compile-only transform, score that exact "
             "candidate_transform; do not score or compile the unmodified seed again. "
         )
+    if "--candidate must reference an existing candidate file" in message:
+        return (
+            "Use an existing candidate wrapper under candidates/, usually the wrapper for "
+            "the kernel family being edited, such as candidates/cuda_mma_attention_seed.py. "
+            "If the plan really needs a new Python candidate wrapper, include it in "
+            "candidate_patch as a repo-relative diff before scoring it. Do not invent "
+            "placeholder paths such as candidates/baseline.py. "
+        )
     if "score cannot collect profiler metrics" in message:
         return (
             "Do not claim that avo score can provide profiler metrics. It reports "
@@ -3695,6 +3703,7 @@ def _validate_subcommand_arguments(
                 allowed_roots=("candidates/",),
                 suffixes=(".py",),
             )
+            _validate_candidate_file_exists(candidate, candidate_patch=candidate_patch)
             _validate_patched_mma_score_shape_extension(
                 parts,
                 candidate=candidate,
@@ -3722,6 +3731,7 @@ def _validate_subcommand_arguments(
             allowed_roots=("candidates/",),
             suffixes=(".py",),
         )
+        _validate_candidate_file_exists(candidate, candidate_patch=candidate_patch)
         _validate_patched_mma_score_shape_extension(
             parts,
             candidate=candidate,
@@ -3797,6 +3807,18 @@ def _validate_command_path(
     if suffixes is not None and path.suffix not in suffixes:
         allowed = ", ".join(suffixes)
         raise ValueError(f"next_command {option} must reference a {allowed} file")
+
+
+def _validate_candidate_file_exists(raw_path: str, *, candidate_patch: str) -> None:
+    normalized = PurePosixPath(raw_path).as_posix()
+    if Path(normalized).is_file():
+        return
+    if normalized in _candidate_patch_changed_paths(candidate_patch):
+        return
+    raise ValueError(
+        "next_command --candidate must reference an existing candidate file "
+        f"or one added by candidate_patch: {normalized}"
+    )
 
 
 def _validate_compile_source_not_recorded_baseline(
