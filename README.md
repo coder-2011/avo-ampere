@@ -15,6 +15,22 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage, classify failure classes, and persist recurring classes as active hard preflight tracks in `preflight_tracks.json`, including the concrete structural checks activated by each promoted class.
 - Research state: the autonomous loop has accepted benchmark lanes across the full target shape set through seq32768. The open result is still optimizing that seed toward beating FlashAttention-2 on the target suite.
 
+## Current OpenRouter blocker
+
+Current blocker: I do not have enough OpenRouter tokens available to keep running the Opus 4.7 long loop. The CUDA/agent loop can compile, score, reject, and clean up structured transforms, but the provider started returning HTTP 402 budget errors. The downward trajectory below is the provider-reported affordable output-token cap from those errors.
+
+![OpenRouter affordable output token budget decline](docs/openrouter-token-budget.svg)
+
+The chart intentionally plots only output-token limits, because those are comparable across retries. A separate prompt-token rejection also occurred at `2026-05-11T04:08:07+00:00`: the request had `27857` prompt tokens, while the provider reported only `7114` available.
+
+| UTC time | Request | Provider-reported limit |
+|---|---:|---:|
+| 2026-05-11 04:05:13 | `max_tokens=4000` | `1422` affordable output tokens |
+| 2026-05-11 04:08:07 | prompt tokens | `27857 > 7114` prompt-token ceiling |
+| 2026-05-11 04:12:50 | `max_tokens=1200` | `994` affordable output tokens |
+| 2026-05-11 04:13:37 | `max_tokens=800` | `784` affordable output tokens |
+| 2026-05-11 04:15:01 | `max_tokens=700` | `669` affordable output tokens |
+
 ## What was built
 
 Recent commits show the work moved in layers:
