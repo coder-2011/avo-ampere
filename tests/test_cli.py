@@ -2484,6 +2484,130 @@ def test_evolve_loop_runs_until_accepted_and_records_attempts(
     assert json.loads((tmp_path / "loop.json").read_text(encoding="utf-8"))["accepted"] is True
 
 
+def test_evolve_loop_retries_history_invalid_planner_decision(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    old_transform = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": "constexpr int kThreads = 96;",
+        "replace": "constexpr int kThreads = 128;",
+    }
+    new_transform = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": "constexpr int kThreads = 96;",
+        "replace": "constexpr int kThreads = 80;",
+    }
+    old_decision = VariationDecision(
+        hypothesis="old rejected transform",
+        files_to_inspect=["candidates/cuda_mma_attention/attention_kernel.cu"],
+        candidate_edit="Retune kThreads.",
+        expected_effect="mock score",
+        risk="mock risk",
+        next_command=(
+            "avo score --backend candidate --candidate "
+            "candidates/cuda_mma_attention_seed.py"
+        ),
+        edit_mode="transform",
+        candidate_transform=old_transform,
+    )
+    write_step_record(
+        tmp_path / "attempts",
+        EvolutionStep(
+            attempt=VariationAttempt(
+                decision=old_decision,
+                command_result=CommandResult(
+                    command=["python", "-m", "avo", "score"],
+                    returncode=0,
+                    timed_out=False,
+                    stdout_tail="{}",
+                    stderr_tail="",
+                ),
+                started_at="2026-05-08T00:00:00+00:00",
+                completed_at="2026-05-08T00:00:01+00:00",
+                score_payload={
+                    "backend": "mock",
+                    "all_correct": True,
+                    "geomean_tflops": 0.0,
+                    "cases": [{}],
+                },
+            ),
+            gate_decision=None,
+        ),
+    )
+    decisions = [
+        old_decision,
+        VariationDecision(
+            hypothesis="new transform",
+            files_to_inspect=["candidates/cuda_mma_attention/attention_kernel.cu"],
+            candidate_edit="Retune kThreads differently.",
+            expected_effect="mock score",
+            risk="mock risk",
+            next_command=(
+                "avo score --backend candidate --candidate "
+                "candidates/cuda_mma_attention_seed.py"
+            ),
+            edit_mode="transform",
+            candidate_transform=new_transform,
+        ),
+    ]
+    seen_attempt_histories = []
+
+    def fake_request_variation_decision(**kwargs):
+        seen_attempt_histories.append(kwargs["attempt_history"])
+        return decisions.pop(0)
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="{}",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:02+00:00",
+            completed_at="2026-05-08T00:00:03+00:00",
+            score_payload={
+                "backend": "mock",
+                "all_correct": True,
+                "geomean_tflops": 3.0,
+                "cases": [{}],
+            },
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+
+    exit_code = _evolve_loop(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            env_file=None,
+            model="claude",
+            max_steps=1,
+            loop_json=tmp_path / "loop.json",
+            attempts_dir=tmp_path / "attempts",
+            attempt_limit=5,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["completed_steps"] == 1
+    assert payload["steps"][0]["attempt"]["decision"]["candidate_transform"] == new_transform
+    assert len(seen_attempt_histories) == 2
+    assert "Planner validation feedback" in seen_attempt_histories[1]
+
+
 def test_evolve_loop_stops_between_steps_after_wall_time(
     tmp_path: Path,
     monkeypatch,

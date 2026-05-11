@@ -85,6 +85,7 @@ GENERAL_CUDA_PRACTICE_QUERY = (
 GENERAL_CUDA_PRACTICE_MAX_CHARS = 8_000
 GENERAL_CUDA_PRACTICE_MAX_CHUNKS = 4
 DEFAULT_COMPILE_REPAIR_ATTEMPTS = 2
+DEFAULT_PLANNING_DECISION_VALIDATION_ATTEMPTS = 3
 DEFAULT_REPAIR_DECISION_VALIDATION_ATTEMPTS = 2
 PROFILE_TIMEOUT_CAP_S = 120
 THUNDER_CUDA_SHIM = Path("/etc/thunder/libthunder.so")
@@ -893,18 +894,15 @@ def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
     try:
         lineage_summary, attempt_history, repo_context, knowledge = _planning_context(args)
         try:
-            decision = request_variation_decision(
+            decision = _request_history_validated_planning_decision(
+                args,
                 lineage_summary=lineage_summary,
                 knowledge=knowledge,
                 attempt_history=attempt_history,
                 repo_context=repo_context,
-                model=args.model,
-                provider=getattr(args, "provider", None),
-                normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
             )
         except Exception as exc:
             return planning_failure_step(exc)
-        validate_decision_against_attempt_history(decision, args.attempts_dir)
     except ValueError as exc:
         return planning_failure_step(exc)
     attempt = run_decision_command(
@@ -933,6 +931,50 @@ def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
         repair_cleanup_results=tuple(repair_cleanup_results),
     )
     return cleanup_rejected_candidate_patch(step, cwd=args.cwd)
+
+
+def _request_history_validated_planning_decision(
+    args: argparse.Namespace,
+    *,
+    lineage_summary: str,
+    knowledge: str,
+    attempt_history: str,
+    repo_context: str,
+) -> VariationDecision:
+    last_error: ValueError | None = None
+    for _ in range(DEFAULT_PLANNING_DECISION_VALIDATION_ATTEMPTS):
+        decision = request_variation_decision(
+            lineage_summary=lineage_summary,
+            knowledge=knowledge,
+            attempt_history=_planning_history_with_validation_feedback(
+                attempt_history,
+                last_error,
+            ),
+            repo_context=repo_context,
+            model=args.model,
+            provider=getattr(args, "provider", None),
+            normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
+        )
+        try:
+            validate_decision_against_attempt_history(decision, args.attempts_dir)
+            return decision
+        except ValueError as exc:
+            last_error = exc
+    assert last_error is not None
+    raise last_error
+
+
+def _planning_history_with_validation_feedback(
+    attempt_history: str,
+    last_error: ValueError | None,
+) -> str:
+    if last_error is None:
+        return attempt_history
+    feedback = (
+        "Planner validation feedback: the previous decision was not executed because "
+        f"{last_error}. Return a corrected decision that satisfies this history constraint."
+    )
+    return f"{attempt_history}\n{feedback}" if attempt_history.strip() else feedback
 
 
 def _run_pending_compile_score_step(args: argparse.Namespace) -> EvolutionStep | None:
