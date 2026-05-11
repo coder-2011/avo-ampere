@@ -155,6 +155,47 @@ def test_parse_variation_decision_infers_missing_transform_path_from_single_file
     }
 
 
+def test_parse_variation_decision_infers_batch_path_from_compile_source() -> None:
+    payload = {
+        "hypothesis": "replace one coherent MMA block",
+        "candidate_edit": "Replace one coherent MMA block with a structured batch.",
+        "candidate_patch": "",
+        "edit_mode": "transform",
+        "candidate_transform": {
+            "op": "batch",
+            "steps": [
+                {
+                    "op": "replace_between_once",
+                    "find_start": "    // begin pv",
+                    "find_end": "    // end pv",
+                    "replace": "    // begin pv\n    replacement();\n    // end pv",
+                }
+            ],
+        },
+        "expected_effect": "compile checks the replacement block",
+        "risk": "anchor mismatch or compile failure",
+        "next_command": (
+            "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+            "--out-dir build/mma_transform"
+        ),
+    }
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "batch",
+        "steps": [
+            {
+                "op": "replace_between_once",
+                "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+                "find_start": "    // begin pv",
+                "find_end": "    // end pv",
+                "replace": "    // begin pv\n    replacement();\n    // end pv",
+            }
+        ],
+    }
+
+
 def test_parse_variation_decision_accepts_replace_between_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"

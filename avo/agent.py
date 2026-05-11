@@ -505,6 +505,7 @@ class VariationDecision:
             raw_candidate_transform = _candidate_transform_with_default_path(
                 raw_candidate_transform,
                 files,
+                command=str(normalized_payload.get("next_command") or ""),
             )
         candidate_transform = _validate_candidate_transform(raw_candidate_transform)
         candidate_edit = _normalized_no_edit_candidate_edit(
@@ -610,6 +611,8 @@ def _default_hypothesis(payload: dict[str, Any]) -> str:
 def _candidate_transform_with_default_path(
     transform: dict[str, Any],
     files_to_inspect: list[str],
+    *,
+    command: str = "",
 ) -> dict[str, Any]:
     if isinstance(transform.get("path"), str) and str(transform["path"]).strip():
         return transform
@@ -619,6 +622,10 @@ def _candidate_transform_with_default_path(
         if path.startswith("candidates/")
         and path.endswith((".py", ".cu", ".cuh", ".cpp", ".h", ".hpp"))
     ]
+    command_source = _payload_option_value_from_command(command, "--source")
+    if command_source:
+        candidates.append(command_source)
+    candidates = sorted(set(candidates))
     if len(candidates) != 1:
         return transform
     updated = dict(transform)
@@ -640,6 +647,20 @@ def _payload_subcommand_name(command: str) -> str:
         return ""
     if len(parts) >= 2 and parts[0] == "avo":
         return parts[1]
+    return ""
+
+
+def _payload_option_value_from_command(command: str, option: str) -> str:
+    try:
+        parts = shlex.split(command)
+    except ValueError:
+        return ""
+    prefix = f"{option}="
+    for index, part in enumerate(parts):
+        if part == option and index + 1 < len(parts):
+            return parts[index + 1]
+        if part.startswith(prefix):
+            return part[len(prefix) :]
     return ""
 
 
