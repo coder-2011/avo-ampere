@@ -4528,6 +4528,7 @@ def test_openrouter_kwargs_use_opus_47_json_schema_defaults() -> None:
     )
 
     assert kwargs["model"] == "anthropic/claude-opus-4.7"
+    assert kwargs["max_tokens"] == 4000
     assert kwargs["verbosity"] == "xhigh"
     assert kwargs["response_format"]["type"] == "json_schema"
     assert kwargs["response_format"]["json_schema"]["name"] == DECISION_TOOL_NAME
@@ -4542,6 +4543,32 @@ def test_openrouter_kwargs_use_opus_47_json_schema_defaults() -> None:
         "risk",
         "next_command",
     ]
+
+
+def test_openrouter_kwargs_allows_max_tokens_override(monkeypatch) -> None:
+    monkeypatch.setenv("AVO_OPENROUTER_MAX_TOKENS", "1200")
+
+    kwargs = _openrouter_decision_kwargs(
+        prompt="plan",
+        model=DEFAULT_OPENROUTER_AGENT_MODEL,
+    )
+
+    assert kwargs["max_tokens"] == 1200
+
+
+@pytest.mark.parametrize("raw", ["", "0", "-1", "not-int"])
+def test_openrouter_kwargs_ignores_invalid_max_tokens_override(
+    monkeypatch,
+    raw: str,
+) -> None:
+    monkeypatch.setenv("AVO_OPENROUTER_MAX_TOKENS", raw)
+
+    kwargs = _openrouter_decision_kwargs(
+        prompt="plan",
+        model=DEFAULT_OPENROUTER_AGENT_MODEL,
+    )
+
+    assert kwargs["max_tokens"] == 4000
 
 
 def test_openrouter_response_falls_back_to_json_object_on_schema_rejection(

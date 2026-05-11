@@ -23,11 +23,13 @@ DEFAULT_OPENROUTER_AGENT_MODEL = "anthropic/claude-opus-4.7"
 DEFAULT_AGENT_REQUEST_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_DELAY_S = 1.0
 DEFAULT_AGENT_REQUEST_TIMEOUT_S = 180.0
+DEFAULT_OPENROUTER_MAX_TOKENS = 4000
 AGENT_PROVIDER_ENV = "AVO_AGENT_PROVIDER"
 AGENT_REQUEST_TIMEOUT_ENV = "AVO_AGENT_REQUEST_TIMEOUT_S"
 OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
 OPENROUTER_BASE_URL_ENV = "AVO_OPENROUTER_BASE_URL"
 OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_MAX_TOKENS_ENV = "AVO_OPENROUTER_MAX_TOKENS"
 OPENROUTER_VERBOSITY_ENV = "AVO_OPENROUTER_VERBOSITY"
 ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "profile", "score"})
 EDIT_MODES = frozenset({"legacy_patch", "no_edit", "transform"})
@@ -868,6 +870,19 @@ def _agent_request_timeout_s() -> float:
     return timeout
 
 
+def _openrouter_max_tokens() -> int:
+    raw = os.environ.get(OPENROUTER_MAX_TOKENS_ENV)
+    if not raw:
+        return DEFAULT_OPENROUTER_MAX_TOKENS
+    try:
+        max_tokens = int(raw)
+    except ValueError:
+        return DEFAULT_OPENROUTER_MAX_TOKENS
+    if max_tokens <= 0:
+        return DEFAULT_OPENROUTER_MAX_TOKENS
+    return max_tokens
+
+
 def build_variation_prompt(
     *,
     knowledge: str,
@@ -1288,7 +1303,7 @@ def _request_openrouter_variation_decision(
 def _openrouter_decision_kwargs(*, prompt: str, model: str) -> dict[str, Any]:
     payload: dict[str, Any] = {
         "model": model,
-        "max_tokens": 4000,
+        "max_tokens": _openrouter_max_tokens(),
         "messages": [{"role": "user", "content": prompt}],
         "response_format": {
             "type": "json_schema",
