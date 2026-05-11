@@ -67,6 +67,13 @@ from .lineage import (
     seed_baseline,
 )
 
+GENERAL_CUDA_GROUNDING_QUERY = (
+    "General CUDA Working Knowledge Execution Model Memory Spaces Global Memory "
+    "Access Shared Memory Synchronization Occupancy Resources Profiling "
+    "Measurement Optimization"
+)
+GENERAL_CUDA_GROUNDING_MAX_CHARS = 6_000
+GENERAL_CUDA_GROUNDING_MAX_CHUNKS = 3
 GENERAL_CUDA_PRACTICE_QUERY = (
     "CUDA Kernel Design Practice Basic Mental Model Decomposing Work Indexing "
     "Data Layout Memory Movement Synchronization Communication Tiling Pattern "
@@ -1658,25 +1665,59 @@ def _planning_context(args: argparse.Namespace) -> tuple[str, str, str, str]:
         args.knowledge,
         query=knowledge_query,
     )
-    knowledge = _with_general_cuda_practice_context(knowledge, args.knowledge)
+    knowledge = _with_general_cuda_context(knowledge, args.knowledge)
     return lineage_summary, attempt_history, repo_context, knowledge
 
 
-def _with_general_cuda_practice_context(knowledge: str, source: Path) -> str:
-    if "b/cuda_programming_practice.md" in knowledge:
-        return knowledge
-    supplemental = build_knowledge_context(
+def _with_general_cuda_context(knowledge: str, source: Path) -> str:
+    original_knowledge = knowledge
+    knowledge = _append_supplemental_knowledge_context(
+        knowledge,
         source,
+        existing_knowledge=original_knowledge,
+        required_label="b/cuda_general.md",
+        header="Supplemental general CUDA grounding context",
+        query=GENERAL_CUDA_GROUNDING_QUERY,
+        max_chunks=GENERAL_CUDA_GROUNDING_MAX_CHUNKS,
+        max_chars=GENERAL_CUDA_GROUNDING_MAX_CHARS,
+    )
+    return _append_supplemental_knowledge_context(
+        knowledge,
+        source,
+        existing_knowledge=original_knowledge,
+        required_label="b/cuda_programming_practice.md",
+        header="Supplemental broad CUDA practice context",
         query=GENERAL_CUDA_PRACTICE_QUERY,
         max_chunks=GENERAL_CUDA_PRACTICE_MAX_CHUNKS,
         max_chars=GENERAL_CUDA_PRACTICE_MAX_CHARS,
     )
+
+
+def _append_supplemental_knowledge_context(
+    knowledge: str,
+    source: Path,
+    *,
+    existing_knowledge: str,
+    required_label: str,
+    header: str,
+    query: str,
+    max_chunks: int,
+    max_chars: int,
+) -> str:
+    if required_label in existing_knowledge:
+        return knowledge
+    supplemental = build_knowledge_context(
+        source,
+        query=query,
+        max_chunks=max_chunks,
+        max_chars=max_chars,
+    )
     if (
-        "b/cuda_programming_practice.md" not in supplemental
+        required_label not in supplemental
         or "No supported knowledge files were found" in supplemental
     ):
         return knowledge
-    return f"{knowledge}\n\nSupplemental broad CUDA practice context:\n{supplemental}"
+    return f"{knowledge}\n\n{header}:\n{supplemental}"
 
 
 def _knowledge_query(

@@ -104,7 +104,12 @@ from `knowledge/` instead of the entire corpus as one flat prompt block.
 `knowledge/retrieval_claims.md` defines the high-value claims in that corpus,
 including their evidence source, why each claim is useful, and the query expected
 to retrieve it. General CUDA grounding lives under `knowledge/b/`, while
-Ampere/attention-specific search evidence lives in `knowledge/ampere.md`.
+Ampere/attention-specific search evidence lives in `knowledge/ampere.md`. If the
+dynamic query misses the broad CUDA files, planning context appends bounded
+fallback chunks from both `knowledge/b/cuda_general.md` and
+`knowledge/b/cuda_programming_practice.md` so semantic transform choices still
+carry CUDA execution, memory, synchronization, profiling, and optimization
+workflow grounding.
 
 Score the PyTorch seed backend:
 

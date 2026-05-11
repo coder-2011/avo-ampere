@@ -21,6 +21,7 @@ from avo.cli import (
     _score,
     _seed_baseline,
     _torch_extension_worker_env,
+    _with_general_cuda_context,
     main,
 )
 from avo.cuda_env import (
@@ -191,7 +192,7 @@ def test_knowledge_search_command_prints_retrieved_context(tmp_path: Path, capsy
     assert "cp.async" in output
 
 
-def test_planning_context_includes_general_cuda_practice(tmp_path: Path) -> None:
+def test_planning_context_includes_general_cuda_context(tmp_path: Path) -> None:
     lineage = tmp_path / "lineage"
     attempts = tmp_path / "attempts"
     lineage.mkdir()
@@ -207,9 +208,47 @@ def test_planning_context_includes_general_cuda_practice(tmp_path: Path) -> None
 
     _, _, _, knowledge = _planning_context(args)
 
+    assert "-- b/cuda_general.md#chunk-" in knowledge
     assert "b/cuda_programming_practice.md" in knowledge
     assert "CUDA Kernel Design Practice" in knowledge
     assert "smallest coherent transformation" in knowledge
+
+
+def test_general_cuda_context_supplements_missing_broad_files(tmp_path: Path) -> None:
+    knowledge_root = tmp_path / "knowledge"
+    broad_root = knowledge_root / "b"
+    broad_root.mkdir(parents=True)
+    (knowledge_root / "ampere.md").write_text(
+        "# Ampere Notes\n\nLocal attention search evidence.\n",
+        encoding="utf-8",
+    )
+    (broad_root / "cuda_general.md").write_text(
+        "# General CUDA Working Knowledge\n\n"
+        "## Execution Model\n\n"
+        "CUDA execution model grid block thread warp SIMT divergence.\n",
+        encoding="utf-8",
+    )
+    (broad_root / "cuda_programming_practice.md").write_text(
+        "# CUDA Kernel Design Practice\n\n"
+        "## Semantic Transform Guidance For The Planner\n\n"
+        "Make the smallest coherent transformation that preserves invariants.\n",
+        encoding="utf-8",
+    )
+
+    context = _with_general_cuda_context(
+        "Retrieved knowledge context from local corpus.\n"
+        "Knowledge source: knowledge/ampere.md\n"
+        "-- ampere.md#chunk-0 lines 1-3 score=1.000 --\n"
+        "Local attention search evidence.",
+        knowledge_root / "ampere.md",
+    )
+
+    assert "Supplemental general CUDA grounding context" in context
+    assert "b/cuda_general.md" in context
+    assert "General CUDA Working Knowledge" in context
+    assert "Supplemental broad CUDA practice context" in context
+    assert "b/cuda_programming_practice.md" in context
+    assert "smallest coherent transformation" in context
 
 
 def test_baseline_build_env_uses_python_cuda_home(monkeypatch) -> None:
