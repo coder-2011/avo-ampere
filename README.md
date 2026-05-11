@@ -10,7 +10,7 @@ This repo is paired with [`coder-2011/avo`](https://github.com/coder-2011/avo), 
 - Target workload: BF16 forward attention with head dimension 128 and sequence lengths 4096, 8192, 16384, and 32768.
 - Baseline: FlashAttention-2. FlashAttention-4 is intentionally excluded because its Blackwell path uses primitives that are not available on Ampere.
 - Candidate support: Python candidate modules plus CUDA-extension attention candidates, including a BF16 WMMA QK/PV seed accepted through the seq32768 lane.
-- Agent support: Anthropic-backed variation planning with strict schema validation, a bounded command allowlist, a local searchable knowledge-corpus retriever, structured candidate transforms for CUDA edits, and a candidate-only patch application substrate.
+- Agent support: Anthropic- or OpenRouter-backed variation planning with strict schema validation, a bounded command allowlist, a local searchable knowledge-corpus retriever, structured candidate transforms for CUDA edits, and a candidate-only patch application substrate.
 - Scoring support: optional replicate timing via `--trials`; per-case TFLOPS uses the median timed sample and records timing noise, benchmark settings, target, FLOP-accounting convention, and environment metadata in JSON.
 - Attempt memory: `evolve-once --attempts-dir` and `evolve-loop --attempts-dir` record accepted and rejected steps outside the committed lineage, classify failure classes, and persist recurring classes as active hard preflight tracks in `preflight_tracks.json`, including the concrete structural checks activated by each promoted class.
 - Research state: the autonomous loop has accepted benchmark lanes across the full target shape set through seq32768. The open result is still optimizing that seed toward beating FlashAttention-2 on the target suite.
@@ -37,7 +37,7 @@ seq32768, while keeping the search process reviewable and recoverable.
 
 ```text
 avo/                         Python package and CLI
-  agent.py                   Anthropic variation-decision contract
+  agent.py                   variation-decision contract and provider calls
   benchmark.py               Torch, FlashAttention, and candidate scoring
   cli.py                     User-facing commands
   compile.py                 CUDA compilation helper
@@ -302,10 +302,11 @@ uv run python -m avo lineage-summary ./lineage
 
 ## Agent workflow
 
-The agent wrapper uses the Anthropic API and expects `ANTHROPIC_API_KEY` in the environment.
-Use `avo agent-status --env-file PATH` to check the Anthropic SDK import and key presence without
-printing the key value. `avo env --env-file PATH` includes the same agent block alongside CUDA and
-baseline-build diagnostics.
+The agent wrapper supports Anthropic directly and OpenRouter's OpenAI-compatible chat-completions
+API. Anthropic mode expects `ANTHROPIC_API_KEY`; OpenRouter mode expects `OPENROUTER_API_KEY` and
+uses `anthropic/claude-opus-4.7` by default when `--provider openrouter` is selected. Use
+`avo agent-status --env-file PATH` to check provider key presence without printing key values.
+`avo env --env-file PATH` includes the same agent block alongside CUDA and baseline-build diagnostics.
 
 ```bash
 uv run --extra agent python -m avo agent-status --env-file ../avo/.env.local
@@ -314,6 +315,15 @@ uv run python -m avo agent-plan \
   --knowledge knowledge/ampere.md \
   --env-file ../avo/.env.local \
   --attempts-dir ./attempts
+
+uv run python -m avo evolve-loop \
+  --provider openrouter \
+  --model anthropic/claude-opus-4.7 \
+  --lineage ./lineage \
+  --knowledge knowledge/ampere.md \
+  --attempts-dir ./attempts \
+  --max-steps 50 \
+  --max-wall-time-s 21600
 ```
 
 Persist the returned JSON decision, then run the bounded command from it:
@@ -375,7 +385,7 @@ records path, size, and hash metadata for audit. Accepted edited steps also reco
 Agent prompts include a concise local repo context so decisions prefer existing candidate files over upstream-only paths.
 Planner prompts also have a final character budget over dynamic sections: bulky
 repo context, knowledge, lineage, and attempt history are compacted before the
-Anthropic request, with attempt history tail-preserved so repair requests and
+provider request, with attempt history tail-preserved so repair requests and
 pending `candidate_transform` JSON survive long runs. If the planner returns an
 invalid decision, the validation-feedback retry uses the same budget and
 preserves the prompt head, newest context tail, and validation error.

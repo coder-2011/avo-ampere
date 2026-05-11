@@ -16,6 +16,8 @@ from typing import Any
 
 from .agent import (
     DEFAULT_AGENT_MODEL,
+    DEFAULT_AGENT_PROVIDER,
+    DEFAULT_OPENROUTER_AGENT_MODEL,
     VariationDecision,
     build_repo_context,
     load_env_file,
@@ -156,6 +158,7 @@ def main(argv: list[str] | None = None) -> int:
     agent_parser.add_argument("--knowledge", type=Path, required=True)
     agent_parser.add_argument("--cwd", type=Path, default=Path.cwd())
     agent_parser.add_argument("--env-file", type=Path, default=None)
+    agent_parser.add_argument("--provider", choices=["anthropic", "openrouter"], default=None)
     agent_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
     add_attempt_history_args(agent_parser)
 
@@ -177,6 +180,7 @@ def main(argv: list[str] | None = None) -> int:
     evolve_parser.add_argument("--timeout-s", type=int, default=900)
     evolve_parser.add_argument("--step-json", type=Path, default=None)
     evolve_parser.add_argument("--env-file", type=Path, default=None)
+    evolve_parser.add_argument("--provider", choices=["anthropic", "openrouter"], default=None)
     evolve_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
     evolve_parser.add_argument(
         "--compile-repair-attempts",
@@ -191,6 +195,7 @@ def main(argv: list[str] | None = None) -> int:
     loop_parser.add_argument("--cwd", type=Path, default=Path.cwd())
     loop_parser.add_argument("--timeout-s", type=int, default=900)
     loop_parser.add_argument("--env-file", type=Path, default=None)
+    loop_parser.add_argument("--provider", choices=["anthropic", "openrouter"], default=None)
     loop_parser.add_argument("--model", default=DEFAULT_AGENT_MODEL)
     loop_parser.add_argument("--max-steps", type=int, default=3)
     loop_parser.add_argument("--max-wall-time-s", type=int, default=None)
@@ -363,7 +368,10 @@ def _agent_status(env_file: Path | None) -> dict[str, object]:
         load_env_file(env_file)
 
     payload: dict[str, object] = {
+        "default_agent_provider": DEFAULT_AGENT_PROVIDER,
+        "default_openrouter_model": DEFAULT_OPENROUTER_AGENT_MODEL,
         "anthropic_api_key_present": bool(os.environ.get("ANTHROPIC_API_KEY")),
+        "openrouter_api_key_present": bool(os.environ.get("OPENROUTER_API_KEY")),
         "env_file": str(env_file) if env_file is not None else None,
         "env_file_loaded": env_file_loaded,
     }
@@ -755,6 +763,7 @@ def _agent_plan(args: argparse.Namespace) -> int:
         attempt_history=attempt_history,
         repo_context=repo_context,
         model=args.model,
+        provider=getattr(args, "provider", None),
         normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
     )
     validate_decision_against_attempt_history(decision, args.attempts_dir)
@@ -888,6 +897,7 @@ def _run_evolve_step(args: argparse.Namespace) -> EvolutionStep:
                 attempt_history=attempt_history,
                 repo_context=repo_context,
                 model=args.model,
+                provider=getattr(args, "provider", None),
                 normalize_payload=_pending_transform_payload_normalizer(args.attempts_dir),
             )
         except Exception as exc:
@@ -1070,6 +1080,7 @@ def _request_valid_edit_repair_decision(
             ),
             repo_context=repo_context,
             model=args.model,
+            provider=getattr(args, "provider", None),
             normalize_payload=None,
         )
         try:

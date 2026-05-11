@@ -8,11 +8,15 @@ from avo.agent import (
     DECISION_TOOL_NAME,
     DEFAULT_AGENT_MODEL,
     DEFAULT_AGENT_REQUEST_TIMEOUT_S,
+    DEFAULT_OPENROUTER_AGENT_MODEL,
     MAX_VARIATION_PROMPT_CHARS,
+    OpenRouterAPIError,
     VariationDecision,
     _agent_request_timeout_s,
     _decision_kwargs_with_feedback,
+    _openrouter_decision_kwargs,
     _request_decision_response,
+    _request_openrouter_decision_response,
     _request_valid_decision,
     build_repo_context,
     build_variation_prompt,
@@ -20,6 +24,7 @@ from avo.agent import (
     decision_tool,
     parse_decision_response,
     parse_decision_text,
+    request_variation_decision,
     validate_candidate_patch_structural_preflight,
 )
 
@@ -4234,3 +4239,81 @@ def test_valid_decision_request_retries_invalid_decision_with_feedback() -> None
     assert decision.candidate_patch == ""
     assert len(messages.calls) == 2
     assert "Validation error:" in messages.calls[1]["messages"][0]["content"]
+
+
+def test_openrouter_kwargs_use_opus_47_json_schema_defaults() -> None:
+    kwargs = _openrouter_decision_kwargs(
+        prompt="plan",
+        model=DEFAULT_OPENROUTER_AGENT_MODEL,
+    )
+
+    assert kwargs["model"] == "anthropic/claude-opus-4.7"
+    assert kwargs["verbosity"] == "xhigh"
+    assert kwargs["response_format"]["type"] == "json_schema"
+    assert kwargs["response_format"]["json_schema"]["name"] == DECISION_TOOL_NAME
+    assert kwargs["response_format"]["json_schema"]["schema"]["required"] == [
+        "hypothesis",
+        "files_to_inspect",
+        "candidate_edit",
+        "candidate_patch",
+        "edit_mode",
+        "candidate_transform",
+        "expected_effect",
+        "risk",
+        "next_command",
+    ]
+
+
+def test_openrouter_response_falls_back_to_json_object_on_schema_rejection(
+    monkeypatch,
+) -> None:
+    calls = []
+
+    def fake_chat_completion(kwargs, *, api_key, timeout_s):
+        calls.append(kwargs)
+        assert api_key == "secret"
+        assert timeout_s == 30.0
+        if len(calls) == 1:
+            raise OpenRouterAPIError(400, "json_schema unsupported")
+        return {"choices": [{"message": {"content": json.dumps(decision_payload())}}]}
+
+    monkeypatch.setattr("avo.agent._openrouter_chat_completion", fake_chat_completion)
+
+    response = _request_openrouter_decision_response(
+        {
+            "model": DEFAULT_OPENROUTER_AGENT_MODEL,
+            "messages": [{"role": "user", "content": "plan"}],
+            "response_format": {"type": "json_schema"},
+        },
+        api_key="secret",
+        timeout_s=30.0,
+    )
+
+    assert calls[0]["response_format"]["type"] == "json_schema"
+    assert calls[1]["response_format"] == {"type": "json_object"}
+    assert parse_decision_response(response).hypothesis == decision_payload()["hypothesis"]
+
+
+def test_request_variation_decision_uses_openrouter_provider(
+    monkeypatch,
+) -> None:
+    monkeypatch.setenv("OPENROUTER_API_KEY", "secret")
+    seen = {}
+
+    def fake_chat_completion(kwargs, *, api_key, timeout_s):
+        seen["kwargs"] = kwargs
+        seen["api_key"] = api_key
+        return {"choices": [{"message": {"content": json.dumps(decision_payload())}}]}
+
+    monkeypatch.setattr("avo.agent._openrouter_chat_completion", fake_chat_completion)
+
+    decision = request_variation_decision(
+        lineage_summary="lineage",
+        knowledge="knowledge",
+        provider="openrouter",
+    )
+
+    assert decision.next_command == decision_payload()["next_command"]
+    assert seen["api_key"] == "secret"
+    assert seen["kwargs"]["model"] == DEFAULT_OPENROUTER_AGENT_MODEL
+    assert "secret" not in repr(seen["kwargs"])

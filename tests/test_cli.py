@@ -92,6 +92,18 @@ def test_agent_status_command_prints_json_without_secret(
     assert "test-secret" not in output
 
 
+def test_agent_status_reports_openrouter_key_without_secret(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("OPENROUTER_API_KEY", raising=False)
+    env_file = tmp_path / ".env.local"
+    env_file.write_text("OPENROUTER_API_KEY=openrouter-secret\n", encoding="utf-8")
+
+    status = _agent_status(env_file)
+
+    assert status["openrouter_api_key_present"] is True
+    assert status["default_openrouter_model"] == "anthropic/claude-opus-4.7"
+    assert "openrouter-secret" not in repr(status)
+
+
 def test_lineage_summary_command_prints_json(monkeypatch, capsys) -> None:
     monkeypatch.setattr(
         "avo.cli._lineage_summary",

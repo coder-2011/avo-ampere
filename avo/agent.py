@@ -5,17 +5,27 @@ import os
 import re
 import shlex
 import time
+import urllib.error
+import urllib.request
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path, PurePosixPath
+from types import SimpleNamespace
 from typing import Any
 
 DECISION_TOOL_NAME = "record_variation_decision"
 DEFAULT_AGENT_MODEL = "claude-sonnet-4-5-20250929"
+DEFAULT_AGENT_PROVIDER = "anthropic"
+DEFAULT_OPENROUTER_AGENT_MODEL = "anthropic/claude-opus-4.7"
 DEFAULT_AGENT_REQUEST_ATTEMPTS = 3
 DEFAULT_AGENT_RETRY_DELAY_S = 1.0
 DEFAULT_AGENT_REQUEST_TIMEOUT_S = 180.0
+AGENT_PROVIDER_ENV = "AVO_AGENT_PROVIDER"
 AGENT_REQUEST_TIMEOUT_ENV = "AVO_AGENT_REQUEST_TIMEOUT_S"
+OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
+OPENROUTER_BASE_URL_ENV = "AVO_OPENROUTER_BASE_URL"
+OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
+OPENROUTER_VERBOSITY_ENV = "AVO_OPENROUTER_VERBOSITY"
 ALLOWED_NEXT_COMMANDS = frozenset({"env", "compile", "profile", "score"})
 EDIT_MODES = frozenset({"legacy_patch", "no_edit", "transform"})
 SHELL_CONTROL_TOKENS = frozenset({"&&", "||", ";", "|", ">", ">>", "<", "`"})
@@ -533,6 +543,12 @@ def load_env_file(path: Path) -> None:
 PayloadNormalizer = Callable[[dict[str, Any]], dict[str, Any]]
 
 
+class OpenRouterAPIError(RuntimeError):
+    def __init__(self, status_code: int | None, message: str) -> None:
+        super().__init__(message)
+        self.status_code = status_code
+
+
 def parse_decision_text(
     text: str,
     *,
@@ -581,8 +597,23 @@ def request_variation_decision(
     attempt_history: str = "",
     repo_context: str = "",
     model: str = DEFAULT_AGENT_MODEL,
+    provider: str | None = None,
     normalize_payload: PayloadNormalizer | None = None,
 ) -> VariationDecision:
+    selected_provider = _agent_provider(provider)
+    prompt = build_variation_prompt(
+        knowledge=knowledge,
+        lineage_summary=lineage_summary,
+        attempt_history=attempt_history,
+        repo_context=repo_context,
+    )
+    if selected_provider == "openrouter":
+        return _request_openrouter_variation_decision(
+            prompt=prompt,
+            model=_provider_model(selected_provider, model),
+            normalize_payload=normalize_payload,
+        )
+
     try:
         import anthropic
     except ModuleNotFoundError as exc:
@@ -595,20 +626,27 @@ def request_variation_decision(
         raise RuntimeError("ANTHROPIC_API_KEY is required for agent planning")
 
     client = anthropic.Anthropic(api_key=api_key)
-    prompt = build_variation_prompt(
-        knowledge=knowledge,
-        lineage_summary=lineage_summary,
-        attempt_history=attempt_history,
-        repo_context=repo_context,
-    )
 
     kwargs: dict[str, Any] = {
-        "model": model,
+        "model": _provider_model(selected_provider, model),
         "max_tokens": 4000,
         "messages": [{"role": "user", "content": prompt}],
         "timeout": _agent_request_timeout_s(),
     }
     return _request_valid_decision(client, kwargs, normalize_payload=normalize_payload)
+
+
+def _agent_provider(provider: str | None = None) -> str:
+    selected = (provider or os.environ.get(AGENT_PROVIDER_ENV) or DEFAULT_AGENT_PROVIDER).lower()
+    if selected not in {"anthropic", "openrouter"}:
+        raise ValueError("agent provider must be one of: anthropic, openrouter")
+    return selected
+
+
+def _provider_model(provider: str, model: str) -> str:
+    if provider == "openrouter" and model == DEFAULT_AGENT_MODEL:
+        return DEFAULT_OPENROUTER_AGENT_MODEL
+    return model
 
 
 def _agent_request_timeout_s() -> float:
@@ -999,6 +1037,188 @@ def _request_valid_decision(
                 ) from exc
             time.sleep(retry_delay_s * (2**attempt))
     raise AssertionError("unreachable")
+
+
+def _request_openrouter_variation_decision(
+    *,
+    prompt: str,
+    model: str,
+    normalize_payload: PayloadNormalizer | None,
+) -> VariationDecision:
+    api_key = os.environ.get(OPENROUTER_API_KEY_ENV)
+    if not api_key:
+        raise RuntimeError("OPENROUTER_API_KEY is required for OpenRouter agent planning")
+    kwargs = _openrouter_decision_kwargs(prompt=prompt, model=model)
+    last_error: ValueError | None = None
+    for attempt in range(DEFAULT_AGENT_REQUEST_ATTEMPTS):
+        request_kwargs = _openrouter_decision_kwargs_with_feedback(kwargs, last_error)
+        try:
+            response = _request_openrouter_decision_response(
+                request_kwargs,
+                api_key=api_key,
+                timeout_s=_agent_request_timeout_s(),
+            )
+        except Exception as exc:
+            is_last_attempt = attempt + 1 >= DEFAULT_AGENT_REQUEST_ATTEMPTS
+            if is_last_attempt or not _transient_api_error(exc):
+                raise
+            time.sleep(DEFAULT_AGENT_RETRY_DELAY_S * (2**attempt))
+            continue
+        try:
+            return parse_decision_response(response, normalize_payload=normalize_payload)
+        except ValueError as exc:
+            last_error = exc
+            if attempt + 1 >= DEFAULT_AGENT_REQUEST_ATTEMPTS:
+                raise ValueError(
+                    "agent returned invalid variation decision after "
+                    f"{DEFAULT_AGENT_REQUEST_ATTEMPTS} attempts: {exc}"
+                ) from exc
+            time.sleep(DEFAULT_AGENT_RETRY_DELAY_S * (2**attempt))
+    raise AssertionError("unreachable")
+
+
+def _openrouter_decision_kwargs(*, prompt: str, model: str) -> dict[str, Any]:
+    payload: dict[str, Any] = {
+        "model": model,
+        "max_tokens": 4000,
+        "messages": [{"role": "user", "content": prompt}],
+        "response_format": {
+            "type": "json_schema",
+            "json_schema": {
+                "name": DECISION_TOOL_NAME,
+                "strict": True,
+                "schema": DECISION_SCHEMA,
+            },
+        },
+    }
+    verbosity = os.environ.get(OPENROUTER_VERBOSITY_ENV)
+    if verbosity:
+        payload["verbosity"] = verbosity
+    elif model in {DEFAULT_OPENROUTER_AGENT_MODEL, "anthropic/claude-4.7-opus"}:
+        payload["verbosity"] = "xhigh"
+    return payload
+
+
+def _openrouter_decision_kwargs_with_feedback(
+    kwargs: dict[str, Any],
+    last_error: ValueError | None,
+) -> dict[str, Any]:
+    if last_error is None:
+        return kwargs
+    updated = dict(kwargs)
+    messages = [dict(message) for message in kwargs["messages"]]
+    feedback = (
+        "\n\n"
+        "The previous decision was invalid and was not executed. "
+        f"Validation error: {last_error}. "
+        f"{_validation_feedback_hint(last_error)}"
+        "Return exactly one corrected JSON object."
+    )
+    messages[-1]["content"] = _append_prompt_feedback_with_budget(
+        str(messages[-1]["content"]),
+        feedback,
+        max_chars=MAX_VARIATION_PROMPT_CHARS,
+    )
+    updated["messages"] = messages
+    return updated
+
+
+def _request_openrouter_decision_response(
+    kwargs: dict[str, Any],
+    *,
+    api_key: str,
+    timeout_s: float,
+) -> Any:
+    try:
+        payload = _openrouter_chat_completion(
+            kwargs,
+            api_key=api_key,
+            timeout_s=timeout_s,
+        )
+    except OpenRouterAPIError as exc:
+        if exc.status_code in {400, 422} and "response_format" in kwargs:
+            fallback_kwargs = dict(kwargs)
+            fallback_kwargs["response_format"] = {"type": "json_object"}
+            payload = _openrouter_chat_completion(
+                fallback_kwargs,
+                api_key=api_key,
+                timeout_s=timeout_s,
+            )
+        else:
+            raise
+    text = _openrouter_message_text(payload)
+    return SimpleNamespace(content=[SimpleNamespace(type="text", text=text)])
+
+
+def _openrouter_chat_completion(
+    kwargs: dict[str, Any],
+    *,
+    api_key: str,
+    timeout_s: float,
+) -> dict[str, Any]:
+    request = urllib.request.Request(
+        os.environ.get(OPENROUTER_BASE_URL_ENV) or OPENROUTER_DEFAULT_BASE_URL,
+        data=json.dumps(kwargs).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+            "X-Title": "AVO Ampere",
+        },
+        method="POST",
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=timeout_s) as response:
+            body = response.read().decode("utf-8")
+    except urllib.error.HTTPError as exc:
+        body = exc.read().decode("utf-8", errors="replace")
+        raise OpenRouterAPIError(
+            exc.code,
+            f"OpenRouter HTTP {exc.code}: {_provider_error_message(body)}",
+        ) from exc
+    except urllib.error.URLError as exc:
+        raise OpenRouterAPIError(None, f"OpenRouter connection error: {exc.reason}") from exc
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise OpenRouterAPIError(None, "OpenRouter returned malformed JSON") from exc
+    if not isinstance(payload, dict):
+        raise OpenRouterAPIError(None, "OpenRouter response JSON must be an object")
+    return payload
+
+
+def _provider_error_message(body: str) -> str:
+    try:
+        payload = json.loads(body)
+    except json.JSONDecodeError:
+        return _validation_excerpt(body, max_length=500)
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if isinstance(error, dict):
+        message = error.get("message")
+        if isinstance(message, str) and message.strip():
+            return _validation_excerpt(message, max_length=500)
+    return _validation_excerpt(body, max_length=500)
+
+
+def _openrouter_message_text(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        raise ValueError("OpenRouter response missing choices")
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        raise ValueError("OpenRouter response choice must be an object")
+    message = first_choice.get("message")
+    if not isinstance(message, dict):
+        raise ValueError("OpenRouter response choice missing message")
+    content = message.get("content")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        parts: list[str] = []
+        for item in content:
+            if isinstance(item, dict) and isinstance(item.get("text"), str):
+                parts.append(item["text"])
+        return "\n".join(parts)
+    return ""
 
 
 def _decision_kwargs_with_feedback(

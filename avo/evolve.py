@@ -2827,6 +2827,10 @@ def _is_planner_provider_error(detail: str) -> bool:
         "credit balance",
         "plans & billing",
         "anthropic",
+        "openrouter",
+        "payment required",
+        "insufficient credit",
+        "insufficient credits",
     )
     return any(marker in detail for marker in provider_markers)
 
