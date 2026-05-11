@@ -26,6 +26,7 @@ DEFAULT_AGENT_REQUEST_TIMEOUT_S = 180.0
 DEFAULT_OPENROUTER_MAX_TOKENS = 4000
 AGENT_PROVIDER_ENV = "AVO_AGENT_PROVIDER"
 AGENT_REQUEST_TIMEOUT_ENV = "AVO_AGENT_REQUEST_TIMEOUT_S"
+AGENT_VARIATION_PROMPT_MAX_CHARS_ENV = "AVO_VARIATION_PROMPT_MAX_CHARS"
 OPENROUTER_API_KEY_ENV = "OPENROUTER_API_KEY"
 OPENROUTER_BASE_URL_ENV = "AVO_OPENROUTER_BASE_URL"
 OPENROUTER_DEFAULT_BASE_URL = "https://openrouter.ai/api/v1/chat/completions"
@@ -814,6 +815,7 @@ def request_variation_decision(
         lineage_summary=lineage_summary,
         attempt_history=attempt_history,
         repo_context=repo_context,
+        max_chars=_variation_prompt_max_chars(),
     )
     if selected_provider == "openrouter":
         return _request_openrouter_variation_decision(
@@ -881,6 +883,19 @@ def _openrouter_max_tokens() -> int:
     if max_tokens <= 0:
         return DEFAULT_OPENROUTER_MAX_TOKENS
     return max_tokens
+
+
+def _variation_prompt_max_chars() -> int:
+    raw = os.environ.get(AGENT_VARIATION_PROMPT_MAX_CHARS_ENV)
+    if not raw:
+        return MAX_VARIATION_PROMPT_CHARS
+    try:
+        max_chars = int(raw)
+    except ValueError:
+        return MAX_VARIATION_PROMPT_CHARS
+    if max_chars <= 0:
+        return MAX_VARIATION_PROMPT_CHARS
+    return max_chars
 
 
 def build_variation_prompt(
@@ -1340,7 +1355,7 @@ def _openrouter_decision_kwargs_with_feedback(
     messages[-1]["content"] = _append_prompt_feedback_with_budget(
         str(messages[-1]["content"]),
         feedback,
-        max_chars=MAX_VARIATION_PROMPT_CHARS,
+        max_chars=_variation_prompt_max_chars(),
     )
     updated["messages"] = messages
     return updated
@@ -1514,7 +1529,7 @@ def _decision_kwargs_with_feedback(
     messages[-1]["content"] = _append_prompt_feedback_with_budget(
         str(messages[-1]["content"]),
         feedback,
-        max_chars=MAX_VARIATION_PROMPT_CHARS,
+        max_chars=_variation_prompt_max_chars(),
     )
     updated["messages"] = messages
     return updated

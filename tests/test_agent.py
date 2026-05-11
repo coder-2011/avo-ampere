@@ -4087,6 +4087,29 @@ def test_decision_feedback_retry_preserves_budget_and_latest_context() -> None:
     assert "Return one corrected decision." in content
 
 
+def test_decision_feedback_retry_uses_prompt_budget_override(monkeypatch) -> None:
+    monkeypatch.setenv("AVO_VARIATION_PROMPT_MAX_CHARS", "4096")
+    kwargs = {
+        "messages": [
+            {
+                "role": "user",
+                "content": (
+                    "You are the AVO variation operator.\n"
+                    + ("old context\n" * 1_000)
+                    + "Exact pending candidate_transform JSON: {}"
+                ),
+            }
+        ]
+    }
+
+    updated = _decision_kwargs_with_feedback(
+        kwargs,
+        ValueError("candidate_transform or candidate_patch must be provided"),
+    )
+
+    assert len(updated["messages"][0]["content"]) <= 4096
+
+
 def test_decision_feedback_explains_scalar_bf16_async_copy_error() -> None:
     kwargs = {
         "messages": [
@@ -4637,6 +4660,7 @@ def test_request_variation_decision_uses_openrouter_provider(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("OPENROUTER_API_KEY", "secret")
+    monkeypatch.setenv("AVO_VARIATION_PROMPT_MAX_CHARS", "18000")
     seen = {}
 
     def fake_chat_completion(kwargs, *, api_key, timeout_s):
@@ -4648,11 +4672,12 @@ def test_request_variation_decision_uses_openrouter_provider(
 
     decision = request_variation_decision(
         lineage_summary="lineage",
-        knowledge="knowledge",
+        knowledge="knowledge\n" * 10_000,
         provider="openrouter",
     )
 
     assert decision.next_command == decision_payload()["next_command"]
     assert seen["api_key"] == "secret"
     assert seen["kwargs"]["model"] == DEFAULT_OPENROUTER_AGENT_MODEL
+    assert len(seen["kwargs"]["messages"][0]["content"]) <= 18_000
     assert "secret" not in repr(seen["kwargs"])
