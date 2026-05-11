@@ -525,6 +525,33 @@ def test_parse_variation_decision_rejects_claimed_v_reuse_without_v_load_change(
         parse_decision_text(json.dumps(payload))
 
 
+def test_parse_variation_decision_allows_v_global_to_shared_load_relocation() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "transform"
+    payload["candidate_edit"] = (
+        "Stage V into shared memory once per key tile and feed WMMA from v_tile to "
+        "reduce V global memory traffic."
+    )
+    payload["candidate_transform"] = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": PV_CHUNK_LOOP_BEFORE,
+        "replace": PV_CHUNK_LOOP_BEFORE.replace(
+            "wmma::load_matrix_sync(v_frag, v + base + key_start * kHeadDim "
+            "+ chunk_offset, kHeadDim);",
+            "wmma::load_matrix_sync(v_frag, v_tile + chunk_offset, kHeadDim);",
+        ),
+    }
+    payload["next_command"] = (
+        "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+        "--out-dir build/mma_v_shared"
+    )
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == payload["candidate_transform"]
+
+
 def test_parse_variation_decision_allows_probability_load_hoist_claim() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"

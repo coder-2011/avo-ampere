@@ -2059,6 +2059,12 @@ def _candidate_transform_supports_load_reduction_claim(
         after_count = _operand_load_site_count(after, operand)
         if before_count > 0 and after_count < before_count:
             return True
+        if before_count > 0 and _moves_operand_wmma_load_from_global_to_shared(
+            before,
+            after,
+            operand,
+        ):
+            return True
         if before_count > 0 and after_count == before_count:
             if named_loop_vars:
                 if _moves_operand_load_out_of_named_loop(before, after, operand, named_loop_vars):
@@ -2067,6 +2073,26 @@ def _candidate_transform_supports_load_reduction_claim(
             if _moves_operand_load_out_of_loop(before, after, operand):
                 return True
     return False
+
+
+def _moves_operand_wmma_load_from_global_to_shared(
+    before: str,
+    after: str,
+    operand: str,
+) -> bool:
+    lower_operand = operand.lower()
+    before_compact = re.sub(r"\s+", "", before)
+    after_compact = re.sub(r"\s+", "", after)
+    load_target = rf"{re.escape(lower_operand)}(?:_frag|_frags(?:\[[^\]]+\])?)"
+    before_global = re.search(
+        rf"load_matrix_sync\({load_target},{re.escape(lower_operand)}\+",
+        before_compact,
+    )
+    after_shared = re.search(
+        rf"load_matrix_sync\({load_target},{re.escape(lower_operand)}_(?:tile|shared)\+?",
+        after_compact,
+    )
+    return before_global is not None and after_shared is not None
 
 
 def _candidate_transform_steps(transform: dict[str, Any]) -> list[dict[str, Any]]:
