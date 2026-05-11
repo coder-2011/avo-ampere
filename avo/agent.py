@@ -507,6 +507,12 @@ class VariationDecision:
                 files,
             )
         candidate_transform = _validate_candidate_transform(raw_candidate_transform)
+        candidate_edit = _normalized_no_edit_candidate_edit(
+            edit_mode,
+            candidate_edit=candidate_edit,
+            candidate_patch=candidate_patch,
+            candidate_transform=candidate_transform,
+        )
         if candidate_patch.strip() and candidate_transform is not None:
             raise ValueError(
                 "candidate_patch and candidate_transform are mutually exclusive; "
@@ -1792,6 +1798,23 @@ def _validate_edit_mode_payload(
         return
     if not candidate_edit.lstrip().lower().startswith("no edit;"):
         raise ValueError("edit_mode no_edit requires candidate_edit to start with 'No edit;'")
+
+
+def _normalized_no_edit_candidate_edit(
+    edit_mode: str,
+    *,
+    candidate_edit: str,
+    candidate_patch: str,
+    candidate_transform: dict[str, Any] | None,
+) -> str:
+    if (
+        edit_mode != "no_edit"
+        or candidate_patch.strip()
+        or candidate_transform is not None
+        or candidate_edit.lstrip().lower().startswith("no edit;")
+    ):
+        return candidate_edit
+    return f"No edit; {candidate_edit.strip()}"
 
 
 def _validate_candidate_transform(value: Any) -> dict[str, Any] | None:

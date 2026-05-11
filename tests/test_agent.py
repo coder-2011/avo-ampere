@@ -62,6 +62,17 @@ def test_parse_variation_decision_defaults_missing_candidate_patch() -> None:
     assert decision.candidate_patch == ""
 
 
+def test_parse_variation_decision_normalizes_no_edit_prefix() -> None:
+    payload = decision_payload()
+    payload["edit_mode"] = "no_edit"
+    payload["candidate_edit"] = "Score the flash-attn baseline."
+    payload["candidate_transform"] = None
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_edit == "No edit; Score the flash-attn baseline."
+
+
 def test_parse_variation_decision_defaults_missing_nonsemantic_metadata() -> None:
     payload = {
         "hypothesis": "retune the existing MMA tile contract",
@@ -551,22 +562,24 @@ def test_parse_variation_decision_rejects_explicit_transform_mode_without_transf
         parse_decision_text(json.dumps(payload))
 
 
-def test_parse_variation_decision_rejects_explicit_no_edit_mode_without_prefix() -> None:
+def test_parse_variation_decision_normalizes_explicit_no_edit_mode_without_prefix() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "no_edit"
     payload["candidate_edit"] = "Score existing candidate."
 
-    with pytest.raises(ValueError, match="edit_mode no_edit requires"):
-        parse_decision_text(json.dumps(payload))
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_edit == "No edit; Score existing candidate."
 
 
-def test_parse_variation_decision_rejects_explicit_no_edit_mode_with_loose_phrase() -> None:
+def test_parse_variation_decision_normalizes_explicit_no_edit_mode_with_loose_phrase() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "no_edit"
     payload["candidate_edit"] = "No code edit; score existing candidate."
 
-    with pytest.raises(ValueError, match="start with 'No edit;'"):
-        parse_decision_text(json.dumps(payload))
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_edit == "No edit; No code edit; score existing candidate."
 
 
 def test_parse_variation_decision_accepts_explicit_no_edit_mode() -> None:
@@ -4319,7 +4332,9 @@ def test_decision_request_falls_back_to_plain_json_when_structured_outputs_fail(
     assert "output_config" in messages.calls[1]
     assert "tools" not in messages.calls[2]
     assert "output_config" not in messages.calls[2]
-    assert parse_decision_response(response).candidate_edit == decision_payload()["candidate_edit"]
+    assert parse_decision_response(response).candidate_edit == (
+        f"No edit; {decision_payload()['candidate_edit']}"
+    )
 
 
 def test_decision_request_retries_transient_api_error() -> None:
