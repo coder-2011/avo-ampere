@@ -72,6 +72,25 @@ def test_agent_status_loads_env_file_without_printing_value(tmp_path: Path, monk
     assert "test-secret" not in repr(status)
 
 
+def test_agent_status_command_prints_json_without_secret(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+    env_file = tmp_path / ".env.local"
+    env_file.write_text("ANTHROPIC_API_KEY=test-secret\n", encoding="utf-8")
+
+    assert main(["agent-status", "--env-file", str(env_file)]) == 0
+
+    output = capsys.readouterr().out
+    payload = json.loads(output)
+    assert payload["anthropic_api_key_present"] is True
+    assert payload["env_file"] == str(env_file)
+    assert payload["env_file_loaded"] is True
+    assert "test-secret" not in output
+
+
 def test_baseline_build_env_targets_flash_attn_ampere(monkeypatch) -> None:
     monkeypatch.setattr("avo.cuda_env.compatible_python_cuda_home", lambda env: None)
     env = {"FLASH_ATTN_CUDA_ARCHS": "90;100", "OTHER": "keep-me", "PATH": "/bin"}

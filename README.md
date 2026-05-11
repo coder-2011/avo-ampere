@@ -283,14 +283,16 @@ remaining TFLOPS gap without changing the acceptance gate.
 ## Agent workflow
 
 The agent wrapper uses the Anthropic API and expects `ANTHROPIC_API_KEY` in the environment.
-Use `avo env --env-file PATH` to check the Anthropic SDK import and key presence without printing
-the key value.
+Use `avo agent-status --env-file PATH` to check the Anthropic SDK import and key presence without
+printing the key value. `avo env --env-file PATH` includes the same agent block alongside CUDA and
+baseline-build diagnostics.
 
 ```bash
-uv run --extra agent python -m avo env --env-file ../avo/.env.local
+uv run --extra agent python -m avo agent-status --env-file ../avo/.env.local
 uv run python -m avo agent-plan \
   --lineage ./lineage \
   --knowledge knowledge/ampere.md \
+  --env-file ../avo/.env.local \
   --attempts-dir ./attempts
 ```
 
@@ -301,6 +303,7 @@ uv run python -m avo run-decision decision.json --attempt-json attempts/latest.j
 uv run python -m avo evolve-once \
   --lineage ./lineage \
   --knowledge knowledge/ampere.md \
+  --env-file ../avo/.env.local \
   --attempts-dir ./attempts \
   --step-json attempts/latest-step.json
 ```
@@ -375,6 +378,7 @@ uv run python -m avo evolve-loop \
   --lineage ./lineage \
   --knowledge knowledge/ampere.md \
   --attempts-dir ./attempts \
+  --env-file ../avo/.env.local \
   --max-steps 3 \
   --max-wall-time-s 3600 \
   --loop-json attempts/latest-loop.json

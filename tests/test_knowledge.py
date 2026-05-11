@@ -62,7 +62,7 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
         ),
         (
             "async-copy compile error repair feedback not hard preflight promotion",
-            ("async_copy_compile_error", "repair-guidance", "not treat copy granularity"),
+            ("async_copy_compile_error", "repair-guidance", "copy granularity alone"),
         ),
         (
             "self-repair prompt concrete execution feedback directed edit",
@@ -116,6 +116,10 @@ def test_build_knowledge_context_falls_back_for_missing_source(tmp_path: Path) -
             "repair validation feedback invalid repair decision not executed retry "
             "same repair episode",
             ("repair validation feedback", "invalid repair decision", "not executed"),
+        ),
+        (
+            "Anthropic agent-status env-file API key presence no provider call",
+            ("agent-status", "ANTHROPIC_API_KEY", "provider credits"),
         ),
         (
             "transcript compaction recent messages verbatim structured breadcrumbs "

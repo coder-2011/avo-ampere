@@ -562,6 +562,14 @@ reject a bad transform family, or explain a score/gate result.
   retries.
 - Retrieval query: `repair validation feedback invalid repair decision not executed retry same repair episode`.
 
+- Claim: `avo agent-status --env-file PATH` checks Anthropic SDK availability
+  and `ANTHROPIC_API_KEY` presence without printing the secret or calling the
+  provider.
+- Evidence source: runtime CLI `agent-status` command.
+- Why useful: live AVO planning depends on Anthropic credentials, and a no-call
+  JSON preflight separates local setup failures from provider/API failures.
+- Retrieval query: `Anthropic agent-status env-file API key presence no provider call`.
+
 - Claim: transcript compaction should keep recent turns verbatim and replace
   older turns with structured breadcrumbs plus durable-state recovery pointers,
   bounded to remaining budget when the recent tail fits.

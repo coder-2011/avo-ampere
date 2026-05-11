@@ -87,6 +87,9 @@ def main(argv: list[str] | None = None) -> int:
     env_parser = subparsers.add_parser("env")
     env_parser.add_argument("--env-file", type=Path, default=None)
 
+    agent_status_parser = subparsers.add_parser("agent-status")
+    agent_status_parser.add_argument("--env-file", type=Path, default=None)
+
     baseline_env_parser = subparsers.add_parser("baseline-env")
     baseline_env_parser.add_argument("--format", choices=["shell", "json"], default="shell")
 
@@ -192,6 +195,8 @@ def main(argv: list[str] | None = None) -> int:
 
     if args.command == "env":
         return _env(args)
+    if args.command == "agent-status":
+        return _agent_status_command(args)
     if args.command == "baseline-env":
         return _baseline_env(args)
     if args.command == "knowledge-search":
@@ -314,6 +319,11 @@ def _env(args: argparse.Namespace) -> int:
         torch_cuda=torch_cuda,
     )
     print(json.dumps(payload, indent=2, sort_keys=True))
+    return 0
+
+
+def _agent_status_command(args: argparse.Namespace) -> int:
+    print(json.dumps(_agent_status(args.env_file), indent=2, sort_keys=True))
     return 0
 
 

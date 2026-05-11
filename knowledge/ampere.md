@@ -104,6 +104,10 @@ history.
   repeated unaccepted command/edit fingerprints or five unaccepted attempts in a
   row; treat that as a prompt to change strategy, not as permission to expand the
   command allowlist or bypass the gate.
+- Use `avo agent-status --env-file PATH` before live Anthropic planning to
+  verify the Anthropic SDK and `ANTHROPIC_API_KEY` presence without printing the
+  secret or spending provider credits. Use `avo env --env-file PATH` when the
+  same check should be bundled with CUDA and FA2 build diagnostics.
 - Immediate compile, transform-materialization, and correctness repair requests
   revert the failed edit before asking for a revised executable edit. The repair
   prompt includes earlier failed repair payloads from the same episode, and the
