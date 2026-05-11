@@ -74,7 +74,10 @@ Inputs and outputs use PyTorch SDPA layout:
 (batch, heads, sequence, head_dim)
 ```
 
-The candidate must return a tensor matching PyTorch SDPA output for the same inputs. Crashes and import failures are converted into failed score records by the isolated worker instead of crashing the orchestrator.
+The candidate must return a tensor matching PyTorch SDPA output for the same inputs. Python
+exceptions and import failures become failed score records. Hard worker exits, such as segfaults
+or process aborts, are contained by the parent score command as failed isolated command records
+with the child return code, so they do not crash the orchestrator.
 
 ## Common commands
 

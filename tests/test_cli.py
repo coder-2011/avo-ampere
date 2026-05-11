@@ -492,6 +492,35 @@ def test_score_command_forwards_trial_count(monkeypatch) -> None:
     assert captured["args"][captured["args"].index("--trials") + 1] == "3"
 
 
+def test_score_command_contains_hard_candidate_crash(tmp_path: Path, capsys) -> None:
+    candidate = tmp_path / "crashing_candidate.py"
+    candidate.write_text("import os\nos._exit(139)\n", encoding="utf-8")
+
+    exit_code = _score(
+        SimpleNamespace(
+            backend="candidate",
+            candidate=candidate,
+            seq_lens="16",
+            causal="false",
+            head_dim=16,
+            num_heads=1,
+            total_tokens=16,
+            dtype="bf16",
+            warmup=0,
+            repeats=0,
+            trials=1,
+            timeout_s=10,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 2
+    assert payload["ok"] is False
+    assert payload["returncode"] == 139
+    assert payload["payload"] is None
+    assert payload["timed_out"] is False
+
+
 def test_seed_baseline_rejects_missing_flash_attn_when_cuda_build_blocked(
     tmp_path: Path,
     monkeypatch,
