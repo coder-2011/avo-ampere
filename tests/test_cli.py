@@ -2671,6 +2671,116 @@ def test_evolve_loop_scores_pending_compile_transform_at_step_limit(
     assert json.loads((tmp_path / "loop.json").read_text(encoding="utf-8")) == payload
 
 
+def test_evolve_loop_scores_pending_compile_transform_before_planning(
+    tmp_path: Path,
+    monkeypatch,
+    capsys,
+) -> None:
+    knowledge = tmp_path / "knowledge.md"
+    knowledge.write_text("Ampere only.", encoding="utf-8")
+    transform = {
+        "op": "replace_once",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "find": "constexpr int kThreads = 96;",
+        "replace": "constexpr int kThreads = 128;",
+    }
+    compile_decision = VariationDecision(
+        hypothesis="compile structured transform",
+        files_to_inspect=["candidates/cuda_mma_attention/attention_kernel.cu"],
+        candidate_edit="Retune the MMA thread count.",
+        expected_effect="compile checks the edit",
+        risk="mock compile",
+        next_command=(
+            "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+            "--out-dir build/kernel"
+        ),
+        edit_mode="transform",
+        candidate_transform=transform,
+    )
+    compile_attempt = VariationAttempt(
+        decision=compile_decision,
+        command_result=CommandResult(
+            command=["python", "-m", "avo", "compile"],
+            returncode=0,
+            timed_out=False,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+        started_at="2026-05-08T00:00:00+00:00",
+        completed_at="2026-05-08T00:00:01+00:00",
+        patch_result=PatchResult(
+            ok=True,
+            patch_paths=["candidates/cuda_mma_attention/attention_kernel.cu"],
+            returncode=0,
+            stdout_tail="",
+            stderr_tail="",
+        ),
+    )
+    write_step_record(
+        tmp_path / "attempts",
+        EvolutionStep(attempt=compile_attempt, gate_decision=None),
+    )
+    seen_decisions = []
+
+    def fake_request_variation_decision(**kwargs):
+        raise AssertionError("planner should not run while a compile-only transform is pending")
+
+    def fake_run_decision_command(decision, *, cwd, timeout_s, env, **kwargs):
+        seen_decisions.append(decision)
+        return VariationAttempt(
+            decision=decision,
+            command_result=CommandResult(
+                command=["python", "-m", "avo", "score"],
+                returncode=0,
+                timed_out=False,
+                stdout_tail="{}",
+                stderr_tail="",
+            ),
+            started_at="2026-05-08T00:00:02+00:00",
+            completed_at="2026-05-08T00:00:03+00:00",
+            score_payload={
+                "backend": "mock",
+                "all_correct": True,
+                "geomean_tflops": 3.0,
+                "cases": [{}],
+            },
+            patch_result=PatchResult(
+                ok=True,
+                patch_paths=["candidates/cuda_mma_attention/attention_kernel.cu"],
+                returncode=0,
+                stdout_tail="",
+                stderr_tail="",
+            ),
+        )
+
+    monkeypatch.setattr("avo.cli.request_variation_decision", fake_request_variation_decision)
+    monkeypatch.setattr("avo.cli.run_decision_command", fake_run_decision_command)
+    monkeypatch.setattr("avo.cli.cleanup_rejected_candidate_patch", lambda step, *, cwd: step)
+
+    exit_code = _evolve_loop(
+        SimpleNamespace(
+            lineage=tmp_path / "lineage",
+            knowledge=knowledge,
+            cwd=tmp_path,
+            timeout_s=10,
+            env_file=None,
+            model="claude",
+            max_steps=1,
+            loop_json=tmp_path / "loop.json",
+            attempts_dir=tmp_path / "attempts",
+            attempt_limit=5,
+        )
+    )
+
+    payload = json.loads(capsys.readouterr().out)
+    assert exit_code == 0
+    assert payload["accepted"] is True
+    assert payload["completed_steps"] == 1
+    assert payload["stopped_reason"] == "accepted"
+    assert seen_decisions[0].candidate_transform == transform
+    assert seen_decisions[0].next_command.startswith("avo score ")
+
+
 def test_evolve_loop_records_planning_validation_failure(
     tmp_path: Path,
     monkeypatch,

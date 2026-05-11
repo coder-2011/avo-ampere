@@ -114,6 +114,36 @@ def test_parse_variation_decision_defaults_missing_descriptive_fields() -> None:
     ]
 
 
+def test_parse_variation_decision_infers_missing_transform_path_from_single_file() -> None:
+    payload = {
+        "hypothesis": "retune the existing MMA tile contract",
+        "files_to_inspect": ["candidates/cuda_mma_attention/attention_kernel.cu"],
+        "candidate_edit": "Retune kTile through a structured transform.",
+        "candidate_patch": "",
+        "edit_mode": "transform",
+        "candidate_transform": {
+            "op": "set_constexpr_int",
+            "name": "kTile",
+            "value": 16,
+        },
+        "expected_effect": "compile checks the edit",
+        "risk": "mock compile",
+        "next_command": (
+            "avo compile --source candidates/cuda_mma_attention/attention_kernel.cu "
+            "--out-dir build/mma_transform"
+        ),
+    }
+
+    decision = parse_decision_text(json.dumps(payload))
+
+    assert decision.candidate_transform == {
+        "op": "set_constexpr_int",
+        "path": "candidates/cuda_mma_attention/attention_kernel.cu",
+        "name": "kTile",
+        "value": 16,
+    }
+
+
 def test_parse_variation_decision_accepts_structured_transform() -> None:
     payload = decision_payload()
     payload["edit_mode"] = "transform"

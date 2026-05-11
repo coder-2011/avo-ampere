@@ -833,7 +833,9 @@ def _evolve_loop(args: argparse.Namespace) -> int:
         if steps and wall_deadline is not None and time.monotonic() >= wall_deadline:
             stopped_reason = "max_wall_time"
             break
-        step = _run_evolve_step(args)
+        step = _run_pending_compile_score_step(args)
+        if step is None:
+            step = _run_evolve_step(args)
         _record_loop_step(args, steps, step)
         if step.accepted:
             stopped_reason = "accepted"

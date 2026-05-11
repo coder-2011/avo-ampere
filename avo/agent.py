@@ -485,6 +485,11 @@ class VariationDecision:
                 candidate_edit,
                 files_to_inspect=files,
             )
+        if isinstance(raw_candidate_transform, dict):
+            raw_candidate_transform = _candidate_transform_with_default_path(
+                raw_candidate_transform,
+                files,
+            )
         candidate_transform = _validate_candidate_transform(raw_candidate_transform)
         if candidate_patch.strip() and candidate_transform is not None:
             raise ValueError(
@@ -578,6 +583,25 @@ def _default_hypothesis(payload: dict[str, Any]) -> str:
     if _payload_has_edit(payload):
         return "Validate a proposed source transformation."
     return "Evaluate the next bounded AVO step."
+
+
+def _candidate_transform_with_default_path(
+    transform: dict[str, Any],
+    files_to_inspect: list[str],
+) -> dict[str, Any]:
+    if isinstance(transform.get("path"), str) and str(transform["path"]).strip():
+        return transform
+    candidates = [
+        path
+        for path in files_to_inspect
+        if path.startswith("candidates/")
+        and path.endswith((".py", ".cu", ".cuh", ".cpp", ".h", ".hpp"))
+    ]
+    if len(candidates) != 1:
+        return transform
+    updated = dict(transform)
+    updated["path"] = candidates[0]
+    return updated
 
 
 def _short_default_text(text: str, *, max_chars: int = 180) -> str:
